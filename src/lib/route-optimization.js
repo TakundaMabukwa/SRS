@@ -1,5 +1,8 @@
 import * as turf from '@turf/turf'
 
+// Re-export TruckRouteOptimizer from the TypeScript file
+export { TruckRouteOptimizer } from './route-optimization.ts'
+
 export const findClosestVehicle = async (targetLocation, highRiskAreas = []) => {
   try {
     const vehicleEndpoint = process.env.NEXT_PUBLIC_VEHICLE_API_ENDPOINT || process.env.NEXT_PUBLIC_HTTP_SERVER_ENDPOINT
