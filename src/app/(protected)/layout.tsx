@@ -28,6 +28,7 @@ import {
 import GlobalProvider from "@/context/global-context/provider";
 import { PAGES, Permission, hasPermission } from "@/lib/permissions/permissions";
 import { createClient } from "@/lib/supabase/client";
+import { ElevationNotification } from "@/components/ui/elevation-notification";
 
 interface ProtectedLayoutProps {
   children: React.ReactNode;
@@ -156,6 +157,7 @@ const roleNavigation = {
 export default function ProtectedLayout({ children }: ProtectedLayoutProps) {
   const [sidebarExpanded, setSidebarExpanded] = useState(false);
   const [userRole, setUserRole] = useState<string>("");
+  const [userId, setUserId] = useState<string>("");
   const [navigation, setNavigation] = useState<any[]>([]);
   const [userPermissions, setUserPermissions] = useState<Permission[]>([]);
   const pathname = usePathname();
@@ -170,12 +172,13 @@ export default function ProtectedLayout({ children }: ProtectedLayoutProps) {
     };
 
     const fetchUserPermissions = async () => {
-      const userId = getCookie("userId");
-      if (userId) {
+      const userIdFromCookie = getCookie("userId");
+      if (userIdFromCookie) {
+        setUserId(userIdFromCookie);
         const { data: user } = await supabase
           .from('users')
           .select('permissions')
-          .eq('id', userId)
+          .eq('id', userIdFromCookie)
           .single();
         
         if (user?.permissions) {
@@ -340,6 +343,9 @@ export default function ProtectedLayout({ children }: ProtectedLayoutProps) {
             <GlobalProvider>{children}</GlobalProvider>
           </div>
         </main>
+        
+        {/* Elevation Notification - Only for admin users */}
+        <ElevationNotification userRole={userRole} userId={userId} />
       </div>
     </div>
   );

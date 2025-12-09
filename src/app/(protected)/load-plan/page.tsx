@@ -1,6 +1,7 @@
 "use client"
 
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { SecureButton } from '@/components/SecureButton'
@@ -38,7 +39,10 @@ import { markDriversUnavailable } from '@/lib/utils/driver-availability'
 
 export default function LoadPlanPage() {
   const supabase = createClient()
+  const router = useRouter()
   const [toast, setToast] = useState({ message: '', type: 'success' as 'success' | 'error', isVisible: false })
+  const [isEditMode, setIsEditMode] = useState(false)
+  const [editTripId, setEditTripId] = useState(null)
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
     setToast({ message, type, isVisible: true })
   }
@@ -1056,7 +1060,7 @@ export default function LoadPlanPage() {
       return
     }
     
-    handleCreate()
+    handleCreateOrUpdate()
   }
 
   const handleClientSelect = async (clientData) => {
@@ -1169,6 +1173,90 @@ export default function LoadPlanPage() {
 
 
 
+  const handleCreateOrUpdate = async () => {
+    if (isEditMode) {
+      return handleUpdate()
+    }
+    return handleCreate()
+  }
+  
+  const handleUpdate = async () => {
+    try {
+      const tripData = {
+        ordernumber: orderNumber,
+        rate: rate,
+        cargo: commodity,
+        origin: loadingLocation,
+        destination: dropOffPoint,
+        notes: comment,
+        
+        clientdetails: selectedClient ? {
+          name: selectedClient.name,
+          email: selectedClient.email || '',
+          phone: selectedClient.phone || '',
+          address: selectedClient.address || '',
+          contactPerson: selectedClient.contact_person || '',
+          client_id: selectedClient.client_id || '',
+          vat_number: selectedClient.vat_number || ''
+        } : {
+          name: client,
+          email: '',
+          phone: '',
+          address: '',
+          contactPerson: ''
+        },
+        
+        pickuplocations: [{
+          location: loadingLocation || '',
+          address: loadingLocation || '',
+          scheduled_time: etaPickup || ''
+        }],
+        
+        dropofflocations: [{
+          location: dropOffPoint || '',
+          address: dropOffPoint || '',
+          scheduled_time: etaDropoff || ''
+        }],
+        
+        vehicleassignments: [{
+          drivers: driverAssignments,
+          vehicle: { 
+            id: selectedVehicleId, 
+            name: selectedVehicleId ? vehicles.find(v => v.id.toString() === selectedVehicleId)?.registration_number || '' : ''
+          },
+          trailer: {
+            id: selectedTrailerId,
+            name: selectedTrailerId ? vehicles.find(v => v.id.toString() === selectedTrailerId)?.registration_number || '' : ''
+          }
+        }],
+        
+        trip_type: tripType,
+        selected_stop_points: stopPoints,
+        selected_vehicle_type: selectedVehicleType,
+        updated_at: new Date().toISOString()
+      }
+      
+      const { error } = await supabase
+        .from('trips')
+        .update(tripData)
+        .eq('id', editTripId)
+      
+      if (error) throw error
+      
+      showToast('Trip updated successfully!', 'success')
+      
+      // Clear sessionStorage and redirect
+      sessionStorage.removeItem('editTripData')
+      setTimeout(() => {
+        router.push('/dashboard')
+      }, 1500)
+      
+    } catch (err) {
+      console.error('Error updating trip:', err)
+      showToast('Failed to update trip', 'error')
+    }
+  }
+  
   const handleCreate = async () => {
     try {
       // Save route to database for both trip types when creating the load
@@ -2065,13 +2153,28 @@ export default function LoadPlanPage() {
                   </div>
                 </div>
 
-                <Button 
-                  type="button" 
-                  onClick={handleCreateClick} 
-                  className="w-full"
-                >
-                  Create Load
-                </Button>
+                <div className="flex gap-2">
+                  {isEditMode && (
+                    <Button 
+                      type="button" 
+                      variant="outline"
+                      onClick={() => {
+                        sessionStorage.removeItem('editTripData')
+                        router.push('/dashboard')
+                      }}
+                      className="flex-1"
+                    >
+                      Cancel
+                    </Button>
+                  )}
+                  <Button 
+                    type="button" 
+                    onClick={handleCreateClick} 
+                    className="flex-1"
+                  >
+                    {isEditMode ? 'Update Trip' : 'Create Load'}
+                  </Button>
+                </div>
               </form>
             </CardContent>
             </Card>

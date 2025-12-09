@@ -3,9 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "NODE_OPTIONS='--max-old-space-size=1536' next dev",
-    "build": "NODE_OPTIONS='--max-old-space-size=1536' next build",
-    "start": "NODE_OPTIONS='--max-old-space-size=1536' next start",
+    "dev": "set NODE_OPTIONS=--max-old-space-size=1536 && next dev",
+    "build": "set NODE_OPTIONS=--max-old-space-size=1536 && next build",
+    "start": "set NODE_OPTIONS=--max-old-space-size=1536 && next start",
     "lint": "next lint",
     "postbuild": "next-sitemap",
     "database:pull": "npx supabase gen types --lang=typescript --project-id jbactgkcijnkjpyqqzxv > src/lib/supabase/database.types.ts"

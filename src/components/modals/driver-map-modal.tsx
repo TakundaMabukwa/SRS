@@ -137,16 +137,16 @@ export default function DriverMapModal({ isOpen, onClose, driver }: DriverMapMod
   }, [isOpen, driver.plate])
 
   // Generate mock driver location (in a real app, this would come from GPS/tracking system)
-  const generateDriverLocation = () => {
+  const [mockLocation] = useState(() => {
     // Default to Johannesburg area with some random offset
     const baseLocation = { lat: -26.2041, lng: 28.0473 }
     return {
       lat: baseLocation.lat + (Math.random() - 0.5) * 0.1,
       lng: baseLocation.lng + (Math.random() - 0.5) * 0.1
     }
-  }
+  })
 
-  const driverLocation = driver.currentLocation || generateDriverLocation()
+  const driverLocation = driver.currentLocation || mockLocation
 
   const getStatusBadge = (status: string) => {
     const statusConfig = {

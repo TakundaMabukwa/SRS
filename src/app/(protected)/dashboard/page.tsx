@@ -67,11 +67,13 @@ import DriverPerformanceDashboard from "@/components/dashboard/DriverPerformance
 import TestRouteMap from "@/components/map/test-route-map";
 import { DateTimePicker } from "@/components/ui/datetime-picker";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line, Area, AreaChart } from 'recharts';
+import { EditTripModal } from "@/components/ui/edit-trip-modal";
 
 
 
 // Driver Card Component with fetched driver info
-function DriverCard({ trip, userRole, handleViewMap, setCurrentTripForNote, setNoteText, setNoteOpen, setAvailableDrivers, setCurrentTripForChange, setChangeDriverOpen, setCurrentTripForClose, setCloseReason, setCloseTripOpen }: any) {
+function DriverCard({ trip, userRole, handleViewMap, setCurrentTripForNote, setNoteText, setNoteOpen, setAvailableDrivers, setCurrentTripForChange, setChangeDriverOpen, setCurrentTripForClose, setCloseReason, setCloseTripOpen, setCurrentTripForEdit, setEditTripOpen, setCurrentTripForApproval, setApprovalModalOpen }: any) {
+  const router = useRouter()
   const [driverInfo, setDriverInfo] = useState<any>(null)
   const [vehicleInfo, setVehicleInfo] = useState<any>(null)
   const [loading, setLoading] = useState(false)
@@ -89,188 +91,46 @@ function DriverCard({ trip, userRole, handleViewMap, setCurrentTripForNote, setN
   }, [trip.unauthorized_stops_count])
 
   useEffect(() => {
-    async function fetchAssignmentInfo() {
-      const assignments = trip.vehicleassignments || trip.vehicle_assignments || []
-      if (!assignments.length) return
-
-      setLoading(true)
-      try {
-        const supabase = createClient()
-        const assignment = assignments[0]
-        setAssignment(assignment) // Store assignment for fallback vehicle info
-        
-        // Switch to second driver if status is handover and second driver exists
-        let driverToFetch = assignment.drivers?.[0]
-        if (trip.status?.toLowerCase() === 'handover' && assignment.drivers?.[1]) {
-          driverToFetch = assignment.drivers[1]
-        }
-        
-        // Fetch driver info by ID
-        if (driverToFetch?.id) {
-          const { data: driver } = await supabase
-            .from('drivers')
-            .select('*')
-            .eq('id', driverToFetch.id)
-            .single()
-          setDriverInfo(driver)
-          
-          // Check for latest vehicle inspection
-          if (driver) {
-            try {
-              // Get latest inspection for this driver
-              const { data: inspection } = await supabase
-                .from('vehicle_inspections')
-                .select('*, vehiclesc(*)')
-                .eq('driver_id', driver.id)
-                .order('inspection_date', { ascending: false })
-                .limit(1)
-                .single()
-              
-              let inspectedVehicle = null
-              if (inspection?.vehiclesc?.registration_number) {
-                inspectedVehicle = inspection.vehiclesc
-                setVehicleInfo(inspectedVehicle)
-                
-                // Check both APIs since they have different vehicles
-                const [ctrackResponse, epsResponse] = await Promise.allSettled([
-                  fetch(process.env.NEXT_PUBLIC_CRTACK_VEHICLE_API_ENDPOINT || ''),
-                  fetch('http://64.227.138.235:3000/api/eps-vehicles')
-                ])
-                
-                let foundVehicle = null
-                
-                // Check C-Track API
-                if (ctrackResponse.status === 'fulfilled') {
-                  try {
-                    const ctrackResult = await ctrackResponse.value.json()
-                    const ctrackVehicles = ctrackResult.vehicles || []
-                    foundVehicle = ctrackVehicles.find((v: any) => 
-                      v.plate?.toLowerCase() === inspectedVehicle.registration_number.toLowerCase()
-                    )
-                  } catch (error) {
-                    console.log('C-Track API parse error:', error)
-                  }
-                }
-                
-                // Check EPS API if not found in C-Track
-                if (!foundVehicle && epsResponse.status === 'fulfilled') {
-                  try {
-                    const epsResult = await epsResponse.value.json()
-                    const epsVehicles = epsResult.data || []
-                    foundVehicle = epsVehicles.find((v: any) => 
-                      v.plate?.toLowerCase() === inspectedVehicle.registration_number.toLowerCase()
-                    )
-                  } catch (error) {
-                    console.log('EPS API parse error:', error)
-                  }
-                }
-                
-                if (foundVehicle) {
-                  setVehicleLocation(foundVehicle)
-                  return
-                }
-              }
-            } catch (inspectionError) {
-              console.log('No inspection found, using fallback approach')
-            }
-            
-            // Fallback: Try both APIs if no inspection found
-            const [ctrackFallback, epsFallback] = await Promise.allSettled([
-              fetch(process.env.NEXT_PUBLIC_CRTACK_VEHICLE_API_ENDPOINT || ''),
-              fetch('http://64.227.138.235:3000/api/eps-vehicles')
-            ])
-            
-            let fallbackVehicle = null
-            const driverName = `${driver.first_name} ${driver.surname}`.toLowerCase()
-            
-            // Check C-Track API for driver name match
-            if (ctrackFallback.status === 'fulfilled') {
-              try {
-                const ctrackResult = await ctrackFallback.value.json()
-                const ctrackVehicles = ctrackResult.vehicles || []
-                fallbackVehicle = ctrackVehicles.find((v: any) => {
-                  const vehicleDriverName = v.driver_name?.toLowerCase() || ''
-                  return vehicleDriverName.includes(driverName) || driverName.includes(vehicleDriverName)
-                })
-                
-                // Also try assignment vehicle name match
-                if (!fallbackVehicle && assignment?.vehicle?.name) {
-                  fallbackVehicle = ctrackVehicles.find((v: any) => 
-                    v.plate?.toLowerCase() === assignment.vehicle.name.toLowerCase()
-                  )
-                }
-              } catch (error) {
-                console.log('C-Track fallback parse error:', error)
-              }
-            }
-            
-            // Check EPS API if not found in C-Track
-            if (!fallbackVehicle && epsFallback.status === 'fulfilled') {
-              try {
-                const epsResult = await epsFallback.value.json()
-                const epsVehicles = epsResult.data || []
-                
-                // First try to match by driver name
-                fallbackVehicle = epsVehicles.find((v: any) => {
-                  const vehicleDriverName = v.driver_name?.toLowerCase() || ''
-                  return vehicleDriverName.includes(driverName) || driverName.includes(vehicleDriverName)
-                })
-                
-                // Fallback: match by vehicle name from assignment
-                if (!fallbackVehicle && assignment?.vehicle?.name) {
-                  fallbackVehicle = epsVehicles.find((v: any) => {
-                    return v.plate?.toLowerCase() === assignment.vehicle.name.toLowerCase()
-                  })
-                }
-              } catch (error) {
-                console.log('EPS fallback parse error:', error)
-              }
-            }
-            
-            if (fallbackVehicle) {
-              setVehicleLocation(fallbackVehicle)
-            }
-          }
-        }
-        
-        // Fetch vehicle info by ID from local database
-        if (assignment.vehicle?.id) {
-          const { data: vehicle } = await supabase
-            .from('vehiclesc')
-            .select('*')
-            .eq('id', assignment.vehicle.id)
-            .single()
-          setVehicleInfo(vehicle)
-          
-          // Match with external endpoint using registration number
-          if (vehicle?.registration_number) {
-            try {
-              const response = await fetch('http://64.227.138.235:3000/api/eps-vehicles')
-              const result = await response.json()
-              const vehicles = result.data || []
-              
-              const matchedVehicle = vehicles.find((v: any) => {
-                return v.plate?.toLowerCase() === vehicle.registration_number.toLowerCase()
-              })
-              
-              if (matchedVehicle) {
-                setVehicleLocation(matchedVehicle)
-              }
-            } catch (error) {
-              console.error('Error fetching vehicle by registration:', error)
-            }
-          }
-        }
-      } catch (err) {
-        console.error('Error fetching assignment info:', err)
-      }
+    const assignments = trip.vehicleassignments || trip.vehicle_assignments || []
+    if (!assignments.length) {
       setLoading(false)
+      return
     }
 
-    fetchAssignmentInfo()
-  }, [trip.vehicleassignments, trip.vehicle_assignments])
+    const assignment = assignments[0]
+    setAssignment(assignment)
+    
+    // Auto-select driver from vehicleassignments
+    let selectedDriver = assignment.drivers?.[0]
+    if (trip.status?.toLowerCase() === 'handover' && assignment.drivers?.[1]?.id) {
+      selectedDriver = assignment.drivers[1]
+    }
+    
+    if (selectedDriver?.id) {
+      // Use driver info directly from assignment with fallback to name
+      const driverInfo = {
+        id: selectedDriver.id,
+        first_name: selectedDriver.first_name || selectedDriver.name?.split(' ')[0] || '',
+        surname: selectedDriver.surname || selectedDriver.name || 'Unknown',
+        phone_number: selectedDriver.phone_number || '',
+        available: true
+      }
+      setDriverInfo(driverInfo)
+    }
+    
+    // Auto-select vehicle from vehicleassignments
+    if (assignment.vehicle?.name) {
+      const vehicleInfo = {
+        id: assignment.vehicle.id,
+        registration_number: assignment.vehicle.name
+      }
+      setVehicleInfo(vehicleInfo)
+    }
+    
+    setLoading(false)
+  }, [trip.id, JSON.stringify(trip.vehicleassignments || trip.vehicle_assignments)])
 
-  const driverName = driverInfo ? (typeof driverInfo.surname === 'string' ? driverInfo.surname : String(driverInfo.surname || 'Unassigned')) : 'Unassigned'
+  const driverName = driverInfo ? `${driverInfo.first_name || ''} ${driverInfo.surname || ''}`.trim() || 'Unassigned' : 'Unassigned'
   const initials = driverName !== 'Unassigned' ? driverName.split(' ').map((s: string) => s[0]).slice(0,2).join('') : 'DR'
 
   if (loading) {
@@ -375,6 +235,34 @@ function DriverCard({ trip, userRole, handleViewMap, setCurrentTripForNote, setN
       </div>
 
       <div className="grid grid-cols-2 gap-2">
+        <Button
+          size="sm"
+          variant="link"
+          className="h-8 text-xs border"
+          onClick={async () => {
+            // Use existing vehicle location or pass plate info for map to handle
+            let matchedVehicleLocation = vehicleLocation;
+            if (!matchedVehicleLocation && vehicleInfo?.registration_number) {
+              // Create a placeholder with plate info for the map to handle
+              matchedVehicleLocation = {
+                plate: vehicleInfo.registration_number,
+                needsLookup: true
+              };
+            }
+            
+            const tripData = {
+              ...trip,
+              vehicleInfo,
+              driverInfo,
+              vehicleLocation: matchedVehicleLocation
+            };
+            setCurrentTripForEdit(tripData);
+            setEditTripOpen(true);
+          }}
+        >
+          <FileText className="w-3 h-3" /> Edit
+        </Button>
+
         <Button
           size="sm"
           variant="link"
@@ -487,7 +375,15 @@ function DriverCard({ trip, userRole, handleViewMap, setCurrentTripForNote, setN
             console.log('High risk zones:', highRiskZones);
             console.log('Route coordinates for map:', routeCoords ? routeCoords.length : 'none');
             console.log('Stop points for map:', stopPoints.length);
-            handleViewMap(driverName, { ...trip, vehicleLocation, routeCoords, stopPoints, highRiskZones });
+            // Try fuzzy matching for vehicle location if not found
+            let matchedVehicleLocation = vehicleLocation;
+            if (!matchedVehicleLocation && vehicleInfo?.registration_number) {
+              console.log('Attempting to find vehicle location for plate:', vehicleInfo.registration_number);
+              // Skip external API calls that cause CORS issues
+              // Vehicle location will be handled by the map component if needed
+            }
+            
+            handleViewMap(driverName, { ...trip, vehicleLocation: matchedVehicleLocation, routeCoords, stopPoints, highRiskZones });
           }}
         >
           <MapPin className="w-3 h-3" /> Track
@@ -525,6 +421,20 @@ function DriverCard({ trip, userRole, handleViewMap, setCurrentTripForNote, setN
           <User className="w-3 h-3" /> Change
         </SecureButton>
 
+        {userRole === 'admin' && (
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-8 text-xs border"
+            onClick={() => {
+              setCurrentTripForEdit({ ...trip, showHistoryOnly: true });
+              setEditTripOpen(true);
+            }}
+          >
+            <Clock className="w-3 h-3" /> History
+          </Button>
+        )}
+
         <SecureButton
           page="dashboard"
           action="delete"
@@ -545,7 +455,7 @@ function DriverCard({ trip, userRole, handleViewMap, setCurrentTripForNote, setN
 }
 
 // Enhanced routing components with proper waypoints
-function RoutingSection({ userRole, handleViewMap, setCurrentTripForNote, setNoteText, setNoteOpen, setAvailableDrivers, setCurrentTripForChange, setChangeDriverOpen, refreshTrigger, setRefreshTrigger, setPickupTimeOpen, setDropoffTimeOpen, setCurrentTripForTime, setTimeType, setSelectedTime, currentUnauthorizedTrip, setCurrentUnauthorizedTrip, setUnauthorizedStopModalOpen, loadingPhotos, setLoadingPhotos, setCurrentTripPhotos, setPhotosModalOpen, setCurrentTripAlerts, setAlertsModalOpen, setCurrentTripForClose, setCloseReason, setCloseTripOpen }: any) {
+function RoutingSection({ userRole, handleViewMap, setCurrentTripForNote, setNoteText, setNoteOpen, setAvailableDrivers, setCurrentTripForChange, setChangeDriverOpen, refreshTrigger, setRefreshTrigger, setPickupTimeOpen, setDropoffTimeOpen, setCurrentTripForTime, setTimeType, setSelectedTime, currentUnauthorizedTrip, setCurrentUnauthorizedTrip, setUnauthorizedStopModalOpen, loadingPhotos, setLoadingPhotos, setCurrentTripPhotos, setPhotosModalOpen, setCurrentTripAlerts, setAlertsModalOpen, setCurrentTripForClose, setCloseReason, setCloseTripOpen, setCurrentTripForEdit, setEditTripOpen, setCurrentTripForApproval, setApprovalModalOpen }: any) {
   const [trips, setTrips] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -722,6 +632,10 @@ function RoutingSection({ userRole, handleViewMap, setCurrentTripForNote, setNot
               setCurrentTripForClose={setCurrentTripForClose}
               setCloseReason={setCloseReason}
               setCloseTripOpen={setCloseTripOpen}
+              setCurrentTripForEdit={setCurrentTripForEdit}
+              setEditTripOpen={setEditTripOpen}
+              setCurrentTripForApproval={setCurrentTripForApproval}
+              setApprovalModalOpen={setApprovalModalOpen}
             />
             {/* Trip Card - 70% */}
             <div className={cn(
@@ -732,6 +646,29 @@ function RoutingSection({ userRole, handleViewMap, setCurrentTripForNote, setNot
             )} style={{ backgroundImage: "linear-gradient(180deg, rgba(255,255,255,1), rgba(249,250,251,1))" }}>
               {/* Top accent */}
               <div className="h-1 w-full rounded-full bg-gradient-to-r from-blue-500 via-blue-400 to-blue-400 mb-3 opacity-100" />
+
+              {/* Elevation Alert Banner */}
+              {trip.elevate && (
+                <div className="flex items-center justify-between p-2 mb-3 text-xs bg-gradient-to-r from-orange-50 to-amber-50 border border-orange-200 rounded-lg">
+                  <div className="flex items-center gap-2">
+                    <AlertTriangle className="w-3 h-3 text-orange-600 flex-shrink-0" />
+                    <span className="font-semibold text-orange-700 uppercase tracking-wide">Pending Approval</span>
+                    <span className="text-orange-600">•</span>
+                    <span className="text-orange-600">Requires management approval</span>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-6 px-2 text-xs border-orange-300 text-orange-700 hover:bg-orange-100"
+                    onClick={() => {
+                      setCurrentTripForApproval(trip);
+                      setApprovalModalOpen(true);
+                    }}
+                  >
+                    Review
+                  </Button>
+                </div>
+              )}
 
               {/* Alert Banner */}
               {(() => {
@@ -1460,6 +1397,10 @@ export default function Dashboard() {
   const [closeTripOpen, setCloseTripOpen] = useState(false);
   const [currentTripForClose, setCurrentTripForClose] = useState<any>(null);
   const [closeReason, setCloseReason] = useState('');
+  const [editTripOpen, setEditTripOpen] = useState(false);
+  const [currentTripForEdit, setCurrentTripForEdit] = useState<any>(null);
+  const [approvalModalOpen, setApprovalModalOpen] = useState(false);
+  const [currentTripForApproval, setCurrentTripForApproval] = useState<any>(null);
 
   // Get user role from cookies
   useEffect(() => {
@@ -1711,6 +1652,10 @@ export default function Dashboard() {
               setCurrentTripForClose={setCurrentTripForClose}
               setCloseReason={setCloseReason}
               setCloseTripOpen={setCloseTripOpen}
+              setCurrentTripForEdit={setCurrentTripForEdit}
+              setEditTripOpen={setEditTripOpen}
+              setCurrentTripForApproval={setCurrentTripForApproval}
+              setApprovalModalOpen={setApprovalModalOpen}
             />
           </div>
         )}
@@ -1926,6 +1871,18 @@ export default function Dashboard() {
           </div>
         )}
       </div>
+
+      <EditTripModal
+        isOpen={editTripOpen}
+        onClose={() => {
+          setEditTripOpen(false)
+          setCurrentTripForEdit(null)
+        }}
+        trip={currentTripForEdit}
+        onUpdate={() => {
+          setRefreshTrigger(prev => prev + 1)
+        }}
+      />
 
       {/* Change Driver Modal */}
       {changeDriverOpen && (
@@ -3006,6 +2963,80 @@ export default function Dashboard() {
           </div>
         </div>
       )}
+
+      <EditTripModal
+        isOpen={approvalModalOpen}
+        onClose={() => {
+          setApprovalModalOpen(false)
+          setCurrentTripForApproval(null)
+        }}
+        trip={currentTripForApproval}
+        onUpdate={() => {
+          setRefreshTrigger(prev => prev + 1)
+        }}
+        readOnly={true}
+        showApprovalButtons={true}
+        onApprove={async () => {
+          try {
+            const supabase = createClient();
+            const { error } = await supabase
+              .from('trips')
+              .update({ elevate: false })
+              .eq('id', currentTripForApproval.id);
+            
+            if (error) throw error;
+            
+            setApprovalModalOpen(false);
+            setCurrentTripForApproval(null);
+            setRefreshTrigger(prev => prev + 1);
+          } catch (err) {
+            console.error('Error approving trip:', err);
+            alert('Failed to approve trip');
+          }
+        }}
+        onDecline={async () => {
+          try {
+            const supabase = createClient();
+            
+            // Get the most recent history entry to restore previous data
+            const { data: historyData } = await supabase
+              .from('trip_history')
+              .select('previous_data')
+              .eq('trip_id', currentTripForApproval.id)
+              .order('created_at', { ascending: false })
+              .limit(1)
+              .single();
+            
+            let updateData = {
+              elevate: false,
+              status_notes: (currentTripForApproval.status_notes || '') + '\n[DECLINED] Trip edit declined by management'
+            };
+            
+            // If we have previous data, restore it
+            if (historyData?.previous_data) {
+              updateData = {
+                ...historyData.previous_data,
+                elevate: false,
+                status_notes: (historyData.previous_data.status_notes || '') + '\n[DECLINED] Trip edit declined - reverted to previous version'
+              };
+            }
+            
+            const { error } = await supabase
+              .from('trips')
+              .update(updateData)
+              .eq('id', currentTripForApproval.id);
+            
+            if (error) throw error;
+            
+            setApprovalModalOpen(false);
+            setCurrentTripForApproval(null);
+            setRefreshTrigger(prev => prev + 1);
+          } catch (err) {
+            console.error('Error declining trip:', err);
+            alert('Failed to decline trip');
+          }
+        }}
+      />
     </>
   );
 }
