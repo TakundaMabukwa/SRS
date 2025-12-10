@@ -10,12 +10,12 @@ const nextConfig = {
     workerThreads: false,
     cpus: 1
   },
-  compress: true,
+  compress: false,
+  swcMinify: false,
+  productionBrowserSourceMaps: false,
   webpack: (config) => {
-    config.optimization.splitChunks = {
-      chunks: 'all',
-      maxSize: 200000
-    }
+    config.optimization.minimize = false
+    config.cache = false
     return config
   }
 }
