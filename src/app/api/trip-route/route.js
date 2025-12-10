@@ -13,7 +13,7 @@ export async function GET(request) {
 
   try {
     // Get high-risk areas first
-    const supabase = createClient()
+    const supabase = await createClient()
     const { data: highRiskAreas } = await supabase.from('high_risk').select('coordinates')
     
     // Format exclusion zones for external API

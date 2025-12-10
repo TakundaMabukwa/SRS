@@ -24,7 +24,7 @@ export async function GET() {
 
 export async function POST(request) {
   try {
-    const supabase = createClient()
+    const supabase = await createClient()
     const body = await request.json()
     
     const { data, error } = await supabase

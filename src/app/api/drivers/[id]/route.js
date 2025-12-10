@@ -6,7 +6,7 @@ import { logUserActivity } from '@/utils/logUserActivity'
 // update driver
 // *****************************
 export async function PUT(request, { params }) {
-  const supabase = createClient()
+  const supabase = await createClient()
   const { id } = params
   const body = await request.json()
 
@@ -81,7 +81,7 @@ export async function PUT(request, { params }) {
 // delete driver
 // *****************************
 export async function DELETE(request, { params }) {
-  const supabase = createClient()
+  const supabase = await createClient()
   const { id } = params
 
   // Get user session

@@ -10,7 +10,7 @@ export async function POST(request) {
       return NextResponse.json({ error: 'Target location required' }, { status: 400 })
     }
 
-    const supabase = createClient()
+    const supabase = await createClient()
     const { data: highRiskAreas } = await supabase.from('high_risk').select('*')
     
     const closestVehicle = await findClosestVehicle(targetLocation, highRiskAreas || [])

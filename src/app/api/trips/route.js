@@ -6,7 +6,7 @@ import { createClient } from '@supabase/supabase-js'
 // Helper function to verify auth
 async function verifyAuth(request) {
 
-  const supabase = createClient();
+  const supabase = await createClient();
 
   const authHeader = request.headers.get('authorization')
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
