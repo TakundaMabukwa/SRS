@@ -334,20 +334,18 @@ export default function LoadPlanPage() {
   // Vehicle type options
   const vehicleTypeOptions = [
     'TAUTLINER',
-    'Float/Volumax',
-    '14M',
-    '15M',
-    '8 Tonner'
+    'TAUT X-BRDER - BOTSWANA',
+    'TAUT X-BRDER - NAMIBIA', 
+    'CITRUS LOAD (+1 DAY STANDING FPT)',
+    '14M/15M COMBO (NEW)',
+    '14M/15M REEFER',
+    '9 METER (NEW)',
+    '8T JHB (NEW - EPS)',
+    '8T JHB (NEW) - X-BRDER - MOZ',
+    '8T JHB (OLD)',
+    '14 TON CURTAIN',
+    '1TON BAKKIE'
   ]
-  
-  // Map display names to rate card keys
-  const vehicleTypeMapping = {
-    'TAUTLINER': 'TAUTLINER',
-    'Float/Volumax': '14M/15M REEFER',
-    '14M': '14M/15M COMBO (NEW)',
-    '15M': '14M/15M COMBO (NEW)',
-    '8 Tonner': '8T JHB (NEW - EPS)'
-  }
 
   // Filter vehicles based on selected type
   const filteredVehicles = useMemo(() => {
@@ -699,22 +697,14 @@ export default function LoadPlanPage() {
 
   // Rate Card Calculation Function - Matches Excel COSTING Sheet
   const calculateRateCardCost = useCallback((vehicleType, kms, days) => {
-    if (!vehicleType) {
+    if (!vehicleType || !RATE_CARD_SYSTEM[vehicleType]) {
       return {
         fuel_cost: 0, base_cost: 0, transport_cost: 0, profit_amount: 0, total_transport: 0,
         total_fixed: 0, total_variable: 0
       }
     }
 
-    const rateCardKey = vehicleTypeMapping[vehicleType] || vehicleType
-    const rc = RATE_CARD_SYSTEM[rateCardKey]
-    
-    if (!rc) {
-      return {
-        fuel_cost: 0, base_cost: 0, transport_cost: 0, profit_amount: 0, total_transport: 0,
-        total_fixed: 0, total_variable: 0
-      }
-    }
+    const rc = RATE_CARD_SYSTEM[vehicleType]
     
     // FIXED COSTS (prorated by days)
     const fixed_truck = (rc.hp_depr + rc.tracking + rc.licence + rc.insurance) / 30 * days

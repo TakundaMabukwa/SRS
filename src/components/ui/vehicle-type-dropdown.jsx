@@ -6,10 +6,17 @@ import { cn } from '@/lib/utils'
 
 const VEHICLE_TYPES = [
   'TAUTLINER',
-  'Float/Volumax',
-  '14M',
-  '15M',
-  '8 Tonner'
+  'TAUT X-BRDER - BOTSWANA',
+  'TAUT X-BRDER - NAMIBIA', 
+  'CITRUS LOAD (+1 DAY STANDING FPT)',
+  '14M/15M COMBO (NEW)',
+  '14M/15M REEFER',
+  '9 METER (NEW)',
+  '8T JHB (NEW - EPS)',
+  '8T JHB (NEW) - X-BRDER - MOZ',
+  '8T JHB (OLD)',
+  '14 TON CURTAIN',
+  '1TON BAKKIE'
 ]
 
 export function VehicleTypeDropdown({ 
