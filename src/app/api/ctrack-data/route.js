@@ -1,13 +1,8 @@
 import { NextResponse } from 'next/server'
 
-const BASE_URL = 'http://64.227.138.235:3000/api/eps-rewards'
-
 export async function GET(request) {
   try {
-    const { searchParams } = new URL(request.url)
-    const path = searchParams.get('path') || ''
-    
-    const url = `${BASE_URL}/${path}`
+    const url = process.env.NEXT_PUBLIC_CRTACK_VEHICLE_API_ENDPOINT
     
     const controller = new AbortController()
     const timeoutId = setTimeout(() => controller.abort(), 15000)
@@ -28,11 +23,12 @@ export async function GET(request) {
     return NextResponse.json(data)
     
   } catch (error) {
-    console.error('Error fetching EPS rewards data:', error)
+    console.error('Error fetching CTrack data:', error)
     
     return NextResponse.json(
       { 
-        message: 'Failed to fetch EPS rewards data',
+        message: 'Failed to fetch CTrack data',
+        vehicles: [],
         error: error.message 
       },
       { status: 500 }
