@@ -259,7 +259,7 @@ export default function LoadPlanPage() {
         supabase.from('vehiclesc').select('id, registration_number, engine_number, vin_number, make, model, sub_model, manufactured_year, vehicle_type').eq('veh_dormant_flag', false),
         supabase.from('drivers').select('*'),
         supabase.from('cost_centers').select('*'),
-        fetch('http://64.227.138.235:3000/api/eps-vehicles')
+        fetch('/api/eps-vehicles')
       ])
       
 
@@ -267,7 +267,7 @@ export default function LoadPlanPage() {
       console.log('Supabase errors:', { loadsError, clientsError, vehiclesError, driversError, costCentersError })
       
       const trackingData = await trackingResponse.json()
-      const vehicleData = trackingData?.result?.data || trackingData?.data || trackingData || []
+      const vehicleData = trackingData?.result?.data || trackingData?.data || []
       
       // Format drivers from drivers table
       const formattedDrivers = (driversData || []).map(driver => ({
@@ -423,15 +423,19 @@ export default function LoadPlanPage() {
     const pickupCoords = await getPickupCoordinates(pickupLocation)
     if (!pickupCoords) return drivers
     
-    // Use stored vehicle tracking data
+    const trackingData = Array.isArray(vehicleTrackingData) ? vehicleTrackingData : []
+    if (trackingData.length === 0) return drivers
+    
     const driversWithDistance = drivers.map(driver => {
-      // Find matching vehicle by driver name
-      const trackingData = Array.isArray(vehicleTrackingData) ? vehicleTrackingData : []
-      const driverFullName = `${driver.first_name} ${driver.surname}`.trim().toLowerCase()
-      const matchingVehicle = trackingData.find(vehicle => 
-        vehicle.driver_name && 
-        vehicle.driver_name.toLowerCase() === driverFullName
-      )
+      const surname = driver.surname?.trim().toLowerCase()
+      const firstName = driver.first_name?.trim().toLowerCase()
+      const fullName = `${firstName} ${surname}`.trim()
+      
+      const matchingVehicle = trackingData.find(vehicle => {
+        if (!vehicle.driver_name) return false
+        const vehicleDriverName = vehicle.driver_name.trim().toLowerCase()
+        return vehicleDriverName === surname || vehicleDriverName === fullName || vehicleDriverName.includes(surname)
+      })
       
       if (matchingVehicle?.latitude && matchingVehicle?.longitude) {
         const distance = calculateDistance(
@@ -614,10 +618,10 @@ export default function LoadPlanPage() {
   useEffect(() => {
     if (loadingLocation) {
       // Refresh vehicle tracking data when location changes
-      fetch('http://64.227.138.235:3000/api/eps-vehicles')
+      fetch('/api/eps-vehicles')
         .then(response => response.json())
         .then(trackingData => {
-          const vehicleData = trackingData?.result?.data || trackingData?.data || trackingData || []
+          const vehicleData = trackingData?.result?.data || trackingData?.data || []
           setVehicleTrackingData(vehicleData)
           return getSortedDriversByDistance(loadingLocation)
         })
@@ -1005,22 +1009,34 @@ export default function LoadPlanPage() {
 
   // Auto-select closest driver when dropdown is opened
   const handleDriverDropdownOpen = useCallback(async (driverIndex) => {
+    console.log('Driver dropdown opened, loading location:', loadingLocation)
     if (!loadingLocation) return
     
     setIsCalculatingDistance(true)
     try {
-      // Refresh vehicle tracking data first
-      const trackingResponse = await fetch('http://64.227.138.235:3000/api/eps-vehicles')
+      console.log('Fetching vehicle tracking data from API...')
+      const trackingResponse = await fetch('/api/eps-vehicles')
       const trackingData = await trackingResponse.json()
-      const vehicleData = trackingData?.result?.data || trackingData?.data || trackingData || []
+      console.log('API response:', trackingData)
+      console.log('Has result?', !!trackingData?.result)
+      console.log('Has result.data?', !!trackingData?.result?.data)
+      console.log('Has data?', !!trackingData?.data)
+      console.log('Has error?', !!trackingData?.error)
+      
+      const vehicleData = trackingData?.result?.data || trackingData?.data || []
+      console.log('Vehicle data extracted:', vehicleData.length, 'vehicles')
+      if (vehicleData.length > 0) {
+        console.log('First 3 drivers:', vehicleData.slice(0, 3).map(v => v.driver_name))
+      }
       setVehicleTrackingData(vehicleData)
       
       const sorted = await getSortedDriversByDistance(loadingLocation)
+      console.log('Sorted drivers:', sorted.filter(d => d.distance !== null).length, 'with distances')
       setSortedDrivers(sorted)
       
-      // Auto-select closest driver if available
       const closestDriver = sorted.find(d => d.distance !== null)
       if (closestDriver) {
+        console.log('Auto-selecting closest driver:', closestDriver.first_name, closestDriver.surname, closestDriver.distance, 'km')
         handleDriverChange(driverIndex, closestDriver.id)
       }
     } catch (error) {

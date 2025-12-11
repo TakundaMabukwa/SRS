@@ -159,8 +159,8 @@ function DriverCard({ trip, userRole, handleViewMap, setCurrentTripForNote, setN
       
       // Try both APIs simultaneously
       const [epsResult, ctrackResult] = await Promise.allSettled([
-        fetch(`${process.env.NEXT_PUBLIC_VEHICLE_API_ENDPOINT}`),
-        fetch(`${process.env.NEXT_PUBLIC_CRTACK_VEHICLE_API_ENDPOINT}`)
+        fetch('/api/eps-vehicles'),
+        fetch('/api/ctrack-data')
       ])
       
       // Check EPS API
@@ -410,7 +410,26 @@ function DriverCard({ trip, userRole, handleViewMap, setCurrentTripForNote, setN
             if (pickup && dropoff) {
               try {
                 const mapboxToken = process.env.NEXT_PUBLIC_MAPBOX_TOKEN;
-                let waypoints = `${encodeURIComponent(pickup)};${encodeURIComponent(dropoff)}`;
+                
+                // Geocode pickup and dropoff addresses to coordinates
+                const geocodeAddress = async (address) => {
+                  const geocodeResponse = await fetch(`https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(address)}.json?access_token=${mapboxToken}&limit=1`);
+                  const geocodeData = await geocodeResponse.json();
+                  if (geocodeData.features && geocodeData.features[0]) {
+                    return geocodeData.features[0].center; // [lng, lat]
+                  }
+                  return null;
+                };
+                
+                const pickupCoords = await geocodeAddress(pickup);
+                const dropoffCoords = await geocodeAddress(dropoff);
+                
+                if (!pickupCoords || !dropoffCoords) {
+                  console.error('Failed to geocode addresses');
+                  throw new Error('Geocoding failed');
+                }
+                
+                let waypoints = `${pickupCoords[0]},${pickupCoords[1]};${dropoffCoords[0]},${dropoffCoords[1]}`;
                 
                 // Add stop points if available
                 const selectedStopPoints = trip.selected_stop_points || trip.selectedstoppoints || [];
@@ -424,12 +443,12 @@ function DriverCard({ trip, userRole, handleViewMap, setCurrentTripForNote, setN
                   const stopWaypoints = (stopPointsData || []).map(point => {
                     if (point.coordinates) {
                       const coords = point.coordinates.split(' ')[0].split(',');
-                      return `${coords[1]},${coords[0]}`; // lat,lng for geocoding
+                      return `${coords[0]},${coords[1]}`; // lng,lat
                     }
                   }).filter(Boolean);
                   
                   if (stopWaypoints.length > 0) {
-                    waypoints = `${encodeURIComponent(pickup)};${stopWaypoints.join(';')};${encodeURIComponent(dropoff)}`;
+                    waypoints = `${pickupCoords[0]},${pickupCoords[1]};${stopWaypoints.join(';')};${dropoffCoords[0]},${dropoffCoords[1]}`;
                   }
                 }
                 
@@ -469,11 +488,27 @@ function DriverCard({ trip, userRole, handleViewMap, setCurrentTripForNote, setN
                 
                 if (origin && destination) {
                   const mapboxToken = process.env.NEXT_PUBLIC_MAPBOX_TOKEN;
-                  const response = await fetch(`https://api.mapbox.com/directions/v5/mapbox/driving/${encodeURIComponent(origin)};${encodeURIComponent(destination)}?access_token=${mapboxToken}&geometries=geojson&overview=full&alternatives=true`);
-                  const routeData = await response.json();
-                  if (routeData.routes && routeData.routes[0]) {
-                    routeCoords = routeData.routes[0].geometry.coordinates;
-                    console.log('Generated fallback route:', routeCoords.length, 'points');
+                  
+                  // Geocode addresses first
+                  const geocodeAddress = async (address) => {
+                    const geocodeResponse = await fetch(`https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(address)}.json?access_token=${mapboxToken}&limit=1`);
+                    const geocodeData = await geocodeResponse.json();
+                    if (geocodeData.features && geocodeData.features[0]) {
+                      return geocodeData.features[0].center;
+                    }
+                    return null;
+                  };
+                  
+                  const originCoords = await geocodeAddress(origin);
+                  const destCoords = await geocodeAddress(destination);
+                  
+                  if (originCoords && destCoords) {
+                    const response = await fetch(`https://api.mapbox.com/directions/v5/mapbox/driving/${originCoords[0]},${originCoords[1]};${destCoords[0]},${destCoords[1]}?access_token=${mapboxToken}&geometries=geojson&overview=full&alternatives=true`);
+                    const routeData = await response.json();
+                    if (routeData.routes && routeData.routes[0]) {
+                      routeCoords = routeData.routes[0].geometry.coordinates;
+                      console.log('Generated fallback route:', routeCoords.length, 'points');
+                    }
                   }
                 }
               } catch (error) {

@@ -7,6 +7,7 @@ import { cn } from '@/lib/utils'
 export function DriverDropdown({ 
   value, 
   onChange, 
+  onOpen,
   drivers = [], 
   placeholder = "Select driver",
   showDistance = false
@@ -14,9 +15,9 @@ export function DriverDropdown({
   // Sort drivers by distance when showDistance is true
   const sortedDrivers = showDistance 
     ? [...drivers].sort((a, b) => {
-        if (a.distance === null && b.distance === null) return 0
-        if (a.distance === null) return 1
-        if (b.distance === null) return -1
+        if (a.distance == null && b.distance == null) return 0
+        if (a.distance == null) return 1
+        if (b.distance == null) return -1
         return a.distance - b.distance
       })
     : drivers
@@ -62,7 +63,12 @@ export function DriverDropdown({
     <div className="relative" ref={dropdownRef}>
       <button
         type="button"
-        onClick={() => setIsOpen(!isOpen)}
+        onClick={() => {
+          if (!isOpen && onOpen) {
+            onOpen()
+          }
+          setIsOpen(!isOpen)
+        }}
         className={cn(
           "flex h-10 w-full items-center justify-between rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50",
           !value && "text-muted-foreground"
@@ -88,13 +94,18 @@ export function DriverDropdown({
             />
           </div>
           <div className="max-h-60 overflow-auto p-1">
+            {showDistance && filteredDrivers.every(d => d.distance == null) && (
+              <div className="px-2 py-2 text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-md mb-2">
+                GPS data unavailable - distances not shown
+              </div>
+            )}
             {filteredDrivers.length === 0 ? (
               <div className="py-6 text-center text-sm text-muted-foreground">
                 {searchTerm ? 'No drivers match your search.' : 'No drivers found.'}
               </div>
             ) : (
               filteredDrivers.map((driver, index) => {
-                const isClosest = showDistance && index === 0 && driver.distance !== null
+                const isClosest = showDistance && index === 0 && driver.distance != null
                 return (
                   <div
                     key={driver.id}
@@ -112,7 +123,7 @@ export function DriverDropdown({
                         {isClosest && <span className="ml-1 text-xs text-blue-600">(Closest)</span>}
                       </span>
                     </div>
-                    {showDistance && driver.distance !== null && (
+                    {showDistance && driver.distance != null && (
                       <div className="flex items-center gap-1">
                         <span className={cn(
                           "text-xs font-medium px-2 py-1 rounded-full",
