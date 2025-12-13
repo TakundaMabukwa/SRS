@@ -8,3 +8,5 @@ sql/
 node_modules/
 .env.local
 .env
+.md
+.MD

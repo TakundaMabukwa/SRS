@@ -36,6 +36,7 @@ import {
   User2,
   ChevronDown,
   ChevronRight,
+  Video,
 } from "lucide-react";
 import { getDashboardStats } from "@/lib/stats/dashboard";
 import { createClient } from "@/lib/supabase/client";
@@ -68,11 +69,79 @@ import TestRouteMap from "@/components/map/test-route-map";
 import { DateTimePicker } from "@/components/ui/datetime-picker";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line, Area, AreaChart } from 'recharts';
 import { EditTripModal } from "@/components/ui/edit-trip-modal";
+import LiveMapView from "@/components/map/live-map-view";
 
-
+// Global vehicle data cache to prevent redundant API calls
+const vehicleDataCache = {
+  data: null as any,
+  timestamp: 0,
+  cacheDuration: 30000, // 30 seconds
+  isLoading: false,
+  pendingCallbacks: [] as Array<(data: any) => void>,
+  
+  async fetch(): Promise<any> {
+    const now = Date.now();
+    
+    // Return cached data if still fresh
+    if (this.data && now - this.timestamp < this.cacheDuration) {
+      return this.data;
+    }
+    
+    // If already loading, wait for that request
+    if (this.isLoading) {
+      return new Promise((resolve) => {
+        this.pendingCallbacks.push(resolve);
+      });
+    }
+    
+    // Start new fetch
+    this.isLoading = true;
+    
+    try {
+      const [epsResult, ctrackResult] = await Promise.allSettled([
+        fetch('/api/eps-vehicles'),
+        fetch('/api/ctrack-data')
+      ]);
+      
+      const vehicles: any[] = [];
+      
+      // Process EPS API
+      if (epsResult.status === 'fulfilled') {
+        try {
+          const epsData = await epsResult.value.json();
+          vehicles.push(...(epsData.data || []));
+        } catch (e) {}
+      }
+      
+      // Process CTrack API
+      if (ctrackResult.status === 'fulfilled') {
+        try {
+          const ctrackData = await ctrackResult.value.json();
+          vehicles.push(...(ctrackData.vehicles || []));
+        } catch (e) {}
+      }
+      
+      this.data = vehicles;
+      this.timestamp = now;
+      
+      // Resolve pending callbacks
+      this.pendingCallbacks.forEach(cb => cb(this.data));
+      this.pendingCallbacks = [];
+      
+      return this.data;
+    } finally {
+      this.isLoading = false;
+    }
+  },
+  
+  findVehicle(plate: string): any {
+    if (!this.data) return null;
+    return this.data.find((v: any) => v.plate?.toLowerCase() === plate.toLowerCase());
+  }
+};
 
 // Driver Card Component with fetched driver info
-function DriverCard({ trip, userRole, handleViewMap, setCurrentTripForNote, setNoteText, setNoteOpen, setAvailableDrivers, setCurrentTripForChange, setChangeDriverOpen, setCurrentTripForClose, setCloseReason, setCloseTripOpen, setCurrentTripForEdit, setEditTripOpen, setCurrentTripForApproval, setApprovalModalOpen }: any) {
+function DriverCard({ trip, userRole, handleViewMap, setCurrentTripForNote, setNoteText, setNoteOpen, setAvailableDrivers, setCurrentTripForChange, setChangeDriverOpen, setCurrentTripForClose, setCloseReason, setCloseTripOpen, setCurrentTripForEdit, setEditTripOpen, setCurrentTripForApproval, setApprovalModalOpen, setVideoModalOpen, setCurrentTripForVideo, isVisible = true }: any) {
   const router = useRouter()
   const [driverInfo, setDriverInfo] = useState<any>(null)
   const [vehicleInfo, setVehicleInfo] = useState<any>(null)
@@ -91,6 +160,11 @@ function DriverCard({ trip, userRole, handleViewMap, setCurrentTripForNote, setN
   }, [trip.unauthorized_stops_count])
 
   useEffect(() => {
+    // Only fetch if this card is visible (not on another tab)
+    if (!isVisible) {
+      return;
+    }
+
     async function fetchAssignmentInfo() {
       const assignments = trip.vehicleassignments || trip.vehicle_assignments || []
       if (!assignments.length) {
@@ -155,43 +229,21 @@ function DriverCard({ trip, userRole, handleViewMap, setCurrentTripForNote, setN
       const vehiclePlate = assignment?.vehicle?.name
       if (!vehiclePlate) return
       
-      console.log('Looking for vehicle plate:', vehiclePlate)
-      
-      // Try both APIs simultaneously
-      const [epsResult, ctrackResult] = await Promise.allSettled([
-        fetch('/api/eps-vehicles'),
-        fetch('/api/ctrack-data')
-      ])
-      
-      // Check EPS API
-      if (epsResult.status === 'fulfilled') {
-        try {
-          const epsData = await epsResult.value.json()
-          const epsVehicles = epsData.data || []
-          const found = epsVehicles.find((v: any) => v.plate?.toLowerCase() === vehiclePlate.toLowerCase())
-          if (found && found.latitude && found.longitude) {
-            setVehicleLocation(found)
-            return
-          }
-        } catch (e) {}
-      }
-      
-      // Check CTrack API
-      if (ctrackResult.status === 'fulfilled') {
-        try {
-          const ctrackData = await ctrackResult.value.json()
-          const ctrackVehicles = ctrackData.vehicles || []
-          const found = ctrackVehicles.find((v: any) => v.plate?.toLowerCase() === vehiclePlate.toLowerCase())
-          if (found) {
-            setVehicleLocation(found)
-            return
-          }
-        } catch (e) {}
+      try {
+        // Use cached vehicle data
+        await vehicleDataCache.fetch();
+        const found = vehicleDataCache.findVehicle(vehiclePlate);
+        
+        if (found && found.latitude && found.longitude) {
+          setVehicleLocation(found);
+        }
+      } catch (e) {
+        console.error('Error finding vehicle location:', e);
       }
     }
 
     fetchAssignmentInfo()
-  }, [trip.id, JSON.stringify(trip.vehicleassignments || trip.vehicle_assignments)])
+  }, [trip.id, JSON.stringify(trip.vehicleassignments || trip.vehicle_assignments), isVisible])
 
   const driverName = driverInfo ? `${driverInfo.first_name || ''} ${driverInfo.surname || ''}`.trim() || 'Unassigned' : 'Unassigned'
   const initials = driverName !== 'Unassigned' ? driverName.split(' ').map((s: string) => s[0]).slice(0,2).join('') : 'DR'
@@ -655,12 +707,30 @@ function DriverCard({ trip, userRole, handleViewMap, setCurrentTripForNote, setN
           <X className="w-3 h-3" /> Close
         </SecureButton>
       </div>
+
+      {/* Full-width Video Button */}
+      <Button
+        size="sm"
+        variant="default"
+        className="h-10 text-sm font-semibold w-full mt-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white shadow-lg hover:shadow-xl transition-all duration-200 border-0"
+        onClick={() => {
+          const driver = driverInfo 
+            ? `${driverInfo.first_name || ''} ${driverInfo.surname || ''}`.trim() || 'Unassigned'
+            : 'Unassigned';
+          const vehicle = vehicleLocation?.plate || vehicleInfo?.registration_number || 'Vehicle Info Unavailable';
+          
+          router.push(`/video-feeds?driver=${encodeURIComponent(driver)}&vehicle=${encodeURIComponent(vehicle)}`);
+        }}
+      >
+        <Video className="w-4 h-4 mr-2" />
+        View Live Camera Feeds
+      </Button>
     </div>
   )
 }
 
 // Enhanced routing components with proper waypoints
-function RoutingSection({ userRole, handleViewMap, setCurrentTripForNote, setNoteText, setNoteOpen, setAvailableDrivers, setCurrentTripForChange, setChangeDriverOpen, refreshTrigger, setRefreshTrigger, setPickupTimeOpen, setDropoffTimeOpen, setCurrentTripForTime, setTimeType, setSelectedTime, currentUnauthorizedTrip, setCurrentUnauthorizedTrip, setUnauthorizedStopModalOpen, loadingPhotos, setLoadingPhotos, setCurrentTripPhotos, setPhotosModalOpen, setCurrentTripAlerts, setAlertsModalOpen, setCurrentTripForClose, setCloseReason, setCloseTripOpen, setCurrentTripForEdit, setEditTripOpen, setCurrentTripForApproval, setApprovalModalOpen }: any) {
+function RoutingSection({ userRole, handleViewMap, setCurrentTripForNote, setNoteText, setNoteOpen, setAvailableDrivers, setCurrentTripForChange, setChangeDriverOpen, refreshTrigger, setRefreshTrigger, setPickupTimeOpen, setDropoffTimeOpen, setCurrentTripForTime, setTimeType, setSelectedTime, currentUnauthorizedTrip, setCurrentUnauthorizedTrip, setUnauthorizedStopModalOpen, loadingPhotos, setLoadingPhotos, setCurrentTripPhotos, setPhotosModalOpen, setCurrentTripAlerts, setAlertsModalOpen, setCurrentTripForClose, setCloseReason, setCloseTripOpen, setCurrentTripForEdit, setEditTripOpen, setCurrentTripForApproval, setApprovalModalOpen, isVisible = true }: any) {
   const [trips, setTrips] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -827,6 +897,7 @@ function RoutingSection({ userRole, handleViewMap, setCurrentTripForNote, setNot
             <DriverCard 
               trip={trip} 
               userRole={userRole}
+              isVisible={isVisible}
               handleViewMap={handleViewMap}
               setCurrentTripForNote={setCurrentTripForNote}
               setNoteText={setNoteText}
@@ -1589,8 +1660,8 @@ export default function Dashboard() {
   const [currentTripForEdit, setCurrentTripForEdit] = useState<any>(null);
   const [approvalModalOpen, setApprovalModalOpen] = useState(false);
   const [currentTripForApproval, setCurrentTripForApproval] = useState<any>(null);
-
-  // Get user role from cookies
+  const [videoModalOpen, setVideoModalOpen] = useState(false);
+  const [currentTripForVideo, setCurrentTripForVideo] = useState<any>(null);
   useEffect(() => {
     const getCookie = (name: string) => {
       const value = `; ${document.cookie}`;
@@ -1760,6 +1831,47 @@ export default function Dashboard() {
     }
   }, [activeTab])
 
+  // Full-page map view with overlay tabs
+  if (activeTab === "live-map") {
+    return (
+      <>
+        <div className="absolute inset-0 -m-6 z-0">
+          <LiveMapView />
+        </div>
+        
+        {/* Overlay Tabs */}
+        <div className="relative z-10 mb-4">
+          <Tabs
+            value={activeTab}
+            onValueChange={(v) => setActiveTab(v)}
+            className="w-full"
+          >
+            <TabsList className="flex w-fit items-center rounded-lg bg-white/90 backdrop-blur-sm p-1 shadow-lg">
+              <TabsTrigger
+                value="routing"
+                className="px-6 py-2 text-sm font-medium rounded-md data-[state=active]:bg-white data-[state=active]:shadow-sm"
+              >
+                Trip Routing
+              </TabsTrigger>
+              <TabsTrigger
+                value="live-map"
+                className="px-6 py-2 text-sm font-medium rounded-md data-[state=active]:bg-white data-[state=active]:shadow-sm"
+              >
+                Live Map
+              </TabsTrigger>
+              <TabsTrigger
+                value="reports"
+                className="px-6 py-2 text-sm font-medium rounded-md data-[state=active]:bg-white data-[state=active]:shadow-sm"
+              >
+                Trip Reports
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
+        </div>
+      </>
+    );
+  }
+
   return (
     <>
       <div className="flex-1 space-y-4 p-4 pt-6">
@@ -1810,6 +1922,12 @@ export default function Dashboard() {
                 Trip Routing
               </TabsTrigger>
               <TabsTrigger
+                value="live-map"
+                className="px-6 py-2 text-sm font-medium rounded-md data-[state=active]:bg-white data-[state=active]:shadow-sm"
+              >
+                Live Map
+              </TabsTrigger>
+              <TabsTrigger
                 value="reports"
                 className="px-6 py-2 text-sm font-medium rounded-md data-[state=active]:bg-white data-[state=active]:shadow-sm"
               >
@@ -1830,6 +1948,7 @@ export default function Dashboard() {
             </div>
             <RoutingSection 
               userRole={userRole}
+              isVisible={activeTab === "routing"}
               handleViewMap={handleViewMap}
               setCurrentTripForNote={setCurrentTripForNote}
               setNoteText={setNoteText}
@@ -2299,72 +2418,47 @@ export default function Dashboard() {
               </Button>
             </div>
             <div className="flex flex-col lg:flex-row gap-4 p-4 flex-1 min-h-0">
-              <div className="w-full lg:w-80 bg-gray-50 p-4 rounded-lg flex-shrink-0 max-h-64 lg:max-h-none overflow-y-auto">
-                <h4 className="font-semibold mb-3">Driver Information</h4>
-                {mapData?.driverDetails && (
-                  <div className="space-y-3 text-sm">
-                    <div className="bg-blue-50 p-3 rounded-lg">
-                      <div className="font-medium text-blue-900">{mapData.driverDetails.fullName}</div>
-                      <div className="text-blue-700 text-xs">Vehicle: {mapData.driverDetails.plate}</div>
-                    </div>
-                    <div className="space-y-2">
-                      <div className="flex justify-between">
-                        <span className="text-gray-600">Speed:</span>
-                        <span className="font-medium">{mapData.driverDetails.speed} km/h</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-gray-600">Mileage:</span>
-                        <span className="font-medium">{parseFloat(mapData.driverDetails.mileage || 0).toLocaleString()} km</span>
-                      </div>
-                      <div className="text-xs text-gray-500">
-                        <div className="font-medium mb-1">Current Location:</div>
-                        <div>{mapData.driverDetails.address}</div>
-                      </div>
-                      {mapData.driverDetails.geozone && (
-                        <div className="text-xs text-gray-500">
-                          <div className="font-medium mb-1">Geozone:</div>
-                          <div>{mapData.driverDetails.geozone}</div>
-                        </div>
-                      )}
-                      <div className="text-xs text-gray-500">
-                        <div className="font-medium mb-1">Last Update:</div>
-                        <div>{new Date(mapData.driverDetails.lastUpdate).toLocaleString()}</div>
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
-              <div className="flex-1 min-h-0">
+              {/* Render Map First - Priority Loading */}
+              <div className="flex-1 min-h-0 order-1 lg:order-2">
                 <div 
                   id="driver-map" 
-                  className="w-full h-full min-h-[400px] rounded border"
+                  className="w-full h-full min-h-[400px] rounded border bg-slate-100"
                   ref={(el) => {
                     if (el && mapData) {
-                      el.innerHTML = ''
+                      // Show loading state
+                      el.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#64748b;font-size:14px;"><div>Loading map...</div></div>';
                       
-                      const script = document.createElement('script')
-                      script.src = 'https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.js'
-                      script.onload = () => {
-                        const link = document.createElement('link')
-                        link.href = 'https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.css'
-                        link.rel = 'stylesheet'
-                        document.head.appendChild(link)
-                        
-                        if (window.mapboxgl) {
-                          window.mapboxgl.accessToken = process.env.NEXT_PUBLIC_MAPBOX_TOKEN
-                          const map = new window.mapboxgl.Map({
-                            container: el,
-                            style: 'mapbox://styles/mapbox/streets-v12',
-                            center: mapData.longitude && mapData.latitude ? 
-                              [parseFloat(mapData.longitude), parseFloat(mapData.latitude)] : 
-                              [28.0473, -26.2041], // Default to Johannesburg
-                            zoom: mapData.showBasicRoute ? 10 : 15
-                          })
+                      // Load map immediately with priority
+                      const loadMap = () => {
+                        const script = document.createElement('script');
+                        script.src = 'https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.js';
+                        script.async = true;
+                        script.onload = () => {
+                          const link = document.createElement('link');
+                          link.href = 'https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.css';
+                          link.rel = 'stylesheet';
+                          document.head.appendChild(link);
                           
-                          map.on('load', () => {
+                          // Clear loading state
+                          el.innerHTML = '';
+                          
+                          if (window.mapboxgl) {
+                            window.mapboxgl.accessToken = process.env.NEXT_PUBLIC_MAPBOX_TOKEN;
+                            const map = new window.mapboxgl.Map({
+                              container: el,
+                              style: 'mapbox://styles/mapbox/streets-v12',
+                              center: mapData.longitude && mapData.latitude ? 
+                                [parseFloat(mapData.longitude), parseFloat(mapData.latitude)] : 
+                                [28.0473, -26.2041],
+                              zoom: mapData.showBasicRoute ? 10 : 15,
+                              preserveDrawingBuffer: true,
+                              attributionControl: false
+                            });
+                            
+                            map.on('load', () => {
                             let vehicleMarker = null
                             
-                            // Only add vehicle marker if coordinates are available
+                            // Prioritize vehicle marker for immediate visibility
                             if (!mapData.showRouteOnly && !mapData.showBasicRoute && mapData.longitude && mapData.latitude) {
                               const vehicleEl = document.createElement('div')
                               vehicleEl.innerHTML = '🚛'
@@ -2372,24 +2466,19 @@ export default function Dashboard() {
                                 font-size: 24px; width: 32px; height: 32px;
                                 display: flex; align-items: center; justify-content: center;
                                 background: #3b82f6; border: 3px solid #fff;
-                                border-radius: 50%; animation: pulse 2s infinite;
-                                box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+                                border-radius: 50%; box-shadow: 0 4px 12px rgba(0,0,0,0.3);
                               `
-                              
-                              const style = document.createElement('style')
-                              style.textContent = `@keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.7); } 70% { box-shadow: 0 0 0 10px rgba(59, 130, 246, 0); } 100% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0); } }`
-                              document.head.appendChild(style)
                               
                               vehicleMarker = new window.mapboxgl.Marker(vehicleEl)
                                 .setLngLat([parseFloat(mapData.longitude), parseFloat(mapData.latitude)])
                                 .addTo(map)
                             }
                             
-                            // Add high risk zones first
-                            console.log('Adding high risk zones to map:', mapData.highRiskZones);
-                            if (mapData.highRiskZones && mapData.highRiskZones.length > 0) {
-                              mapData.highRiskZones.forEach((area, index) => {
-                                console.log('Processing risk zone:', area);
+                            // Load additional features after map is visible
+                            requestAnimationFrame(() => {
+                              // Add high risk zones
+                              if (mapData.highRiskZones && mapData.highRiskZones.length > 0) {
+                                mapData.highRiskZones.forEach((area, index) => {
                                 if (!area.polygon || area.polygon.length < 3) return;
                                 
                                 const sourceId = `risk-zone-${index}`;
@@ -2642,18 +2731,65 @@ export default function Dashboard() {
                                   .catch(error => console.error('Error generating basic route:', error))
                               }
                             }
-                          })
-                        }
-                      }
+                            });  // Close requestAnimationFrame callback
+                          });  // Close map.on('load')
+                        }  // Close if (window.mapboxgl)
+                      };  // Close script.onload
                       
+                      // Check if mapbox is already loaded
                       if (!document.querySelector('script[src*="mapbox-gl.js"]')) {
-                        document.head.appendChild(script)
+                        document.head.appendChild(script);
                       } else if (window.mapboxgl) {
-                        script.onload()
+                        script.onload();
                       }
+                    };  // Close loadMap
+                    
+                    // Use requestIdleCallback for non-critical script loading, or fallback to immediate
+                    if ('requestIdleCallback' in window) {
+                      requestIdleCallback(loadMap);
+                    } else {
+                      loadMap();
                     }
-                  }}
+                  }
+                }}
                 />
+              </div>
+              
+              {/* Driver Information Panel - Load After Map */}
+              <div className="w-full lg:w-80 bg-gray-50 p-4 rounded-lg flex-shrink-0 max-h-64 lg:max-h-none overflow-y-auto order-2 lg:order-1">
+                <h4 className="font-semibold mb-3">Driver Information</h4>
+                {mapData?.driverDetails && (
+                  <div className="space-y-3 text-sm">
+                    <div className="bg-blue-50 p-3 rounded-lg">
+                      <div className="font-medium text-blue-900">{mapData.driverDetails.fullName}</div>
+                      <div className="text-blue-700 text-xs">Vehicle: {mapData.driverDetails.plate}</div>
+                    </div>
+                    <div className="space-y-2">
+                      <div className="flex justify-between">
+                        <span className="text-gray-600">Speed:</span>
+                        <span className="font-medium">{mapData.driverDetails.speed} km/h</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-600">Mileage:</span>
+                        <span className="font-medium">{parseFloat(mapData.driverDetails.mileage || 0).toLocaleString()} km</span>
+                      </div>
+                      <div className="text-xs text-gray-500">
+                        <div className="font-medium mb-1">Current Location:</div>
+                        <div>{mapData.driverDetails.address}</div>
+                      </div>
+                      {mapData.driverDetails.geozone && (
+                        <div className="text-xs text-gray-500">
+                          <div className="font-medium mb-1">Geozone:</div>
+                          <div>{mapData.driverDetails.geozone}</div>
+                        </div>
+                      )}
+                      <div className="text-xs text-gray-500">
+                        <div className="font-medium mb-1">Last Update:</div>
+                        <div>{new Date(mapData.driverDetails.lastUpdate).toLocaleString()}</div>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           </div>

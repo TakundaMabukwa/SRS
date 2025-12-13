@@ -19,9 +19,6 @@ export default function FuelCanBusDisplay() {
   const [vehicles, setVehicles] = useState<Map<string, FuelData>>(new Map())
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [connected, setConnected] = useState(false)
-  const [ws, setWs] = useState<WebSocket | null>(null)
-
   const processVehicleData = (vehicle: any): FuelData => {
     const fuelLevelItem = vehicle.data?.find((item: any) => 
       item.name === 'fuel Level Liter' || item.code === '96'
@@ -46,73 +43,32 @@ export default function FuelCanBusDisplay() {
     }
   }
 
-  const connectWebSocket = () => {
-    const wsEndpoint = process.env.NEXT_PUBLIC_CAN_BUS_WEBSOCKET_ENDPOINT
-    const key = process.env.NEXT_PUBLIC_CANBUS_KEY
-    
-    if (!wsEndpoint || !key) {
-      setError('WebSocket endpoint not configured')
-      return
-    }
-
-    setLoading(true)
-    setError(null)
-    
-    const newWs = new WebSocket(`${wsEndpoint}?key=${key}`)
-    setWs(newWs)
-    
-    newWs.onopen = () => {
-      console.log('Connected to CAN bus WebSocket')
-      setConnected(true)
+  const fetchFuelData = async () => {
+    try {
+      setLoading(true)
+      setError(null)
+      
+      const response = await fetch('/api/fuel')
+      if (!response.ok) throw new Error('Failed to fetch fuel data')
+      
+      const data = await response.json()
+      
+      const vehicleMap = new Map()
+      data.forEach((vehicle: any) => {
+        const processedVehicle = processVehicleData(vehicle)
+        vehicleMap.set(processedVehicle.plate, processedVehicle)
+      })
+      setVehicles(vehicleMap)
+      setLoading(false)
+    } catch (err) {
+      console.error('Fetch error:', err)
+      setError('Failed to fetch fuel data')
       setLoading(false)
     }
-    
-    newWs.onmessage = (event) => {
-      const message = JSON.parse(event.data)
-      
-      if (message.type === 'snapshot') {
-        // Initial data load
-        const vehicleMap = new Map()
-        message.data.forEach((vehicle: any) => {
-          const processedVehicle = processVehicleData(vehicle)
-          vehicleMap.set(processedVehicle.plate, processedVehicle)
-        })
-        setVehicles(vehicleMap)
-      } else if (message.type === 'update') {
-        // Real-time update
-        const processedVehicle = processVehicleData(message.data)
-        setVehicles(prev => new Map(prev).set(processedVehicle.plate, processedVehicle))
-      }
-    }
-    
-    newWs.onerror = (error) => {
-      console.error('WebSocket error:', error)
-      setConnected(false)
-      setError('WebSocket connection failed')
-    }
-    
-    newWs.onclose = () => {
-      console.log('WebSocket connection closed')
-      setConnected(false)
-    }
-  }
-
-  const fetchVehicles = () => {
-    if (ws) {
-      ws.close()
-    }
-    connectWebSocket()
   }
 
   useEffect(() => {
-    connectWebSocket()
-    
-    return () => {
-      if (ws) {
-        ws.close()
-        setConnected(false)
-      }
-    }
+    fetchFuelData()
   }, [])
 
   // Convert CAN bus fuel data to fuel gauge format
@@ -164,7 +120,7 @@ export default function FuelCanBusDisplay() {
           <div className="mx-auto mb-4 text-red-500 text-6xl">⚠️</div>
           <p className="mb-4 text-red-600">Error loading fuel data</p>
           <p className="mb-4 text-gray-600">{error}</p>
-          <Button onClick={fetchVehicles} variant="outline">
+          <Button onClick={fetchFuelData} variant="outline">
             <RefreshCw className="mr-2 w-4 h-4" />
             Retry
           </Button>

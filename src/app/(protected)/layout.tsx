@@ -24,11 +24,15 @@ import {
   ChevronLeft,
   ChevronRight,
   Fuel,
+  Video,
+  AlertTriangle,
 } from "lucide-react";
 import GlobalProvider from "@/context/global-context/provider";
 import { PAGES, Permission, hasPermission } from "@/lib/permissions/permissions";
 import { createClient } from "@/lib/supabase/client";
 import { ElevationNotification } from "@/components/ui/elevation-notification";
+import { VideoAlertsProvider } from "@/context/video-alerts-context";
+import AlertBellNotification from "@/components/notifications/alert-bell-notification";
 
 interface ProtectedLayoutProps {
   children: React.ReactNode;
@@ -79,9 +83,11 @@ function DateTimeDisplay() {
 const roleNavigation = {
   admin: [
     { name: "Dashboard", href: "/dashboard", Icon: <ChartBar /> },
+    { name: "Video Alerts", href: "/video-alerts", Icon: <AlertTriangle /> },
     { name: "Fleet Jobs", href: "/jobsFleet", Icon: <Briefcase /> },
     { name: "Load Plan", href: "/load-plan", Icon: <Route /> },
     { name: "Fuel Can Bus", href: "/fuel", Icon: <Fuel /> },
+    { name: "Video Feeds", href: "/video-feeds", Icon: <Video /> },
     { name: "Drivers", href: "/drivers", Icon: <Users /> },
     { name: "Vehicles", href: "/vehicles", Icon: <Truck /> },
     { name: "Cost Centers", href: "/ccenter", Icon: <DollarSign /> },
@@ -228,9 +234,10 @@ export default function ProtectedLayout({ children }: ProtectedLayoutProps) {
   };
 
   return (
-    <div className="flex h-screen bg-gray-100 text-gray-900">
-      {/* Sidebar */}
-      <aside
+    <VideoAlertsProvider>
+      <div className="flex h-screen bg-gray-100 text-gray-900">
+        {/* Sidebar */}
+        <aside
         className={`fixed inset-y-0 left-0 z-50 flex flex-col justify-between bg-gradient-to-br from-blue-950 to-blue-800 text-white shadow-2xl transition-width duration-300 ease-in-out overflow-hidden ${sidebarExpanded ? "w-64" : "w-20"
           }`}
       >
@@ -333,7 +340,10 @@ export default function ProtectedLayout({ children }: ProtectedLayoutProps) {
                 EPS Couriers
               </span>
             </div>
-            <DateTimeDisplay />
+            <div className="flex items-center gap-4">
+              <AlertBellNotification />
+              <DateTimeDisplay />
+            </div>
           </div>
         </header>
 
@@ -347,6 +357,7 @@ export default function ProtectedLayout({ children }: ProtectedLayoutProps) {
         {/* Elevation Notification - Only for admin users */}
         <ElevationNotification userRole={userRole} userId={userId} />
       </div>
-    </div>
+      </div>
+    </VideoAlertsProvider>
   );
 }
