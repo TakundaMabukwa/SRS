@@ -45,8 +45,8 @@ function VideoFeedsContent() {
     async function fetchVehicleStreams() {
       try {
         setLoading(true);
-        const apiUrl = `${process.env.NEXT_PUBLIC_VIDEO_SERVER_BASE_URL}/api/stream/vehicles/streams`;
-        console.log('Fetching vehicle streams from:', apiUrl);
+        const apiUrl = '/api/video/streams';
+        console.log('Fetching vehicle streams from proxy:', apiUrl);
         console.log('Looking for vehicle:', vehiclePlate);
         
         const response = await fetch(apiUrl, {
@@ -117,7 +117,7 @@ function VideoFeedsContent() {
           
           if (!videoEl || playersRef.current[channel.channelId]) return;
 
-          const proxyUrl = `${process.env.NEXT_PUBLIC_VIDEO_SERVER_BASE_URL}/api/stream/stream/proxy?url=${encodeURIComponent(channel.streamUrl)}`;
+          const proxyUrl = `/api/video/proxy?url=${encodeURIComponent(channel.streamUrl)}`;
           console.log(`Creating player for channel ${channel.channelId}:`, proxyUrl);
 
           const player = flvjs.createPlayer({

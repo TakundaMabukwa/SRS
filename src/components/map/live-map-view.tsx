@@ -53,8 +53,8 @@ export default function LiveMapView() {
   useEffect(() => {
     async function fetchVideoAvailability() {
       try {
-        const videoApiUrl = `${process.env.NEXT_PUBLIC_VIDEO_SERVER_BASE_URL}/api/stream/vehicles/streams`;
-        console.log('Fetching video availability from:', videoApiUrl);
+        const videoApiUrl = '/api/video/streams';
+        console.log('Fetching video availability from proxy:', videoApiUrl);
         
         const response = await fetch(videoApiUrl, {
           method: 'POST',
