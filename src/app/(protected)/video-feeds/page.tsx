@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -12,51 +12,197 @@ import {
   ArrowLeft,
   Camera,
   AlertTriangle,
+  Loader2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-interface CameraFeed {
-  id: string;
-  name: string;
-  location: string;
-  status: "live" | "offline" | "reconnecting";
-  quality: "HD" | "SD";
+interface CameraChannel {
+  channelId: number;
+  streamUrl: string;
+}
+
+interface VehicleStream {
+  plateName: string;
+  deviceId: string;
+  channels: CameraChannel[];
+  cameras: number;
 }
 
 export default function VideoFeedsPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [selectedCamera, setSelectedCamera] = useState<string | null>(null);
+  const [vehicleStreams, setVehicleStreams] = useState<VehicleStream | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const videoRefs = useRef<{ [key: number]: HTMLVideoElement | null }>({});
+  const playersRef = useRef<{ [key: number]: any }>({});
   
   const driverName = searchParams.get("driver") || "Unassigned";
-  const vehicleInfo = searchParams.get("vehicle") || "Vehicle Info Unavailable";
+  const vehiclePlate = searchParams.get("vehicle") || "Vehicle Info Unavailable";
 
-  const cameras: CameraFeed[] = [
-    { id: "cam1", name: "Camera 1", location: "Front View", status: "live", quality: "HD" },
-    { id: "cam2", name: "Camera 2", location: "Rear View", status: "live", quality: "HD" },
-    { id: "cam3", name: "Camera 3", location: "Side View", status: "live", quality: "HD" },
-    { id: "cam4", name: "Camera 4", location: "Interior", status: "live", quality: "HD" },
-  ];
+  useEffect(() => {
+    async function fetchVehicleStreams() {
+      try {
+        setLoading(true);
+        const apiUrl = `${process.env.NEXT_PUBLIC_VIDEO_SERVER_BASE_URL}/api/stream/vehicles/streams`;
+        console.log('Fetching vehicle streams from:', apiUrl);
+        console.log('Looking for vehicle:', vehiclePlate);
+        
+        const response = await fetch(apiUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ allChannels: true, onlineOnly: false, timeout: 5000 })
+        });
 
-  const videoUrls = [
-    "https://www.youtube.com/embed/hFMQ5LkkS98?autoplay=1&mute=1&loop=1&playlist=hFMQ5LkkS98&controls=0&modestbranding=1&rel=0&showinfo=0&iv_load_policy=3&cc_load_policy=0&fs=0&disablekb=1",
-    "https://www.youtube.com/embed/yXMjeRXglGc?autoplay=1&mute=1&loop=1&playlist=yXMjeRXglGc&controls=0&modestbranding=1&rel=0&showinfo=0&iv_load_policy=3&cc_load_policy=0&fs=0&disablekb=1",
-    "https://www.youtube.com/embed/FI5ba4RRE8U?autoplay=1&mute=1&loop=1&playlist=FI5ba4RRE8U&controls=0&modestbranding=1&rel=0&showinfo=0&iv_load_policy=3&cc_load_policy=0&fs=0&disablekb=1",
-    "https://www.youtube.com/embed/V6ROdRxw0d8?autoplay=1&mute=1&loop=1&playlist=V6ROdRxw0d8&controls=0&modestbranding=1&rel=0&showinfo=0&iv_load_policy=3&cc_load_policy=0&fs=0&disablekb=1",
-  ];
+        if (!response.ok) {
+          console.error('API response not OK:', response.status);
+          throw new Error('Failed to fetch streams');
+        }
+        
+        const data = await response.json();
+        console.log('API response data:', data);
+        console.log('Available vehicles:', data.data?.vehicles?.map((v: any) => v.plateName));
+        
+        const vehicle = data.data?.vehicles?.find((v: VehicleStream) => 
+          v.plateName.toLowerCase() === vehiclePlate.toLowerCase()
+        );
 
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case "live":
-        return "bg-green-500";
-      case "offline":
-        return "bg-red-500";
-      case "reconnecting":
-        return "bg-yellow-500";
-      default:
-        return "bg-gray-500";
+        console.log('Found vehicle:', vehicle);
+        if (vehicle) {
+          setVehicleStreams(vehicle);
+          console.log('Set vehicle streams with', vehicle.channels?.length, 'channels');
+        } else {
+          setError(`No video streams available for vehicle ${vehiclePlate}`);
+          console.error('Vehicle not found in API response');
+        }
+      } catch (err) {
+        console.error('Error fetching vehicle streams:', err);
+        setError('Failed to load video streams');
+      } finally {
+        setLoading(false);
+      }
     }
-  };
+
+    if (vehiclePlate && vehiclePlate !== "Vehicle Info Unavailable") {
+      fetchVehicleStreams();
+    } else {
+      setLoading(false);
+      setError('No vehicle information provided');
+    }
+  }, [vehiclePlate]);
+
+  useEffect(() => {
+    let flvjs: any;
+    const initPlayers = async () => {
+      if (!vehicleStreams?.channels) {
+        console.log('No vehicle streams or channels available');
+        return;
+      }
+
+      console.log('Initializing video players for', vehicleStreams.channels.length, 'channels');
+
+      try {
+        flvjs = (await import('flv.js')).default;
+        console.log('FLV.js loaded, supported:', flvjs.isSupported());
+        
+        if (!flvjs.isSupported()) {
+          setError('FLV streaming not supported in this browser');
+          return;
+        }
+
+        vehicleStreams.channels.forEach((channel) => {
+          const videoEl = videoRefs.current[channel.channelId];
+          console.log(`Channel ${channel.channelId}: video element exists:`, !!videoEl, 'player exists:', !!playersRef.current[channel.channelId]);
+          
+          if (!videoEl || playersRef.current[channel.channelId]) return;
+
+          const proxyUrl = `${process.env.NEXT_PUBLIC_VIDEO_SERVER_BASE_URL}/api/stream/stream/proxy?url=${encodeURIComponent(channel.streamUrl)}`;
+          console.log(`Creating player for channel ${channel.channelId}:`, proxyUrl);
+
+          const player = flvjs.createPlayer({
+            type: 'flv',
+            url: proxyUrl,
+            isLive: true,
+            hasAudio: false,
+            cors: true,
+          });
+
+          player.attachMediaElement(videoEl);
+          player.on(flvjs.Events.ERROR, (err: any) => {
+            console.error(`Player error on channel ${channel.channelId}:`, err);
+            setTimeout(() => {
+              player.unload();
+              player.load();
+              player.play().catch(() => {});
+            }, 3000);
+          });
+
+          player.load();
+          player.play().then(() => {
+            console.log(`Channel ${channel.channelId} started playing`);
+          }).catch((err) => {
+            console.error(`Failed to play channel ${channel.channelId}:`, err);
+          });
+          playersRef.current[channel.channelId] = player;
+        });
+      } catch (err) {
+        console.error('Error initializing players:', err);
+      }
+    };
+
+    initPlayers();
+
+    return () => {
+      Object.values(playersRef.current).forEach((player) => {
+        if (player) {
+          try {
+            player.pause();
+            player.unload();
+            player.detachMediaElement();
+            player.destroy();
+          } catch (e) {}
+        }
+      });
+      playersRef.current = {};
+    };
+  }, [vehicleStreams]);
+
+  if (loading) {
+    return (
+      <div className="h-screen flex items-center justify-center bg-gradient-to-br from-gray-50 via-slate-50 to-gray-100">
+        <div className="text-center">
+          <Loader2 className="w-16 h-16 animate-spin text-blue-600 mx-auto mb-4" />
+          <p className="text-lg font-semibold text-gray-700">Loading camera feeds...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="h-screen flex flex-col bg-gradient-to-br from-gray-50 via-slate-50 to-gray-100">
+        <div className="flex-none z-50 px-4 py-3 border-b border-gray-300 bg-gray-100/95 backdrop-blur-lg shadow-md">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => router.back()}
+            className="gap-2 text-gray-700 hover:text-gray-900 hover:bg-gray-200"
+          >
+            <ArrowLeft className="w-4 h-4" />
+            Back
+          </Button>
+        </div>
+        <div className="flex-1 flex items-center justify-center">
+          <div className="text-center">
+            <WifiOff className="w-16 h-16 text-gray-400 mx-auto mb-4" />
+            <p className="text-lg font-semibold text-gray-700 mb-2">{error}</p>
+            <Button onClick={() => window.location.reload()}>Retry</Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="h-screen flex flex-col bg-gradient-to-br from-gray-50 via-slate-50 to-gray-100 overflow-hidden">
@@ -83,7 +229,7 @@ export default function VideoFeedsPage() {
                 <div className="flex items-center gap-2 text-xs text-gray-700">
                   <span className="font-medium">{driverName}</span>
                   <span>•</span>
-                  <span>{vehicleInfo}</span>
+                  <span>{vehiclePlate}</span>
                 </div>
               </div>
             </div>
@@ -104,49 +250,28 @@ export default function VideoFeedsPage() {
         <div className="p-4">
           {/* 2x2 Grid with Larger Cards */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 max-w-[2000px] mx-auto">
-            {cameras.map((camera, index) => (
+            {vehicleStreams?.channels.map((channel) => (
               <Card
-                key={camera.id}
-                className={cn(
-                  "relative overflow-hidden transition-all duration-200 border-2 flex flex-col group hover:scale-[1.01]",
-                  selectedCamera === camera.id
-                    ? "border-gray-400 ring-4 ring-gray-300/50 shadow-xl"
-                    : "border-gray-300 hover:border-gray-400",
-                  camera.status === "offline" && "opacity-60",
-                  "bg-white"
-                )}
-                onClick={() => setSelectedCamera(camera.id)}
+                key={channel.channelId}
+                className="relative overflow-hidden transition-all duration-200 border-2 flex flex-col group hover:scale-[1.01] border-gray-300 hover:border-gray-400 bg-white"
               >
-                {/* Camera Feed Container - Much Larger */}
+                {/* Camera Feed Container */}
                 <div className="relative bg-black aspect-video lg:h-[calc(50vh-80px)]">
-                  {/* Live Video Stream */}
-                  {camera.status === "live" ? (
-                    <div className="absolute inset-0">
-                      <iframe
-                        src={videoUrls[index]}
-                        className="w-full h-full"
-                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                        allowFullScreen
-                        loading="eager"
-                        title={camera.name}
-                        style={{ border: 0 }}
-                      />
-                    </div>
-                  ) : (
-                    <div className="absolute inset-0 flex flex-col items-center justify-center text-gray-400">
-                      <WifiOff className="w-20 h-20 mb-4 opacity-50" />
-                      <span className="text-lg font-medium">Camera Offline</span>
-                    </div>
-                  )}
+                  <video
+                    ref={(el) => (videoRefs.current[channel.channelId] = el)}
+                    className="w-full h-full object-contain"
+                    muted
+                    playsInline
+                  />
 
-                  {/* Camera Info Overlay - Bottom */}
+                  {/* Camera Info Overlay */}
                   <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-gray-900 via-gray-900/90 to-transparent p-4 pt-12">
                     <div className="flex items-center justify-between text-white">
                       <div className="flex items-center gap-3">
                         <Camera className="w-5 h-5" />
-                        <span className="text-lg font-bold">{camera.name}</span>
+                        <span className="text-lg font-bold">Camera {channel.channelId}</span>
                         <span className="text-gray-300">•</span>
-                        <span className="text-base text-gray-200">{camera.location}</span>
+                        <span className="text-base text-gray-200">{vehicleStreams?.plateName}</span>
                       </div>
                     </div>
                   </div>

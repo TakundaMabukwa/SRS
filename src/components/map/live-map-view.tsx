@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
+import { useRouter } from "next/navigation";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -29,21 +30,60 @@ interface Vehicle {
   longitude?: number;
   address?: string;
   timestamp?: string;
+  hasVideo?: boolean;
 }
 
 export default function LiveMapView() {
+  const router = useRouter();
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [selectedVehicle, setSelectedVehicle] = useState<Vehicle | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [mapLoaded, setMapLoaded] = useState(false);
-  const [loading, setLoading] = useState(false); // Start false, will load after map
+  const [loading, setLoading] = useState(false);
+  const [vehiclesWithVideo, setVehiclesWithVideo] = useState<Set<string>>(new Set());
   const mapContainer = useRef<HTMLDivElement>(null);
   const map = useRef<any>(null);
   const markers = useRef<any[]>([]);
   const fetchIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const mapInitialized = useRef(false);
-  const boundsSet = useRef(false); // Track if bounds have been set to avoid repeated calls
+  const boundsSet = useRef(false);
+
+  // Fetch vehicles with video availability
+  useEffect(() => {
+    async function fetchVideoAvailability() {
+      try {
+        const videoApiUrl = `${process.env.NEXT_PUBLIC_VIDEO_SERVER_BASE_URL}/api/stream/vehicles/streams`;
+        console.log('Fetching video availability from:', videoApiUrl);
+        
+        const response = await fetch(videoApiUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ allChannels: true, onlineOnly: false, timeout: 5000 })
+        });
+
+        console.log('Video API response status:', response.status);
+        
+        if (response.ok) {
+          const data = await response.json();
+          console.log('Video API response data:', data);
+          const platesWithVideo = new Set(
+            data.data?.vehicles?.map((v: any) => v.plateName.toUpperCase()) || []
+          );
+          console.log('Plates with video:', Array.from(platesWithVideo));
+          setVehiclesWithVideo(platesWithVideo);
+        } else {
+          console.error('Video API returned non-OK status:', response.status, response.statusText);
+        }
+      } catch (err) {
+        console.error('Error fetching video availability:', err);
+      }
+    }
+
+    fetchVideoAvailability();
+    const interval = setInterval(fetchVideoAvailability, 60000);
+    return () => clearInterval(interval);
+  }, []);
 
   // Fetch vehicle data from API - only called after map loads
   const fetchVehicles = async () => {
@@ -141,10 +181,14 @@ export default function LiveMapView() {
       }, [] as Vehicle[]);
       
       // Filter to only include vehicles with 8-character plates
+      // Note: hasVideo will be set by the update effect when video availability loads
       const filteredVehicles = uniqueVehicles.filter(v => {
         const cleanPlate = v.plate?.trim() || '';
         return cleanPlate.length === 8;
-      });
+      }).map(v => ({
+        ...v,
+        hasVideo: false  // Will be updated by the video availability effect
+      }));
       
       console.log(`Loaded ${filteredVehicles.length} vehicles with 8-char plates from ${allVehicles.length} total records`);
       setVehicles(filteredVehicles);
@@ -164,7 +208,7 @@ export default function LiveMapView() {
       // Refresh every 30 seconds
       fetchIntervalRef.current = setInterval(fetchVehicles, 30000);
     }
-    
+
     return () => {
       if (fetchIntervalRef.current) {
         clearInterval(fetchIntervalRef.current);
@@ -172,6 +216,19 @@ export default function LiveMapView() {
       }
     };
   }, [mapLoaded]);
+
+  // Update vehicles with video availability when it changes (without re-fetching)
+  useEffect(() => {
+    if (vehicles.length > 0) {
+      console.log('Video availability updated, updating vehicle flags...');
+      setVehicles(prevVehicles => 
+        prevVehicles.map(v => ({
+          ...v,
+          hasVideo: vehiclesWithVideo.has(v.plate?.trim().toUpperCase() || '')
+        }))
+      );
+    }
+  }, [vehiclesWithVideo]);
 
   // Load Mapbox script and initialize map immediately
   useEffect(() => {
@@ -354,10 +411,19 @@ export default function LiveMapView() {
     }
   }, [vehicles, mapLoaded]);
 
-  const filteredVehicles = vehicles.filter((vehicle) =>
-    vehicle.plate.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    vehicle.driver?.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  // Filter and sort vehicles - video available vehicles first
+  const filteredVehicles = vehicles
+    .filter((vehicle) =>
+      vehicle.plate.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      vehicle.driver?.toLowerCase().includes(searchQuery.toLowerCase())
+    )
+    .sort((a, b) => {
+      // Sort by video availability first (vehicles with video on top)
+      if (a.hasVideo && !b.hasVideo) return -1;
+      if (!a.hasVideo && b.hasVideo) return 1;
+      // Then by plate name
+      return a.plate.localeCompare(b.plate);
+    });
 
   return (
     <div className="absolute inset-0 w-full h-full overflow-hidden">
@@ -447,9 +513,22 @@ export default function LiveMapView() {
               {/* Selected Vehicle Card */}
               <div className="p-3 bg-white rounded-lg border-2 border-blue-200">
                 <div className="mb-2">
-                  <h4 className="font-bold text-lg text-blue-900">
-                    {selectedVehicle.plate}
-                  </h4>
+                  <div className="flex items-center justify-between">
+                    <h4 className="font-bold text-lg text-blue-900">
+                      {selectedVehicle.plate}
+                    </h4>
+                    {selectedVehicle.hasVideo && (
+                      <span className={cn(
+                        "inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium",
+                        selectedVehicle.status === 'online' 
+                          ? "bg-blue-600 text-white" 
+                          : "bg-gray-400 text-white"
+                      )}>
+                        <Video className="w-3 h-3" />
+                        Video {selectedVehicle.status === 'offline' && '(Offline)'}
+                      </span>
+                    )}
+                  </div>
                   <span
                     className={cn(
                       "inline-block mt-1 px-2 py-0.5 rounded-full text-xs font-medium",
@@ -512,12 +591,16 @@ export default function LiveMapView() {
               <div className="space-y-2">
                 <button
                   onClick={() => {
-                    console.log('Video clicked for', selectedVehicle.plate);
+                    router.push(`/video-feeds?driver=${encodeURIComponent(selectedVehicle.driver || 'Unassigned')}&vehicle=${encodeURIComponent(selectedVehicle.plate)}`);
                   }}
+                  disabled={!selectedVehicle.hasVideo}
                   className="w-full inline-flex items-center justify-start gap-3 rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 border border-input bg-background hover:bg-accent hover:text-accent-foreground h-10 px-4"
                 >
                   <Video className="w-4 h-4" />
                   <span>Video</span>
+                  {selectedVehicle.hasVideo && (
+                    <span className="ml-auto px-2 py-0.5 bg-green-100 text-green-700 text-xs rounded-full">Available</span>
+                  )}
                 </button>
 
                 <button
@@ -586,10 +669,21 @@ export default function LiveMapView() {
                     }}
                     className="w-full p-3 text-left bg-white rounded-lg border-2 border-blue-100 hover:border-blue-300 transition-all duration-200 hover:shadow-md"
                   >
-                    <div className="mb-2">
+                    <div className="mb-2 flex items-center justify-between">
                       <h4 className="font-bold text-lg text-blue-900">
                         {vehicle.plate}
                       </h4>
+                      {vehicle.hasVideo && (
+                        <span className={cn(
+                          "inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium",
+                          vehicle.status === 'online' 
+                            ? "bg-blue-600 text-white" 
+                            : "bg-gray-400 text-white"
+                        )}>
+                          <Video className="w-3 h-3" />
+                          Video {vehicle.status === 'offline' && '(Offline)'}
+                        </span>
+                      )}
                     </div>
                     
                     {vehicle.location ? (
