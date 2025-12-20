@@ -1,10 +1,15 @@
 import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
+import { Database } from './database.types'
 
 export async function createClient() {
+  if (typeof window !== 'undefined') {
+    return null;
+  }
+  
   const cookieStore = await cookies()
 
-  return createServerClient(
+  return createServerClient<Database>(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
@@ -22,6 +27,25 @@ export async function createClient() {
             // This can be ignored if you have middleware refreshing
             // user sessions.
           }
+        },
+      },
+    }
+  )
+}
+
+export function createMiddlewareClient(req: any) {
+  return createServerClient<Database>(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        getAll() {
+          return req.cookies.getAll()
+        },
+        setAll(cookiesToSet) {
+          cookiesToSet.forEach(({ name, value, options }) => {
+            req.cookies.set(name, value, options)
+          })
         },
       },
     }
