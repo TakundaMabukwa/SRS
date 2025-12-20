@@ -46,13 +46,10 @@ function VideoFeedsContent() {
       try {
         setLoading(true);
         const apiUrl = '/api/video/streams';
-        console.log('Fetching vehicle streams from proxy:', apiUrl);
-        console.log('Looking for vehicle:', vehiclePlate);
+        console.log('Fetching vehicle list from:', apiUrl);
         
         const response = await fetch(apiUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ allChannels: true, onlineOnly: false, timeout: 5000 })
+          method: 'GET'
         });
 
         if (!response.ok) {
@@ -60,18 +57,45 @@ function VideoFeedsContent() {
           throw new Error('Failed to fetch streams');
         }
         
-        const data = await response.json();
-        console.log('API response data:', data);
-        console.log('Available vehicles:', data.data?.vehicles?.map((v: any) => v.plateName));
+        const result = await response.json();
+        const vehicles = result.data?.devices || result.data || result || [];
+        console.log('Available vehicles:', vehicles.map((v: any) => v.plateName));
         
-        const vehicle = data.data?.vehicles?.find((v: VehicleStream) => 
+        const vehicle = vehicles.find((v: any) => 
           v.plateName.toLowerCase() === vehiclePlate.toLowerCase()
         );
 
         console.log('Found vehicle:', vehicle);
         if (vehicle) {
-          setVehicleStreams(vehicle);
-          console.log('Set vehicle streams with', vehicle.channels?.length, 'channels');
+          // Fetch channels for this specific vehicle
+          console.log('Fetching channels for device:', vehicle.deviceId);
+          try {
+            const channelsResponse = await fetch('/api/video/channels', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ deviceId: vehicle.deviceId })
+            });
+            
+            console.log('Channels response status:', channelsResponse.status);
+            
+            if (channelsResponse.ok) {
+              const channelsData = await channelsResponse.json();
+              console.log('Channels data:', channelsData);
+              const channels = (channelsData.channels || channelsData.data?.channels || []).filter((ch: any) => ch.streamUrl);
+              setVehicleStreams({
+                ...vehicle,
+                channels
+              });
+              console.log('Set vehicle streams with', channels.length, 'channels');
+            } else {
+              console.error('Channels API error:', channelsResponse.status);
+              setVehicleStreams({ ...vehicle, channels: [] });
+              console.log('No channels available for vehicle');
+            }
+          } catch (channelErr) {
+            console.error('Error fetching channels:', channelErr);
+            setVehicleStreams({ ...vehicle, channels: [] });
+          }
         } else {
           setError(`No video streams available for vehicle ${vehiclePlate}`);
           console.error('Vehicle not found in API response');
@@ -115,7 +139,7 @@ function VideoFeedsContent() {
           const videoEl = videoRefs.current[channel.channelId];
           console.log(`Channel ${channel.channelId}: video element exists:`, !!videoEl, 'player exists:', !!playersRef.current[channel.channelId]);
           
-          if (!videoEl || playersRef.current[channel.channelId]) return;
+          if (!videoEl || playersRef.current[channel.channelId] || !channel.streamUrl) return;
 
           const proxyUrl = `/api/video/proxy?url=${encodeURIComponent(channel.streamUrl)}`;
           console.log(`Creating player for channel ${channel.channelId}:`, proxyUrl);

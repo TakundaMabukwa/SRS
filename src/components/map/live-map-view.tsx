@@ -57,18 +57,17 @@ export default function LiveMapView() {
         console.log('Fetching video availability from proxy:', videoApiUrl);
         
         const response = await fetch(videoApiUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ allChannels: true, onlineOnly: false, timeout: 5000 })
+          method: 'GET'
         });
 
         console.log('Video API response status:', response.status);
         
         if (response.ok) {
-          const data = await response.json();
-          console.log('Video API response data:', data);
+          const result = await response.json();
+          console.log('Video API response data:', result);
+          const devices = result.data?.devices || result.data || result || [];
           const platesWithVideo = new Set(
-            data.data?.vehicles?.map((v: any) => v.plateName.toUpperCase()) || []
+            devices.map((v: any) => v.plateName?.toUpperCase()).filter(Boolean)
           );
           console.log('Plates with video:', Array.from(platesWithVideo));
           setVehiclesWithVideo(platesWithVideo);
@@ -181,14 +180,17 @@ export default function LiveMapView() {
       }, [] as Vehicle[]);
       
       // Filter to only include vehicles with 8-character plates
-      // Note: hasVideo will be set by the update effect when video availability loads
+      // Preserve existing hasVideo state when updating vehicles
       const filteredVehicles = uniqueVehicles.filter(v => {
         const cleanPlate = v.plate?.trim() || '';
         return cleanPlate.length === 8;
-      }).map(v => ({
-        ...v,
-        hasVideo: false  // Will be updated by the video availability effect
-      }));
+      }).map(v => {
+        const existingVehicle = vehicles.find(ev => ev.plate === v.plate);
+        return {
+          ...v,
+          hasVideo: existingVehicle?.hasVideo || vehiclesWithVideo.has(v.plate?.trim().toUpperCase() || '')
+        };
+      });
       
       console.log(`Loaded ${filteredVehicles.length} vehicles with 8-char plates from ${allVehicles.length} total records`);
       setVehicles(filteredVehicles);
