@@ -3,7 +3,7 @@ module.exports = {
     name: 'eps-dashboard',
     script: 'npm',
     args: 'start',
-    cwd: '/var/www/eps/EPS-Dashboard',
+    cwd: '/var/www/EPS-Dashboard',
     env: {
       NODE_ENV: 'production',
       PORT: 3001
