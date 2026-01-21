@@ -3,7 +3,7 @@
  * API calls for video alerts backend
  */
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "/api";
+const API_BASE_URL = process.env.NEXT_PUBLIC_VIDEO_BASE_URL || "/api";
 
 // Helper for API calls
 const apiCall = async (endpoint, options = {}) => {
@@ -39,9 +39,15 @@ export const fetchAlertsAPI = async (filters = {}) => {
   });
 
   const queryString = queryParams.toString();
-  const endpoint = `/video-alerts${queryString ? `?${queryString}` : ""}`;
+  const endpoint = `/api/alerts/unresolved${queryString ? `?${queryString}` : ""}`;
   
-  return apiCall(endpoint);
+  const response = await apiCall(endpoint);
+  
+  // Wrap response in expected format
+  return {
+    data: Array.isArray(response) ? response : response.data || [],
+    statistics: response.statistics || null
+  };
 };
 
 // Fetch single alert by ID

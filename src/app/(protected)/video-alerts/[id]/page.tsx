@@ -145,7 +145,7 @@ export default function AlertDetailPage({ params }) {
                   </h1>
                   <Badge variant="outline" className={cn("flex items-center gap-1", severityConfig.color)}>
                     <SeverityIcon className="w-3 h-3" />
-                    {selectedAlert.severity.toUpperCase()}
+                    {selectedAlert.severity?.toUpperCase() || 'INFO'}
                   </Badge>
                   {selectedAlert.escalated && (
                     <Badge variant="outline" className="bg-red-100 text-red-800 border-red-300">
@@ -393,7 +393,7 @@ export default function AlertDetailPage({ params }) {
                   <div>
                     <p className="text-slate-600">Alert Type</p>
                     <p className="font-medium text-slate-900">
-                      {selectedAlert.alert_type.replace(/_/g, " ").toUpperCase()}
+                      {selectedAlert.alert_type?.replace(/_/g, " ").toUpperCase() || "N/A"}
                     </p>
                   </div>
                 </div>

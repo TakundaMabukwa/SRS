@@ -44,6 +44,7 @@ export const VideoAlertsProvider = ({ children }) => {
         if (data.success && data.alerts) {
           const alertsWithPlates = await Promise.all(
             data.alerts.map(async function(alert) {
+              if (!alert.device_id) return alert;
               try {
                 const plateRes = await fetch(`/api/vehicle-lookup?deviceId=${alert.device_id}`);
                 if (plateRes.ok) {

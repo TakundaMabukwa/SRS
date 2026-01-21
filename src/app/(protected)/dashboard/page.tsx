@@ -49,6 +49,7 @@ import Link from "next/link";
 import DetailCard from "@/components/ui/detail-card";
 import { onCreate } from "@/hooks/use-auth";
 import VideoAlertsDashboardTab from "@/components/dashboard/video-alerts-dashboard-tab";
+import LiveStreamTab from "@/components/dashboard/live-stream-tab";
 import { useGlobalContext } from "@/context/global-context/context";
 import { ProgressWithWaypoints } from '@/components/ui/progress-with-waypoints'
 import { Progress } from '@/components/ui/progress'
@@ -2142,6 +2143,12 @@ export default function Dashboard() {
               >
                 Reports
               </TabsTrigger>
+              <TabsTrigger
+                value="live-stream"
+                className="px-6 py-2 text-sm font-medium rounded-md data-[state=active]:bg-white data-[state=active]:shadow-sm"
+              >
+                Live Stream
+              </TabsTrigger>
             </TabsList>
           </Tabs>
         </div>
@@ -2206,6 +2213,10 @@ export default function Dashboard() {
             </div>
             <ReportsContent />
           </div>
+        )}
+
+        {activeTab === "live-stream" && (
+          <LiveStreamTab />
         )}
 
         {activeTab === "financials" && (

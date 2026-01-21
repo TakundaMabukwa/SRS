@@ -6,8 +6,12 @@ export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url);
     const deviceId = searchParams.get('deviceId');
 
-    if (!deviceId) {
-      return NextResponse.json({ success: false, error: 'deviceId required' }, { status: 400 });
+    if (!deviceId || deviceId === 'undefined' || deviceId === 'null') {
+      return NextResponse.json({ 
+        success: false, 
+        plate: null,
+        message: 'Invalid or missing deviceId' 
+      }, { status: 400 });
     }
 
     const supabase = createClient();

@@ -7,7 +7,7 @@
     "build": "set NODE_OPTIONS=--max-old-space-size=1536 && set UV_THREADPOOL_SIZE=1 && next build",
     "start": "set NODE_OPTIONS=--max-old-space-size=1536 && next start",
     "lint": "next lint",
-    "postbuild": "next-sitemap",
+    "postbuild": "echo 'Build complete'",
     "database:pull": "npx supabase gen types --lang=typescript --project-id jbactgkcijnkjpyqqzxv > src/lib/supabase/database.types.ts"
   },
   "dependencies": {
@@ -47,6 +47,7 @@
     "dotenv": "^17.2.3",
     "flv.js": "^1.6.2",
     "framer-motion": "^12.23.12",
+    "hls.js": "^1.6.15",
     "js-cookie": "^3.0.5",
     "jspdf": "^3.0.3",
     "lucide-react": "^0.552.0",
@@ -69,6 +70,7 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
+    "@types/hls.js": "^0.13.3",
     "@types/node": "^20",
     "@types/react": "^18",
     "@types/react-dom": "^18",
