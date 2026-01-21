@@ -334,10 +334,10 @@ export default function ProtectedLayout({ children }: ProtectedLayoutProps) {
                 <ChevronRight size={16} />
               )}
             </Button>
-            <div className="flex flex-col">
+            <div className="flex flex-col items-center text-center">
               <span className="text-sm text-gray-500">Welcome back,</span>
               <span className="text-base font-semibold text-gray-800">
-                EPS Couriers
+                Premier Cross Border
               </span>
             </div>
             <div className="flex items-center gap-4">

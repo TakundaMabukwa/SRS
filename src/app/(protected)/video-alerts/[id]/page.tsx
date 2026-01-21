@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
+import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   AlertTriangle,
@@ -24,11 +25,7 @@ import {
   XCircle,
   Download,
   RefreshCw,
-  Camera,
-  Activity,
-  TrendingUp,
-  Eye,
-  PlayCircle,
+  Flag,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { format } from "date-fns";
@@ -75,8 +72,9 @@ export default function AlertDetailPage({ params }) {
     setAddingNote(true);
     const result = await addNote(alertId, {
       content: newNote,
-      userId: currentUser.id,
-      userName: currentUser.name,
+      user_id: currentUser.id,
+      user_name: currentUser.name,
+      user_role: currentUser.role,
       is_internal: false,
     });
     
@@ -87,6 +85,7 @@ export default function AlertDetailPage({ params }) {
   };
 
   const handleEscalate = async () => {
+    // In production, show a modal to select who to escalate to
     await escalateAlert(alertId, {
       escalate_to: "manager-1",
       escalate_to_name: "Fleet Manager",
@@ -104,494 +103,344 @@ export default function AlertDetailPage({ params }) {
 
   if (!selectedAlert) {
     return (
-      <div className="flex items-center justify-center h-screen bg-slate-50">
+      <div className="flex items-center justify-center h-screen">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-          <p className="text-slate-600 font-medium">Loading alert details...</p>
+          <Clock className="w-12 h-12 text-slate-400 mx-auto mb-4 animate-spin" />
+          <p className="text-slate-600">Loading alert details...</p>
         </div>
       </div>
     );
   }
 
-  const getSeverityColor = (severity) => {
-    switch (severity) {
-      case "critical": return { bg: "bg-red-500", text: "text-red-500", light: "bg-red-50", border: "border-red-200" };
-      case "high": return { bg: "bg-orange-500", text: "text-orange-500", light: "bg-orange-50", border: "border-orange-200" };
-      case "medium": return { bg: "bg-yellow-500", text: "text-yellow-500", light: "bg-yellow-50", border: "border-yellow-200" };
-      case "low": return { bg: "bg-blue-500", text: "text-blue-500", light: "bg-blue-50", border: "border-blue-200" };
-      default: return { bg: "bg-slate-500", text: "text-slate-500", light: "bg-slate-50", border: "border-slate-200" };
-    }
+  const getSeverityConfig = (severity) => {
+    const config = {
+      critical: { color: "bg-red-100 text-red-800 border-red-300", icon: AlertTriangle },
+      high: { color: "bg-orange-100 text-orange-800 border-orange-300", icon: AlertCircle },
+      medium: { color: "bg-yellow-100 text-yellow-800 border-yellow-300", icon: Info },
+      low: { color: "bg-blue-100 text-blue-800 border-blue-300", icon: Info },
+      info: { color: "bg-gray-100 text-gray-800 border-gray-300", icon: Info },
+    };
+    return config[severity] || config.info;
   };
 
-  const getStatusConfig = (status) => {
-    switch (status) {
-      case "new": return { bg: "bg-red-500", label: "New", glow: "shadow-red-500/50" };
-      case "acknowledged": return { bg: "bg-blue-500", label: "Acknowledged", glow: "shadow-blue-500/50" };
-      case "investigating": return { bg: "bg-amber-500", label: "Investigating", glow: "shadow-amber-500/50" };
-      case "resolved": return { bg: "bg-green-500", label: "Resolved", glow: "shadow-green-500/50" };
-      case "escalated": return { bg: "bg-purple-500", label: "Escalated", glow: "shadow-purple-500/50" };
-      default: return { bg: "bg-slate-500", label: status, glow: "shadow-slate-500/50" };
-    }
-  };
-
-  const severityColor = getSeverityColor(selectedAlert.severity);
-  const statusConfig = getStatusConfig(selectedAlert.status);
+  const severityConfig = getSeverityConfig(selectedAlert.severity);
+  const SeverityIcon = severityConfig.icon;
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100">
-      {/* Top Bar */}
-      <div className="bg-white border-b border-slate-200 shadow-sm">
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 pb-20">
+      {/* Header */}
+      <div className="sticky top-0 z-10 bg-white border-b border-slate-200 shadow-sm">
         <div className="px-6 py-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-4">
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => router.push("/video-alerts")}
-                className="hover:bg-slate-100"
-              >
+              <Button variant="ghost" size="sm" onClick={() => router.back()}>
                 <ArrowLeft className="w-4 h-4 mr-2" />
-                Back to Alerts
+                Back
               </Button>
-              <div className="h-6 w-px bg-slate-300"></div>
-              <div className="flex items-center gap-3">
-                <Badge className={cn("px-3 py-1 text-white", statusConfig.bg)}>
-                  {statusConfig.label}
-                </Badge>
-                <span className="text-sm text-slate-500">
-                  Alert ID: <span className="font-mono text-slate-700">{selectedAlert.id}</span>
-                </span>
+              <div className="h-6 w-px bg-slate-300" />
+              <div>
+                <div className="flex items-center gap-2 mb-1">
+                  <h1 className="text-xl font-bold text-slate-900">
+                    {selectedAlert.title}
+                  </h1>
+                  <Badge variant="outline" className={cn("flex items-center gap-1", severityConfig.color)}>
+                    <SeverityIcon className="w-3 h-3" />
+                    {selectedAlert.severity.toUpperCase()}
+                  </Badge>
+                  {selectedAlert.escalated && (
+                    <Badge variant="outline" className="bg-red-100 text-red-800 border-red-300">
+                      <ArrowUpCircle className="w-3 h-3 mr-1" />
+                      Escalated
+                    </Badge>
+                  )}
+                </div>
+                <p className="text-sm text-slate-600">
+                  Alert ID: {selectedAlert.id} • {format(new Date(selectedAlert.timestamp), "PPpp")}
+                </p>
               </div>
             </div>
+
+            {/* Action Buttons */}
             <div className="flex items-center gap-2">
-              <span className="text-xs text-slate-500 mr-2">
-                {format(new Date(selectedAlert.timestamp), "MMM dd, yyyy • HH:mm:ss")}
-              </span>
+              {selectedAlert.status !== "closed" && (
+                <>
+                  {selectedAlert.status === "new" && (
+                    <Button variant="outline" onClick={() => handleStatusChange("acknowledged")}>
+                      <CheckCircle2 className="w-4 h-4 mr-2" />
+                      Acknowledge
+                    </Button>
+                  )}
+                  {selectedAlert.status === "acknowledged" && (
+                    <Button variant="outline" onClick={() => handleStatusChange("investigating")}>
+                      <AlertCircle className="w-4 h-4 mr-2" />
+                      Start Investigation
+                    </Button>
+                  )}
+                  {!selectedAlert.escalated && (
+                    <Button variant="outline" onClick={handleEscalate}>
+                      <ArrowUpCircle className="w-4 h-4 mr-2" />
+                      Escalate
+                    </Button>
+                  )}
+                  {selectedAlert.status === "investigating" && (
+                    <Button variant="outline" onClick={() => handleStatusChange("resolved")}>
+                      <CheckCircle2 className="w-4 h-4 mr-2 text-green-600" />
+                      Mark Resolved
+                    </Button>
+                  )}
+                  {selectedAlert.status === "resolved" && (
+                    <Button onClick={() => setShowCloseModal(true)}>
+                      <XCircle className="w-4 h-4 mr-2" />
+                      Close Alert
+                    </Button>
+                  )}
+                </>
+              )}
             </div>
           </div>
         </div>
       </div>
 
-      <div className="p-6">
-        {/* Statistics Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
-          {/* Severity Card */}
-          <Card className={cn("p-3 border-l-4", severityColor.border)}>
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-0.5">Severity</p>
-                <p className={cn("text-lg font-bold", severityColor.text)}>{selectedAlert.severity.toUpperCase()}</p>
-              </div>
-              <div className={cn("p-2 rounded-lg", severityColor.light)}>
-                <AlertTriangle className={cn("w-4 h-4", severityColor.text)} />
-              </div>
-            </div>
-          </Card>
+      <div className="px-6 py-6">
+        <div className="grid grid-cols-12 gap-6">
+          {/* Main Content */}
+          <div className="col-span-8">
+            <Tabs defaultValue="screenshots" className="w-full">
+              <TabsList className="w-full justify-start">
+                <TabsTrigger value="screenshots">Screenshots</TabsTrigger>
+                <TabsTrigger value="videos">Event Video</TabsTrigger>
+                <TabsTrigger value="timeline">Timeline</TabsTrigger>
+              </TabsList>
 
-          {/* Alert Type Card */}
-          <Card className="p-3 bg-gradient-to-br from-blue-50 to-blue-100 border border-blue-200">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-[10px] font-semibold text-blue-700 uppercase tracking-wide mb-0.5">Alert Type</p>
-                <p className="text-sm font-bold text-blue-900 capitalize">{selectedAlert.alert_type.replace(/_/g, " ")}</p>
-              </div>
-              <div className="p-2 bg-blue-200/50 rounded-lg">
-                <Activity className="w-4 h-4 text-blue-700" />
-              </div>
-            </div>
-          </Card>
-
-          {/* Response Time Card */}
-          <Card className="p-3 bg-gradient-to-br from-purple-50 to-purple-100 border border-purple-200">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-[10px] font-semibold text-purple-700 uppercase tracking-wide mb-0.5">Response Time</p>
-                <p className="text-lg font-bold text-purple-900">
-                  {selectedAlert.acknowledged_at 
-                    ? Math.round((new Date(selectedAlert.acknowledged_at) - new Date(selectedAlert.timestamp)) / 60000) + "m"
-                    : "Pending"}
-                </p>
-              </div>
-              <div className="p-2 bg-purple-200/50 rounded-lg">
-                <Clock className="w-4 h-4 text-purple-700" />
-              </div>
-            </div>
-          </Card>
-
-          {/* Actions Card */}
-          <Card className="p-3 bg-gradient-to-br from-emerald-50 to-emerald-100 border border-emerald-200">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-[10px] font-semibold text-emerald-700 uppercase tracking-wide mb-0.5">Actions Taken</p>
-                <p className="text-lg font-bold text-emerald-900">{selectedAlert.notes?.length || 0}</p>
-              </div>
-              <div className="p-2 bg-emerald-200/50 rounded-lg">
-                <FileText className="w-4 h-4 text-emerald-700" />
-              </div>
-            </div>
-          </Card>
-        </div>
-
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Main Content - Left Side */}
-          <div className="lg:col-span-2 space-y-6">
-            {/* Alert Overview */}
-            <Card className="bg-white border border-slate-200 shadow-sm">
-              <div className="p-3 border-b border-slate-200 bg-slate-50">
-                <h2 className="text-base font-bold text-slate-900">{selectedAlert.title}</h2>
-                <p className="text-xs text-slate-600 mt-0.5">{selectedAlert.description}</p>
-              </div>
-              
-              <div className="p-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-3">
-                    <div className="flex items-start gap-2">
-                      <div className="p-1.5 bg-blue-100 rounded-lg">
-                        <Car className="w-4 h-4 text-blue-600" />
-                      </div>
-                      <div>
-                        <p className="text-[10px] font-semibold text-slate-500 uppercase">Vehicle</p>
-                        <p className="text-sm font-bold text-slate-900">{selectedAlert.vehicle_registration}</p>
-                        <p className="text-[10px] text-slate-500">ID: {selectedAlert.vehicle_id}</p>
-                      </div>
-                    </div>
-                    
-                    <div className="flex items-start gap-2">
-                      <div className="p-1.5 bg-green-100 rounded-lg">
-                        <User className="w-4 h-4 text-green-600" />
-                      </div>
-                      <div>
-                        <p className="text-[10px] font-semibold text-slate-500 uppercase">Driver</p>
-                        <p className="text-sm font-bold text-slate-900">{selectedAlert.driver_name}</p>
-                        <p className="text-[10px] text-slate-500">ID: {selectedAlert.driver_id}</p>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="space-y-3">
-                    <div className="flex items-start gap-2">
-                      <div className="p-1.5 bg-amber-100 rounded-lg">
-                        <MapPin className="w-4 h-4 text-amber-600" />
-                      </div>
-                      <div>
-                        <p className="text-[10px] font-semibold text-slate-500 uppercase">Location</p>
-                        <p className="text-xs font-semibold text-slate-900">{selectedAlert.location?.address || "Unknown"}</p>
-                        <p className="text-[10px] text-slate-500">
-                          {selectedAlert.location?.latitude?.toFixed(4)}, {selectedAlert.location?.longitude?.toFixed(4)}
-                        </p>
-                      </div>
-                    </div>
-                    
-                    <div className="flex items-start gap-2">
-                      <div className="p-1.5 bg-purple-100 rounded-lg">
-                        <Camera className="w-4 h-4 text-purple-600" />
-                      </div>
-                      <div>
-                        <p className="text-[10px] font-semibold text-slate-500 uppercase">Cameras</p>
-                        <p className="text-sm font-bold text-slate-900">{selectedAlert.camera_ids?.length || 0} Active</p>
-                        <p className="text-[10px] text-slate-500">{selectedAlert.screenshots?.length || 0} screenshots</p>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </Card>
-
-            {/* Visual Evidence Tabs */}
-            <Card className="bg-white border border-slate-200 shadow-sm">
-              <Tabs defaultValue="screenshots" className="w-full">
-                <div className="border-b border-slate-200 bg-slate-50 px-4 pt-2">
-                  <TabsList className="bg-transparent border-b-0">
-                    <TabsTrigger 
-                      value="screenshots" 
-                      className="data-[state=active]:bg-white data-[state=active]:border data-[state=active]:border-b-0 data-[state=active]:border-slate-200 data-[state=active]:-mb-[1px] rounded-t-lg"
-                    >
-                      <Camera className="w-4 h-4 mr-2" />
-                      Screenshots
-                    </TabsTrigger>
-                    <TabsTrigger 
-                      value="videos"
-                      className="data-[state=active]:bg-white data-[state=active]:border data-[state=active]:border-b-0 data-[state=active]:border-slate-200 data-[state=active]:-mb-[1px] rounded-t-lg"
-                    >
-                      <Video className="w-4 h-4 mr-2" />
-                      Video Clips
-                    </TabsTrigger>
-                    <TabsTrigger 
-                      value="timeline"
-                      className="data-[state=active]:bg-white data-[state=active]:border data-[state=active]:border-b-0 data-[state=active]:border-slate-200 data-[state=active]:-mb-[1px] rounded-t-lg"
-                    >
-                      <Activity className="w-4 h-4 mr-2" />
-                      Timeline
-                    </TabsTrigger>
-                  </TabsList>
-                </div>
-
-                <TabsContent value="screenshots" className="p-4 m-0">
+              {/* Screenshots Tab */}
+              <TabsContent value="screenshots" className="mt-4">
+                <Card className="p-4">
                   <div className="flex items-center justify-between mb-4">
-                    <div>
-                      <h3 className="text-sm font-bold text-slate-900">Camera Footage</h3>
-                      <p className="text-xs text-slate-500 mt-0.5">Auto-refresh: Every 30 seconds</p>
-                    </div>
+                    <h3 className="text-lg font-semibold text-slate-900">
+                      Camera Screenshots
+                    </h3>
                     <Button
                       variant="outline"
                       size="sm"
                       onClick={() => refreshScreenshots(alertId)}
-                      className="bg-blue-50 border-blue-200 text-blue-700 hover:bg-blue-100"
                     >
                       <RefreshCw className="w-4 h-4 mr-2" />
                       Refresh
                     </Button>
                   </div>
-                  
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <p className="text-sm text-slate-600 mb-4">
+                    Screenshots auto-refresh every 30 seconds
+                  </p>
+                  <div className="grid grid-cols-2 gap-4">
                     {selectedAlert.screenshots?.length > 0 ? (
                       selectedAlert.screenshots.map((screenshot) => (
-                        <Card key={screenshot.id} className="overflow-hidden border border-slate-200 hover:shadow-lg transition-all group">
+                        <Card key={screenshot.id} className="overflow-hidden">
                           <div className="relative aspect-video bg-slate-900">
                             <img
                               src={screenshot.url}
                               alt={screenshot.camera_name}
                               className="w-full h-full object-cover"
                             />
-                            <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent"></div>
-                            <div className="absolute top-3 left-3">
-                              <Badge className="bg-black/70 backdrop-blur-sm text-white border-0 shadow-lg">
-                                {screenshot.camera_name}
-                              </Badge>
+                            <div className="absolute top-2 left-2 bg-black/80 text-white px-3 py-1 rounded text-xs font-medium">
+                              {screenshot.camera_name}
                             </div>
-                            <div className="absolute bottom-3 right-3">
-                              <Badge className="bg-black/70 backdrop-blur-sm text-white border-0 shadow-lg font-mono">
-                                {format(new Date(screenshot.timestamp), "HH:mm:ss")}
-                              </Badge>
+                            <div className="absolute bottom-2 right-2 bg-black/80 text-white px-3 py-1 rounded text-xs">
+                              {format(new Date(screenshot.timestamp), "HH:mm:ss")}
                             </div>
-                            <Button 
-                              variant="ghost" 
-                              size="sm"
-                              className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity bg-white/90 hover:bg-white"
-                            >
-                              <Eye className="w-4 h-4 mr-2" />
-                              View Full
-                            </Button>
                           </div>
-                          <div className="p-3 bg-slate-50 border-t border-slate-200 flex justify-between items-center">
-                            <span className="text-xs font-medium text-slate-600">
-                              {screenshot.capture_offset >= 0 ? "+" : ""}{screenshot.capture_offset}s from event
+                          <div className="p-2 border-t flex justify-between items-center">
+                            <span className="text-xs text-slate-600">
+                              {screenshot.capture_offset >= 0 ? "+" : ""}
+                              {screenshot.capture_offset}s
                             </span>
-                            <Button variant="ghost" size="sm" className="h-8">
-                              <Download className="w-4 h-4" />
+                            <Button variant="ghost" size="sm">
+                              <Download className="w-3 h-3" />
                             </Button>
                           </div>
                         </Card>
                       ))
                     ) : (
-                      <div className="col-span-2 text-center py-16">
-                        <Camera className="w-16 h-16 mx-auto text-slate-300 mb-4" />
-                        <p className="text-slate-500 font-medium">No screenshots available</p>
+                      <div className="col-span-2 text-center py-12 text-slate-500">
+                        No screenshots available
                       </div>
                     )}
                   </div>
-                </TabsContent>
+                </Card>
+              </TabsContent>
 
-                <TabsContent value="videos" className="p-4 m-0">
-                  <div className="mb-4">
-                    <h3 className="text-sm font-bold text-slate-900">Video Evidence</h3>
-                    <p className="text-xs text-slate-500 mt-0.5">30-second clips before and after the event</p>
-                  </div>
-                  
-                  <div className="space-y-3">
-                    {selectedAlert.video_clips?.length > 0 ? (
-                      selectedAlert.video_clips.map((clip) => (
-                        <Card key={clip.id} className="p-4 border border-slate-200 hover:shadow-md transition-shadow">
-                          <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-4">
-                              <div className="p-3 bg-gradient-to-br from-blue-100 to-blue-200 rounded-lg">
-                                <PlayCircle className="w-6 h-6 text-blue-600" />
-                              </div>
-                              <div>
-                                <h4 className="font-bold text-slate-900">{clip.camera_name}</h4>
-                                <p className="text-sm text-slate-500">
-                                  {clip.duration}s • {format(new Date(clip.timestamp), "HH:mm:ss")}
-                                </p>
-                              </div>
-                            </div>
-                            <div className="flex gap-2">
-                              <Button size="sm" className="bg-blue-600 hover:bg-blue-700">
-                                <PlayCircle className="w-4 h-4 mr-2" />
-                                Play
-                              </Button>
-                              <Button variant="outline" size="sm">
-                                <Download className="w-4 h-4" />
-                              </Button>
+              {/* Video Clips Tab */}
+              <TabsContent value="videos" className="mt-4">
+                <Card className="p-4">
+                  <h3 className="text-lg font-semibold text-slate-900 mb-4">
+                    Event Video (SD Card)
+                  </h3>
+                  <div className="space-y-4">
+                    {selectedAlert.metadata?.videoPath ? (
+                      <Card className="p-4">
+                        <video controls className="w-full rounded mb-3">
+                          <source src={`/api/video-server/alerts/${alertId}/video?type=camera`} type="video/mp4" />
+                          Your browser does not support video playback.
+                        </video>
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-3">
+                            <Video className="w-5 h-5 text-slate-600" />
+                            <div>
+                              <p className="font-medium text-slate-900">Camera SD Card Recording</p>
+                              <p className="text-sm text-slate-600">Event video from vehicle camera</p>
                             </div>
                           </div>
-                        </Card>
-                      ))
+                          <Button 
+                            variant="outline" 
+                            size="sm"
+                            onClick={() => window.open(`/api/video-server/alerts/${alertId}/video?type=camera&download=true`, '_blank')}
+                          >
+                            <Download className="w-4 h-4 mr-2" />
+                            Download
+                          </Button>
+                        </div>
+                      </Card>
                     ) : (
-                      <div className="text-center py-16">
-                        <Video className="w-16 h-16 mx-auto text-slate-300 mb-4" />
-                        <p className="text-slate-500 font-medium">No video clips available</p>
-                        <p className="text-sm text-slate-400 mt-1">Videos are recorded for priority alerts</p>
+                      <div className="text-center py-12 text-slate-500">
+                        <Video className="w-12 h-12 mx-auto mb-3 opacity-20" />
+                        <p>Video is being retrieved from camera SD card...</p>
+                        <p className="text-sm mt-2">This may take a few moments</p>
                       </div>
                     )}
                   </div>
-                </TabsContent>
+                </Card>
+              </TabsContent>
 
-                <TabsContent value="timeline" className="p-4 m-0">
-                  <div className="mb-4">
-                    <h3 className="text-sm font-bold text-slate-900">Alert Timeline</h3>
-                    <p className="text-xs text-slate-500 mt-0.5">Complete audit trail of all actions</p>
-                  </div>
-                  
+              {/* Timeline Tab */}
+              <TabsContent value="timeline" className="mt-4">
+                <Card className="p-4">
+                  <h3 className="text-lg font-semibold text-slate-900 mb-4">Alert History</h3>
                   <div className="space-y-4">
                     {selectedAlert.history?.length > 0 ? (
-                      <div className="relative">
-                        <div className="absolute left-4 top-0 bottom-0 w-0.5 bg-gradient-to-b from-blue-500 via-purple-500 to-slate-300"></div>
-                        {selectedAlert.history.map((entry, index) => (
-                          <div key={entry.id} className="relative flex gap-4 pb-6">
-                            <div className="relative z-10 flex items-center justify-center w-8 h-8 bg-blue-500 rounded-full border-4 border-white shadow-lg">
-                              <div className="w-2 h-2 bg-white rounded-full"></div>
-                            </div>
-                            <Card className="flex-1 p-4 border border-slate-200 hover:shadow-md transition-shadow">
-                              <div className="flex justify-between items-start mb-2">
-                                <h4 className="font-bold text-slate-900 capitalize">
-                                  {entry.action.replace(/_/g, " ")}
-                                </h4>
-                                <Badge variant="outline" className="text-xs">
-                                  {format(new Date(entry.timestamp), "MMM dd, HH:mm")}
-                                </Badge>
-                              </div>
-                              <p className="text-sm text-slate-600 mb-2">{entry.details}</p>
-                              <p className="text-xs text-slate-500">by {entry.user_name}</p>
-                            </Card>
+                      selectedAlert.history.map((entry, index) => (
+                        <div key={entry.id} className="flex gap-4">
+                          <div className="flex flex-col items-center">
+                            <div className="w-2 h-2 rounded-full bg-blue-500" />
+                            {index < selectedAlert.history.length - 1 && (
+                              <div className="w-px h-full bg-slate-300 my-1" />
+                            )}
                           </div>
-                        ))}
-                      </div>
+                          <div className="flex-1 pb-4">
+                            <div className="flex items-center gap-2 mb-1">
+                              <span className="font-medium text-slate-900">{entry.action}</span>
+                              {entry.user_name && (
+                                <>
+                                  <span className="text-slate-400">by</span>
+                                  <span className="text-slate-700">{entry.user_name}</span>
+                                </>
+                              )}
+                            </div>
+                            <p className="text-sm text-slate-600">{entry.details}</p>
+                            <p className="text-xs text-slate-400 mt-1">
+                              {format(new Date(entry.timestamp), "PPpp")}
+                            </p>
+                          </div>
+                        </div>
+                      ))
                     ) : (
-                      <div className="text-center py-16">
-                        <Activity className="w-16 h-16 mx-auto text-slate-300 mb-4" />
-                        <p className="text-slate-500 font-medium">No timeline data</p>
+                      <div className="text-center py-12 text-slate-500">
+                        No history available
                       </div>
                     )}
                   </div>
-                </TabsContent>
-              </Tabs>
-            </Card>
+                </Card>
+              </TabsContent>
+            </Tabs>
           </div>
 
-          {/* Right Sidebar */}
-          <div className="space-y-6">
-            {/* Action Panel */}
-            <Card className="bg-white border border-slate-200 shadow-sm">
-              <div className="p-3 border-b border-slate-200 bg-gradient-to-r from-blue-50 to-purple-50">
-                <h3 className="text-sm font-bold text-slate-900">Actions</h3>
-              </div>
-              <div className="p-3 space-y-1.5">
-                {selectedAlert.status === "new" && (
-                  <Button 
-                    className="w-full bg-blue-600 hover:bg-blue-700 shadow-lg shadow-blue-500/30"
-                    onClick={() => handleStatusChange("acknowledged")}
-                  >
-                    <CheckCircle2 className="w-4 h-4 mr-2" />
-                    Acknowledge Alert
-                  </Button>
-                )}
-                {(selectedAlert.status === "acknowledged" || selectedAlert.status === "new") && (
-                  <Button 
-                    className="w-full bg-amber-600 hover:bg-amber-700 shadow-lg shadow-amber-500/30"
-                    onClick={() => handleStatusChange("investigating")}
-                  >
-                    <Activity className="w-4 h-4 mr-2" />
-                    Start Investigation
-                  </Button>
-                )}
-                {!selectedAlert.escalated && selectedAlert.status !== "closed" && (
-                  <Button 
-                    variant="outline"
-                    className="w-full border-purple-300 text-purple-700 hover:bg-purple-50"
-                    onClick={handleEscalate}
-                  >
-                    <ArrowUpCircle className="w-4 h-4 mr-2" />
-                    Escalate to Management
-                  </Button>
-                )}
-                {selectedAlert.status === "investigating" && (
-                  <Button 
-                    className="w-full bg-green-600 hover:bg-green-700 shadow-lg shadow-green-500/30"
-                    onClick={() => handleStatusChange("resolved")}
-                  >
-                    <CheckCircle2 className="w-4 h-4 mr-2" />
-                    Mark as Resolved
-                  </Button>
-                )}
-                {selectedAlert.status === "resolved" && (
-                  <Button 
-                    className="w-full bg-slate-700 hover:bg-slate-800"
-                    onClick={() => setShowCloseModal(true)}
-                  >
-                    <XCircle className="w-4 h-4 mr-2" />
-                    Close Alert
-                  </Button>
-                )}
+          {/* Sidebar */}
+          <div className="col-span-4 space-y-4">
+            {/* Alert Details */}
+            <Card className="p-4">
+              <h3 className="font-semibold text-slate-900 mb-4">Alert Details</h3>
+              <div className="space-y-3 text-sm">
+                <div className="flex items-start gap-2">
+                  <Car className="w-4 h-4 text-slate-500 mt-0.5" />
+                  <div>
+                    <p className="text-slate-600">Vehicle</p>
+                    <p className="font-medium text-slate-900">
+                      {selectedAlert.vehicle_registration || "N/A"}
+                    </p>
+                  </div>
+                </div>
+                <Separator />
+                <div className="flex items-start gap-2">
+                  <User className="w-4 h-4 text-slate-500 mt-0.5" />
+                  <div>
+                    <p className="text-slate-600">Driver</p>
+                    <p className="font-medium text-slate-900">
+                      {selectedAlert.driver_name || "N/A"}
+                    </p>
+                  </div>
+                </div>
+                <Separator />
+                <div className="flex items-start gap-2">
+                  <MapPin className="w-4 h-4 text-slate-500 mt-0.5" />
+                  <div>
+                    <p className="text-slate-600">Location</p>
+                    <p className="font-medium text-slate-900">
+                      {selectedAlert.location?.address || "No location data"}
+                    </p>
+                  </div>
+                </div>
+                <Separator />
+                <div className="flex items-start gap-2">
+                  <Flag className="w-4 h-4 text-slate-500 mt-0.5" />
+                  <div>
+                    <p className="text-slate-600">Alert Type</p>
+                    <p className="font-medium text-slate-900">
+                      {selectedAlert.alert_type.replace(/_/g, " ").toUpperCase()}
+                    </p>
+                  </div>
+                </div>
               </div>
             </Card>
 
-            {/* Add Note */}
-            <Card className="bg-white border border-slate-200 shadow-sm">
-              <div className="p-3 border-b border-slate-200 bg-gradient-to-r from-emerald-50 to-teal-50">
-                <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-                  <FileText className="w-4 h-4" />
-                  Add Note
-                </h3>
-              </div>
-              <div className="p-3">
-                <Textarea
-                  value={newNote}
-                  onChange={(e) => setNewNote(e.target.value)}
-                  placeholder="Document observations, actions taken, or relevant details..."
-                  className="min-h-[80px] mb-2 resize-none text-sm"
-                />
-                <Button
-                  onClick={handleAddNote}
-                  disabled={!newNote.trim() || addingNote}
-                  className="w-full bg-emerald-600 hover:bg-emerald-700"
-                >
-                  {addingNote ? "Adding..." : "Add Note"}
-                </Button>
-              </div>
-            </Card>
+            {/* Notes Section */}
+            <Card className="p-4">
+              <h3 className="font-semibold text-slate-900 mb-4">Notes</h3>
+              
+              {/* Add Note */}
+              {selectedAlert.status !== "closed" && (
+                <div className="mb-4">
+                  <Textarea
+                    placeholder="Add a note..."
+                    value={newNote}
+                    onChange={(e) => setNewNote(e.target.value)}
+                    rows={3}
+                    className="mb-2"
+                  />
+                  <Button
+                    size="sm"
+                    onClick={handleAddNote}
+                    disabled={!newNote.trim() || addingNote}
+                  >
+                    <FileText className="w-4 h-4 mr-2" />
+                    Add Note
+                  </Button>
+                </div>
+              )}
 
-            {/* Notes History */}
-            <Card className="bg-white border border-slate-200 shadow-sm">
-              <div className="p-3 border-b border-slate-200 bg-slate-50">
-                <h3 className="text-sm font-bold text-slate-900">
-                  Notes & Comments ({selectedAlert.notes?.length || 0})
-                </h3>
-              </div>
-              <div className="p-3 space-y-2 max-h-[400px] overflow-y-auto">
+              {/* Notes List */}
+              <div className="space-y-3 max-h-96 overflow-y-auto">
                 {selectedAlert.notes?.length > 0 ? (
                   selectedAlert.notes.map((note) => (
-                    <Card key={note.id} className="p-2 bg-gradient-to-br from-slate-50 to-slate-100 border border-slate-200">
-                      <div className="flex items-start gap-2 mb-1">
-                        <div className="w-6 h-6 bg-blue-500 rounded-full flex items-center justify-center text-white font-bold text-xs flex-shrink-0">
-                          {note.user_name.charAt(0).toUpperCase()}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="font-semibold text-xs text-slate-900">{note.user_name}</p>
-                          <p className="text-[10px] text-slate-500">
-                            {format(new Date(note.created_at), "MMM dd • HH:mm")}
-                          </p>
-                        </div>
+                    <div key={note.id} className="p-3 bg-slate-50 rounded-lg">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="font-medium text-sm text-slate-900">{note.user_name}</span>
+                        <span className="text-xs text-slate-500">
+                          {format(new Date(note.created_at), "MMM dd, HH:mm")}
+                        </span>
                       </div>
-                      <p className="text-xs text-slate-700 leading-relaxed pl-8">
-                        {note.content}
-                      </p>
-                    </Card>
+                      <p className="text-sm text-slate-700">{note.content}</p>
+                    </div>
                   ))
                 ) : (
-                  <div className="text-center py-8">
-                    <FileText className="w-12 h-12 mx-auto text-slate-300 mb-2" />
-                    <p className="text-sm text-slate-500">No notes yet</p>
-                  </div>
+                  <p className="text-sm text-slate-500 text-center py-4">No notes yet</p>
                 )}
               </div>
             </Card>
@@ -599,10 +448,12 @@ export default function AlertDetailPage({ params }) {
         </div>
       </div>
 
+      {/* Close Alert Modal */}
       <CloseAlertModal
-        isOpen={showCloseModal}
+        open={showCloseModal}
         onClose={() => setShowCloseModal(false)}
         alertId={alertId}
+        alertTitle={selectedAlert.title}
       />
     </div>
   );

@@ -1,479 +1,457 @@
-"use client";
+'use client'
 
-import React, { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
-import { useVideoAlerts } from "@/context/video-alerts-context/context";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Card } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import {
-  AlertTriangle,
-  AlertCircle,
-  Info,
-  CheckCircle2,
-  Clock,
-  TrendingUp,
-  Filter,
-  Download,
-  RefreshCw,
-  Eye,
-  Search,
-  X,
-  ArrowUpCircle,
-} from "lucide-react";
-import { cn } from "@/lib/utils";
-import { format } from "date-fns";
+import { useState, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
+import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
+import { Card } from '@/components/ui/card'
+import { Textarea } from '@/components/ui/textarea'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { AlertTriangle, Clock, CheckCircle, RefreshCw, Eye, ArrowUpCircle, Camera, MapPin, User, Car } from 'lucide-react'
+import { cn } from '@/lib/utils'
 
 export default function VideoAlertsPage() {
-  const router = useRouter();
-  const {
-    alerts,
-    statistics,
-    filters,
-    loading,
-    fetchAlerts,
-    fetchStatistics,
-    setFilters,
-    clearFilters,
-    acknowledgeAlert,
-  } = useVideoAlerts();
+  const router = useRouter()
+  const [alerts, setAlerts] = useState({ critical: [], high: [], medium: [], low: [] })
+  const [screenshots, setScreenshots] = useState([])
+  const [selectedAlert, setSelectedAlert] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [apiError, setApiError] = useState(false)
+  const [notes, setNotes] = useState('')
+  const [activeTab, setActiveTab] = useState('alerts')
+  const [currentUser] = useState({ id: 'user-1', name: 'Controller' })
 
-  const [searchTerm, setSearchTerm] = useState("");
-  const [selectedTab, setSelectedTab] = useState("all");
-  const [currentUser] = useState({ id: "user-1", name: "Current User" }); // Replace with actual auth
-
-  useEffect(() => {
-    fetchAlerts(filters);
-    fetchStatistics();
-  }, [filters]);
-
-  // Auto-refresh every 30 seconds
-  useEffect(() => {
-    const interval = setInterval(() => {
-      fetchAlerts(filters);
-    }, 30000);
-    return () => clearInterval(interval);
-  }, [filters]);
-
-  const handleRefresh = () => {
-    fetchAlerts(filters);
-    fetchStatistics();
-  };
-
-  const handleAcknowledge = async (alertId) => {
-    await acknowledgeAlert(alertId, currentUser.id);
-  };
-
-  const handleViewDetails = (alertId) => {
-    router.push(`/video-alerts/${alertId}`);
-  };
-
-  const getSeverityConfig = (severity) => {
-    const config = {
-      critical: {
-        color: "bg-red-100 text-red-800 border-red-300",
-        icon: AlertTriangle,
-        label: "Critical",
-      },
-      high: {
-        color: "bg-orange-100 text-orange-800 border-orange-300",
-        icon: AlertCircle,
-        label: "High",
-      },
-      medium: {
-        color: "bg-yellow-100 text-yellow-800 border-yellow-300",
-        icon: Info,
-        label: "Medium",
-      },
-      low: {
-        color: "bg-blue-100 text-blue-800 border-blue-300",
-        icon: Info,
-        label: "Low",
-      },
-      info: {
-        color: "bg-gray-100 text-gray-800 border-gray-300",
-        icon: Info,
-        label: "Info",
-      },
-    };
-    return config[severity] || config.info;
-  };
-
-  const getStatusConfig = (status) => {
-    const config = {
-      new: {
-        color: "bg-purple-100 text-purple-800 border-purple-300",
-        label: "New",
-        dot: "bg-purple-500",
-      },
-      acknowledged: {
-        color: "bg-blue-100 text-blue-800 border-blue-300",
-        label: "Acknowledged",
-        dot: "bg-blue-500",
-      },
-      investigating: {
-        color: "bg-yellow-100 text-yellow-800 border-yellow-300",
-        label: "Investigating",
-        dot: "bg-yellow-500",
-      },
-      escalated: {
-        color: "bg-red-100 text-red-800 border-red-300",
-        label: "Escalated",
-        dot: "bg-red-500",
-      },
-      resolved: {
-        color: "bg-green-100 text-green-800 border-green-300",
-        label: "Resolved",
-        dot: "bg-green-500",
-      },
-      closed: {
-        color: "bg-gray-100 text-gray-800 border-gray-300",
-        label: "Closed",
-        dot: "bg-gray-500",
-      },
-    };
-    return config[status] || config.new;
-  };
-
-  const filteredAlerts = alerts.filter((alert) => {
-    if (selectedTab !== "all" && alert.status !== selectedTab) return false;
-    if (searchTerm) {
-      const search = searchTerm.toLowerCase();
-      return (
-        alert.title?.toLowerCase().includes(search) ||
-        alert.vehicle_registration?.toLowerCase().includes(search) ||
-        alert.driver_name?.toLowerCase().includes(search) ||
-        alert.alert_type?.toLowerCase().includes(search)
-      );
+  const fetchAlerts = async () => {
+    try {
+      const res = await fetch('/api/video-server/alerts', { signal: AbortSignal.timeout(10000) })
+      if (res.ok) {
+        const data = await res.json()
+        if (data.success && data.alerts) {
+          const grouped = { critical: [], high: [], medium: [], low: [] }
+          data.alerts.forEach(alert => {
+            const priority = alert.priority || 'low'
+            if (grouped[priority]) grouped[priority].push(alert)
+          })
+          setAlerts(grouped)
+          setApiError(false)
+          return
+        }
+      }
+      throw new Error('API failed')
+    } catch (err) {
+      console.error('Failed to fetch alerts:', err)
+      setApiError(true)
     }
-    return true;
-  });
+  }
 
-  const statCards = [
-    {
-      title: "Total Alerts",
-      value: statistics?.total_alerts || 0,
-      icon: AlertTriangle,
-      color: "text-slate-600",
-      bgColor: "bg-slate-100",
-    },
-    {
-      title: "Critical",
-      value: statistics?.critical_alerts || 0,
-      icon: AlertCircle,
-      color: "text-red-600",
-      bgColor: "bg-red-100",
-    },
-    {
-      title: "New Alerts",
-      value: statistics?.new_alerts || 0,
-      icon: Clock,
-      color: "text-purple-600",
-      bgColor: "bg-purple-100",
-    },
-    {
-      title: "Escalated",
-      value: statistics?.escalated_alerts || 0,
-      icon: ArrowUpCircle,
-      color: "text-orange-600",
-      bgColor: "bg-orange-100",
-    },
-    {
-      title: "Resolved Today",
-      value: statistics?.resolved_today || 0,
-      icon: CheckCircle2,
-      color: "text-green-600",
-      bgColor: "bg-green-100",
-    },
-    {
-      title: "Avg Response",
-      value: `${statistics?.average_response_time_minutes || 0}m`,
-      icon: TrendingUp,
-      color: "text-blue-600",
-      bgColor: "bg-blue-100",
-    },
-  ];
+  const fetchScreenshots = async () => {
+    try {
+      const res = await fetch('/api/video-server/screenshots/recent?minutes=30', { signal: AbortSignal.timeout(10000) })
+      if (res.ok) {
+        const data = await res.json()
+        if (data.success && data.screenshots) {
+          setScreenshots(data.screenshots)
+          return
+        }
+      }
+    } catch (err) {
+      console.error('Failed to fetch screenshots:', err)
+    }
+  }
 
-  const tabs = [
-    { value: "all", label: "All Alerts", count: alerts.length },
-    { value: "new", label: "New", count: alerts.filter((a) => a.status === "new").length },
-    {
-      value: "acknowledged",
-      label: "Acknowledged",
-      count: alerts.filter((a) => a.status === "acknowledged").length,
-    },
-    {
-      value: "investigating",
-      label: "Investigating",
-      count: alerts.filter((a) => a.status === "investigating").length,
-    },
-    {
-      value: "escalated",
-      label: "Escalated",
-      count: alerts.filter((a) => a.status === "escalated").length,
-    },
-  ];
+  useEffect(() => {
+    const init = async () => {
+      setLoading(true)
+      setApiError(false)
+      await fetchAlerts()
+      await fetchScreenshots()
+      setLoading(false)
+    }
+    init()
+    const interval = setInterval(() => {
+      fetchAlerts()
+      fetchScreenshots()
+    }, 30000)
+    return () => clearInterval(interval)
+  }, [])
+
+  if (loading) {
+    return (
+      <div className="h-screen flex items-center justify-center bg-gray-50">
+        <div className="text-center">
+          <RefreshCw className="w-12 h-12 mx-auto mb-4 animate-spin text-blue-600" />
+          <p className="text-gray-600">Loading video alerts...</p>
+        </div>
+      </div>
+    )
+  }
+
+  if (apiError) {
+    return (
+      <div className="h-screen flex items-center justify-center bg-gray-50">
+        <Card className="p-8 max-w-md text-center">
+          <AlertTriangle className="w-16 h-16 mx-auto mb-4 text-red-500" />
+          <h2 className="text-2xl font-bold mb-2">Video Server Unavailable</h2>
+          <p className="text-gray-600 mb-6">Unable to connect to the video alert server at 164.90.182.2:3000</p>
+          <Button onClick={() => window.location.reload()}>
+            <RefreshCw className="w-4 h-4 mr-2" />
+            Retry Connection
+          </Button>
+        </Card>
+      </div>
+    )
+  }
+
+  const handleAction = async (alertId, action) => {
+    setLoading(true)
+    try {
+      if (action === 'acknowledge') {
+        await fetch(`/api/video-server/alerts/${alertId}/acknowledge`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ acknowledgedBy: currentUser.id })
+        })
+      } else if (action === 'resolve') {
+        if (notes.length < 10) {
+          alert('Please enter at least 10 characters in notes')
+          setLoading(false)
+          return
+        }
+        await fetch(`/api/video-server/alerts/${alertId}/resolve-with-notes`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ notes, resolvedBy: currentUser.id })
+        })
+        setSelectedAlert(null)
+        setNotes('')
+      } else if (action === 'escalate') {
+        await fetch(`/api/video-server/alerts/${alertId}/escalate`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ reason: 'Escalated by controller' })
+        })
+      }
+      fetchAlerts()
+    } catch (err) {
+      console.error(err)
+    }
+    setLoading(false)
+  }
+
+  const allAlerts = [...alerts.critical, ...alerts.high, ...alerts.medium, ...alerts.low]
+  const priorityColor = (p) => ({
+    critical: 'bg-red-500',
+    high: 'bg-orange-500',
+    medium: 'bg-yellow-500',
+    low: 'bg-blue-500'
+  }[p] || 'bg-gray-500')
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 p-6">
-      {/* Header */}
-      <div className="mb-6">
-        <div className="flex items-center justify-between mb-4">
+    <div className="h-screen flex flex-col bg-gray-50">
+      <div className="bg-white border-b px-6 py-4 flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold">Alert Management</h1>
+          <p className="text-sm text-gray-600">Monitor and respond to all alerts</p>
+        </div>
+        <Button onClick={() => { fetchAlerts(); fetchScreenshots() }} disabled={loading}>
+          <RefreshCw className={cn('w-4 h-4 mr-2', loading && 'animate-spin')} />
+          Refresh
+        </Button>
+      </div>
+
+      <div className="bg-white border-b px-6 py-3 grid grid-cols-4 gap-4">
+        <div className="flex items-center gap-3">
+          <div className="w-12 h-12 bg-red-100 rounded-lg flex items-center justify-center">
+            <AlertTriangle className="w-6 h-6 text-red-600" />
+          </div>
           <div>
-            <h1 className="text-3xl font-bold text-slate-900">Video Alerts</h1>
-            <p className="text-slate-600 mt-1">
-              Real-time monitoring and alert management system
-            </p>
-          </div>
-          <div className="flex items-center gap-3">
-            <Button variant="outline" onClick={handleRefresh} disabled={loading}>
-              <RefreshCw className={cn("w-4 h-4 mr-2", loading && "animate-spin")} />
-              Refresh
-            </Button>
-            <Button variant="outline">
-              <Download className="w-4 h-4 mr-2" />
-              Export
-            </Button>
-            <Button variant="outline">
-              <Filter className="w-4 h-4 mr-2" />
-              Filters
-            </Button>
+            <p className="text-2xl font-bold">{alerts.critical?.length || 0}</p>
+            <p className="text-xs text-gray-600">Critical</p>
           </div>
         </div>
-
-        {/* Statistics Cards */}
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-6">
-          {statCards.map((stat) => (
-            <Card key={stat.title} className="p-4 border-slate-200">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-xs font-medium text-slate-600 uppercase tracking-wide">
-                    {stat.title}
-                  </p>
-                  <p className="text-2xl font-bold text-slate-900 mt-1">{stat.value}</p>
-                </div>
-                <div className={cn("p-3 rounded-lg", stat.bgColor)}>
-                  <stat.icon className={cn("w-5 h-5", stat.color)} />
-                </div>
-              </div>
-            </Card>
-          ))}
-        </div>
-
-        {/* Search and Tabs */}
-        <div className="flex items-center gap-4 mb-4">
-          <div className="relative flex-1 max-w-md">
-            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-slate-400" />
-            <Input
-              placeholder="Search alerts, vehicles, drivers..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="pl-10 pr-10"
-            />
-            {searchTerm && (
-              <button
-                onClick={() => setSearchTerm("")}
-                className="absolute right-3 top-1/2 transform -translate-y-1/2 text-slate-400 hover:text-slate-600"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            )}
+        <div className="flex items-center gap-3">
+          <div className="w-12 h-12 bg-orange-100 rounded-lg flex items-center justify-center">
+            <Clock className="w-6 h-6 text-orange-600" />
+          </div>
+          <div>
+            <p className="text-2xl font-bold">{alerts.high?.length || 0}</p>
+            <p className="text-xs text-gray-600">High</p>
           </div>
         </div>
-
-        {/* Tabs */}
-        <div className="flex items-center gap-2 overflow-x-auto pb-2">
-          {tabs.map((tab) => (
-            <Button
-              key={tab.value}
-              variant={selectedTab === tab.value ? "default" : "outline"}
-              size="sm"
-              onClick={() => setSelectedTab(tab.value)}
-              className="whitespace-nowrap"
-            >
-              {tab.label}
-              <Badge
-                variant="secondary"
-                className={cn(
-                  "ml-2",
-                  selectedTab === tab.value
-                    ? "bg-white/20 text-white"
-                    : "bg-slate-100 text-slate-700"
-                )}
-              >
-                {tab.count}
-              </Badge>
-            </Button>
-          ))}
+        <div className="flex items-center gap-3">
+          <div className="w-12 h-12 bg-yellow-100 rounded-lg flex items-center justify-center">
+            <Clock className="w-6 h-6 text-yellow-600" />
+          </div>
+          <div>
+            <p className="text-2xl font-bold">{alerts.medium?.length || 0}</p>
+            <p className="text-xs text-gray-600">Medium</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-3">
+          <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center">
+            <CheckCircle className="w-6 h-6 text-blue-600" />
+          </div>
+          <div>
+            <p className="text-2xl font-bold">{alerts.low?.length || 0}</p>
+            <p className="text-xs text-gray-600">Low</p>
+          </div>
         </div>
       </div>
 
-      {/* Alerts Table */}
-      <Card className="border-slate-200 shadow-sm overflow-hidden">
-        <Table>
-          <TableHeader>
-            <TableRow className="bg-gradient-to-r from-slate-50 to-slate-100 border-b hover:bg-gradient-to-r">
-              <TableHead className="h-10 px-3 font-semibold text-slate-700 text-xs uppercase">Severity</TableHead>
-              <TableHead className="h-10 px-3 font-semibold text-slate-700 text-xs uppercase">Status</TableHead>
-              <TableHead className="h-10 px-3 font-semibold text-slate-700 text-xs uppercase">Alert</TableHead>
-              <TableHead className="h-10 px-3 font-semibold text-slate-700 text-xs uppercase">Vehicle</TableHead>
-              <TableHead className="h-10 px-3 font-semibold text-slate-700 text-xs uppercase">Driver</TableHead>
-              <TableHead className="h-10 px-3 font-semibold text-slate-700 text-xs uppercase">Time</TableHead>
-              <TableHead className="h-10 px-3 font-semibold text-slate-700 text-xs uppercase text-right">Actions</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {loading && filteredAlerts.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={7} className="text-center py-8 text-slate-500">
-                  Loading alerts...
-                </TableCell>
-              </TableRow>
-            ) : filteredAlerts.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={7} className="text-center py-8 text-slate-500">
-                  No alerts found
-                </TableCell>
-              </TableRow>
-            ) : (
-              filteredAlerts.map((alert, index) => {
-                const severityConfig = getSeverityConfig(alert.severity);
-                const statusConfig = getStatusConfig(alert.status);
-                const SeverityIcon = severityConfig.icon;
+      <div className="flex-1 overflow-hidden">
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="h-full flex flex-col">
+          <div className="bg-white border-b px-6">
+            <TabsList>
+              <TabsTrigger value="alerts">Alerts ({allAlerts.length})</TabsTrigger>
+              <TabsTrigger value="screenshots">Screenshots ({screenshots.length})</TabsTrigger>
+            </TabsList>
+          </div>
 
-                // Row background colors based on severity
-                const getRowColor = (severity, index) => {
-                  const baseColors = {
-                    critical: index % 2 === 0 ? "bg-red-50" : "bg-red-50/60",
-                    high: index % 2 === 0 ? "bg-orange-50" : "bg-orange-50/60",
-                    medium: index % 2 === 0 ? "bg-yellow-50" : "bg-yellow-50/60",
-                    low: index % 2 === 0 ? "bg-blue-50" : "bg-blue-50/60",
-                  };
-                  return baseColors[severity] || (index % 2 === 0 ? "bg-slate-50" : "bg-white");
-                };
+          <TabsContent value="alerts" className="flex-1 overflow-hidden m-0">
+            <div className="h-full grid grid-cols-2 gap-0">
+              <div className="border-r overflow-y-auto">
+                {allAlerts.length === 0 ? (
+                  <div className="p-12 text-center text-gray-500">
+                    <CheckCircle className="w-16 h-16 mx-auto mb-4 text-green-500" />
+                    <p>No active alerts</p>
+                  </div>
+                ) : (
+                  <div className="divide-y">
+                    {allAlerts.map(alert => (
+                      <div
+                        key={alert.id}
+                        onClick={() => setSelectedAlert(alert)}
+                        className={cn(
+                          'p-4 cursor-pointer hover:bg-gray-50 transition-colors',
+                          selectedAlert?.id === alert.id && 'bg-blue-50 border-l-4 border-l-blue-500'
+                        )}
+                      >
+                        <div className="flex items-start justify-between mb-2">
+                          <div className="flex items-center gap-2">
+                            <div className={cn('w-3 h-3 rounded-full', priorityColor(alert.priority))} />
+                            <span className="font-semibold">{alert.alert_type}</span>
+                          </div>
+                          <Badge variant="outline" className="text-xs">{alert.status}</Badge>
+                        </div>
+                        <div className="text-sm text-gray-600">
+                          <p>Device: {alert.device_id || alert.vehicleId}</p>
+                          {alert.metadata?.drivingBehavior && (
+                            <div className="flex gap-2 mt-1">
+                              {alert.metadata.drivingBehavior.fatigue && (
+                                <Badge variant="destructive" className="text-xs">Fatigue {alert.metadata.drivingBehavior.fatigueLevel}</Badge>
+                              )}
+                              {alert.metadata.drivingBehavior.phoneCall && (
+                                <Badge className="bg-orange-500 text-xs">Phone</Badge>
+                              )}
+                              {alert.metadata.drivingBehavior.smoking && (
+                                <Badge className="bg-yellow-500 text-xs">Smoking</Badge>
+                              )}
+                            </div>
+                          )}
+                          <p className="text-xs text-gray-400">{new Date(alert.timestamp).toLocaleString()}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
 
-                const getBorderColor = (severity) => {
-                  const borders = {
-                    critical: "border-l-4 border-l-red-500",
-                    high: "border-l-4 border-l-orange-500",
-                    medium: "border-l-4 border-l-yellow-500",
-                    low: "border-l-4 border-l-blue-500",
-                  };
-                  return borders[severity] || "";
-                };
+              <div className="overflow-y-auto bg-gray-50">
+                {!selectedAlert ? (
+                  <div className="h-full flex items-center justify-center text-gray-400">
+                    <div className="text-center">
+                      <Eye className="w-16 h-16 mx-auto mb-4 opacity-20" />
+                      <p>Select an alert to view details</p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="p-6 space-y-4">
+                    <div className="flex items-center gap-2">
+                      <Badge className={cn('text-white', priorityColor(selectedAlert.priority))}>
+                        {selectedAlert.priority.toUpperCase()}
+                      </Badge>
+                      <Badge variant="outline">{selectedAlert.status}</Badge>
+                    </div>
 
-                return (
-                  <TableRow
-                    key={alert.id}
-                    className={cn(
-                      "cursor-pointer transition-colors border-b",
-                      getRowColor(alert.severity, index),
-                      getBorderColor(alert.severity),
-                      "hover:brightness-95",
-                      alert.status === "new" && "font-medium"
+                    {selectedAlert.screenshots?.length > 0 && (
+                      <Card className="p-4">
+                        <h3 className="font-semibold mb-3 flex items-center gap-2">
+                          <Camera className="w-4 h-4" />
+                          Screenshots
+                        </h3>
+                        <div className="grid grid-cols-2 gap-2">
+                          {selectedAlert.screenshots.map((ss, i) => (
+                            <img key={i} src={ss.url} alt="" className="w-full rounded border" />
+                          ))}
+                        </div>
+                      </Card>
                     )}
-                    onClick={() => handleViewDetails(alert.id)}
-                  >
-                    <TableCell className="px-3 py-2">
-                      <Badge
-                        variant="outline"
-                        className={cn(
-                          "flex items-center gap-1 w-fit font-semibold text-[10px] px-2 py-0.5 border",
-                          severityConfig.color
-                        )}
-                      >
-                        <SeverityIcon className="w-3 h-3" />
-                        {severityConfig.label.toUpperCase()}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="px-3 py-2">
-                      <Badge
-                        variant="outline"
-                        className={cn(
-                          "flex items-center gap-1.5 w-fit font-medium text-[10px] px-2 py-0.5 border",
-                          statusConfig.color
-                        )}
-                      >
-                        <span className={cn("w-1.5 h-1.5 rounded-full", statusConfig.dot)} />
-                        {statusConfig.label}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="px-3 py-2">
-                      <div>
-                        <p className="font-semibold text-sm text-slate-900">{alert.title}</p>
-                        <p className="text-[10px] text-slate-500 mt-0.5 uppercase tracking-wide">
-                          {alert.alert_type.replace(/_/g, " ")}
-                        </p>
+
+                    <Card className="p-4 space-y-3">
+                      <h3 className="font-semibold">Details</h3>
+                      <div className="space-y-2 text-sm">
+                        <div className="flex items-center gap-2">
+                          <Car className="w-4 h-4 text-gray-400" />
+                          <span>{selectedAlert.vehicle_registration || selectedAlert.vehicleId || 'N/A'}</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <User className="w-4 h-4 text-gray-400" />
+                          <span>{selectedAlert.driver_name || 'N/A'}</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <MapPin className="w-4 h-4 text-gray-400" />
+                          <span>{selectedAlert.location?.address || `${selectedAlert.location?.latitude?.toFixed(4)}, ${selectedAlert.location?.longitude?.toFixed(4)}` || 'N/A'}</span>
+                        </div>
                       </div>
-                    </TableCell>
-                    <TableCell className="px-3 py-2">
-                      <span className="font-semibold text-sm text-slate-800">
-                        {alert.vehicle_registration || "N/A"}
-                      </span>
-                    </TableCell>
-                    <TableCell className="px-3 py-2">
-                      <span className="text-sm text-slate-700">{alert.driver_name || "N/A"}</span>
-                    </TableCell>
-                    <TableCell className="px-3 py-2">
-                      <div className="text-xs">
-                        <p className="text-slate-900 font-medium">
-                          {format(new Date(alert.timestamp), "MMM dd, yyyy")}
-                        </p>
-                        <p className="text-slate-500 text-[10px]">{format(new Date(alert.timestamp), "HH:mm:ss")}</p>
-                      </div>
-                    </TableCell>
-                    <TableCell className="px-3 py-2">
-                      <div className="flex items-center justify-end gap-1.5">
-                        {alert.status === "new" && (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="h-7 px-2 text-xs"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleAcknowledge(alert.id);
-                            }}
-                          >
-                            <CheckCircle2 className="w-3 h-3 mr-1" />
-                            Acknowledge
-                          </Button>
-                        )}
-                        <Button
-                          size="sm"
-                          className="h-7 px-2 text-xs bg-blue-600 hover:bg-blue-700"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleViewDetails(alert.id);
-                          }}
+                      
+                      {selectedAlert.metadata?.drivingBehavior && (
+                        <div className="pt-3 border-t">
+                          <h4 className="font-semibold text-xs mb-2">Driving Behavior</h4>
+                          <div className="space-y-1 text-xs">
+                            {selectedAlert.metadata.drivingBehavior.fatigue && (
+                              <div className="flex items-center gap-2 text-red-600">
+                                <span className="w-2 h-2 bg-red-600 rounded-full" />
+                                Fatigue Detected (Level: {selectedAlert.metadata.drivingBehavior.fatigueLevel})
+                              </div>
+                            )}
+                            {selectedAlert.metadata.drivingBehavior.phoneCall && (
+                              <div className="flex items-center gap-2 text-orange-600">
+                                <span className="w-2 h-2 bg-orange-600 rounded-full" />
+                                Phone Call Detected
+                              </div>
+                            )}
+                            {selectedAlert.metadata.drivingBehavior.smoking && (
+                              <div className="flex items-center gap-2 text-yellow-600">
+                                <span className="w-2 h-2 bg-yellow-600 rounded-full" />
+                                Smoking Detected
+                              </div>
+                            )}
+                            {!selectedAlert.metadata.drivingBehavior.fatigue && !selectedAlert.metadata.drivingBehavior.phoneCall && !selectedAlert.metadata.drivingBehavior.smoking && (
+                              <span className="text-gray-500">No behavior issues</span>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                      
+                      {selectedAlert.metadata?.videoAlarms && (
+                        <div className="pt-3 border-t">
+                          <h4 className="font-semibold text-xs mb-2">Video Alarms</h4>
+                          <div className="space-y-1 text-xs">
+                            {selectedAlert.metadata.videoAlarms.videoSignalLoss && (
+                              <div className="text-red-600">• Signal Loss (Ch: {selectedAlert.metadata.signalLossChannels?.join(', ')})</div>
+                            )}
+                            {selectedAlert.metadata.videoAlarms.storageFailure && (
+                              <div className="text-red-600">• Storage Failure</div>
+                            )}
+                            {selectedAlert.metadata.videoAlarms.videoSignalBlocking && (
+                              <div className="text-orange-600">• Signal Blocking</div>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </Card>
+
+                    <Card className="p-4 space-y-3">
+                      <h3 className="font-semibold">Actions</h3>
+                      
+                      {selectedAlert.status === 'new' && (
+                        <Button 
+                          className="w-full" 
+                          onClick={() => handleAction(selectedAlert.id, 'acknowledge')}
+                          disabled={loading}
                         >
-                          <Eye className="w-3 h-3 mr-1" />
-                          View
+                          <CheckCircle className="w-4 h-4 mr-2" />
+                          Acknowledge
                         </Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                );
-              })
+                      )}
+
+                      {['new', 'acknowledged'].includes(selectedAlert.status) && (
+                        <div className="space-y-2">
+                          <Textarea
+                            placeholder="Enter resolution notes (minimum 10 characters)..."
+                            value={notes}
+                            onChange={(e) => setNotes(e.target.value)}
+                            rows={4}
+                          />
+                          <p className="text-xs text-gray-500">{notes.length} characters</p>
+                          <Button 
+                            className="w-full bg-green-600 hover:bg-green-700" 
+                            onClick={() => handleAction(selectedAlert.id, 'resolve')}
+                            disabled={loading || notes.length < 10}
+                          >
+                            <CheckCircle className="w-4 h-4 mr-2" />
+                            Resolve & Close
+                          </Button>
+                        </div>
+                      )}
+
+                      <Button 
+                        variant="ghost" 
+                        onClick={() => handleAction(selectedAlert.id, 'escalate')}
+                        disabled={loading}
+                      >
+                        <ArrowUpCircle className="w-4 h-4 mr-2" />
+                        Escalate
+                      </Button>
+                      <Button 
+                        variant="outline"
+                        className="text-red-600 hover:bg-red-50"
+                        onClick={async () => {
+                          if (confirm('Mark this as a false alert?')) {
+                            try {
+                              await fetch(`/api/video-server/alerts/${selectedAlert.id}/mark-false`, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ reason: 'False alert', markedBy: currentUser.name })
+                              })
+                              fetchAlerts()
+                            } catch (err) {
+                              console.error(err)
+                            }
+                          }
+                        }}
+                      >
+                        False Alert
+                      </Button>
+                      <Button 
+                        variant="outline"
+                        onClick={() => router.push(`/video-alerts/${selectedAlert.id}`)}
+                      >
+                        <Eye className="w-4 h-4 mr-2" />
+                        Full View
+                      </Button>
+                    </Card>
+                  </div>
+                )}
+              </div>
+            </div>
+          </TabsContent>
+
+          <TabsContent value="screenshots" className="flex-1 overflow-y-auto m-0 p-6">
+            {screenshots.length === 0 ? (
+              <div className="h-full flex items-center justify-center text-gray-400">
+                <div className="text-center">
+                  <Camera className="w-16 h-16 mx-auto mb-4 opacity-20" />
+                  <p>No recent screenshots</p>
+                </div>
+              </div>
+            ) : (
+              <div className="grid grid-cols-4 gap-4">
+                {screenshots.map(ss => (
+                  <Card key={ss.id} className="overflow-hidden">
+                    <img src={ss.storage_url} alt="" className="w-full aspect-video object-cover" />
+                    <div className="p-2 text-xs">
+                      <p className="font-semibold">{ss.device_id}</p>
+                      <p className="text-gray-500">Ch {ss.channel}</p>
+                      <p className="text-gray-400">{new Date(ss.timestamp).toLocaleString()}</p>
+                    </div>
+                  </Card>
+                ))}
+              </div>
             )}
-          </TableBody>
-        </Table>
-      </Card>
+          </TabsContent>
+        </Tabs>
+      </div>
     </div>
-  );
+  )
 }

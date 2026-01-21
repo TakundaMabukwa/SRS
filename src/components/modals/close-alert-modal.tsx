@@ -59,11 +59,10 @@ export default function CloseAlertModal({
 
     try {
       const result = await closeAlert(alertId, {
-        closing_notes: closingNotes.trim(),
+        notes: closingNotes.trim(),
         action_taken: actionTaken.trim() || undefined,
-        false_positive: isFalsePositive,
-        user_id: currentUser.id,
-        user_name: currentUser.name,
+        is_false_positive: isFalsePositive,
+        userId: currentUser.id,
       });
 
       if (result) {

@@ -1,8 +1,7 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { useVideoAlerts } from "@/context/video-alerts-context/context";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -20,38 +19,44 @@ import {
   Clock,
   Eye,
   CheckCircle2,
-  X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { format, formatDistanceToNow } from "date-fns";
+import { formatDistanceToNow } from "date-fns";
 
 export default function AlertBellNotification() {
   const router = useRouter();
-  const { alerts, unreadCount, fetchUnreadCount, acknowledgeAlert, fetchAlerts } = useVideoAlerts();
+  const [alerts, setAlerts] = useState([]);
   const [open, setOpen] = useState(false);
   const [currentUser] = useState({ id: "user-1", name: "Current User" });
+  const prevCountRef = useRef(0);
 
-  // Fetch unread count on mount
-  useEffect(() => {
-    fetchUnreadCount(currentUser.id);
-  }, []);
+  const fetchNewAlerts = async () => {
+    try {
+      const res = await fetch('/api/video-server/alerts?status=new&limit=10');
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && data.alerts) {
+          const newCount = data.alerts.length;
+          if (newCount > prevCountRef.current && prevCountRef.current > 0) {
+            const criticalAlerts = data.alerts.filter(a => a.priority === 'critical');
+            if (criticalAlerts.length > 0) {
+              new Audio('/alert-sound.mp3').play().catch(() => {});
+            }
+          }
+          prevCountRef.current = newCount;
+          setAlerts(data.alerts);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to fetch alerts:', err);
+    }
+  };
 
-  // Auto-refresh unread count every 10 seconds
   useEffect(() => {
-    const interval = setInterval(() => {
-      fetchUnreadCount(currentUser.id);
-    }, 10000);
+    fetchNewAlerts();
+    const interval = setInterval(fetchNewAlerts, 30000);
     return () => clearInterval(interval);
   }, []);
-
-  // Get recent alerts (new, acknowledged, or escalated)
-  const recentAlerts = alerts
-    .filter((alert) => 
-      alert.status === "new" || 
-      alert.status === "acknowledged" || 
-      alert.status === "escalated"
-    )
-    .slice(0, 10);
 
   const getSeverityConfig = (severity) => {
     const config = {
@@ -75,13 +80,8 @@ export default function AlertBellNotification() {
         color: "text-blue-600",
         bgColor: "bg-blue-100",
       },
-      info: {
-        icon: Info,
-        color: "text-gray-600",
-        bgColor: "bg-gray-100",
-      },
     };
-    return config[severity] || config.info;
+    return config[severity] || config.low;
   };
 
   const handleViewAlert = (alertId) => {
@@ -96,9 +96,19 @@ export default function AlertBellNotification() {
 
   const handleAcknowledge = async (alertId, e) => {
     e.stopPropagation();
-    await acknowledgeAlert(alertId, currentUser.id);
-    fetchUnreadCount(currentUser.id);
+    try {
+      await fetch(`/api/video-server/alerts/${alertId}/acknowledge`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ acknowledgedBy: currentUser.id })
+      });
+      fetchNewAlerts();
+    } catch (err) {
+      console.error(err);
+    }
   };
+
+  const unreadCount = alerts.length;
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -126,7 +136,6 @@ export default function AlertBellNotification() {
         align="end"
         className="w-[400px] p-0"
       >
-        {/* Header */}
         <div className="flex items-center justify-between p-4 border-b">
           <div>
             <h3 className="font-semibold text-slate-900">Video Alerts</h3>
@@ -143,9 +152,8 @@ export default function AlertBellNotification() {
           </Button>
         </div>
 
-        {/* Alerts List */}
         <ScrollArea className="h-[400px]">
-          {recentAlerts.length === 0 ? (
+          {alerts.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-12 px-4">
               <CheckCircle2 className="w-12 h-12 text-green-500 mb-3" />
               <p className="text-sm font-medium text-slate-900">All caught up!</p>
@@ -153,32 +161,24 @@ export default function AlertBellNotification() {
             </div>
           ) : (
             <div className="divide-y">
-              {recentAlerts.map((alert) => {
-                const severityConfig = getSeverityConfig(alert.severity);
+              {alerts.map((alert) => {
+                const severityConfig = getSeverityConfig(alert.priority);
                 const SeverityIcon = severityConfig.icon;
-                const isNew = alert.status === "new";
 
                 return (
                   <div
                     key={alert.id}
-                    className={cn(
-                      "p-4 hover:bg-slate-50 cursor-pointer transition-colors relative",
-                      isNew && "bg-purple-50/50"
-                    )}
+                    className="p-4 hover:bg-slate-50 cursor-pointer transition-colors relative bg-purple-50/50"
                     onClick={() => handleViewAlert(alert.id)}
                   >
-                    {/* New indicator dot */}
-                    {isNew && (
-                      <div className="absolute top-4 right-4">
-                        <span className="flex h-2 w-2">
-                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-purple-400 opacity-75"></span>
-                          <span className="relative inline-flex rounded-full h-2 w-2 bg-purple-500"></span>
-                        </span>
-                      </div>
-                    )}
+                    <div className="absolute top-4 right-4">
+                      <span className="flex h-2 w-2">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-purple-400 opacity-75"></span>
+                        <span className="relative inline-flex rounded-full h-2 w-2 bg-purple-500"></span>
+                      </span>
+                    </div>
 
                     <div className="flex gap-3">
-                      {/* Icon */}
                       <div className={cn(
                         "flex-shrink-0 w-10 h-10 rounded-lg flex items-center justify-center",
                         severityConfig.bgColor
@@ -186,13 +186,12 @@ export default function AlertBellNotification() {
                         <SeverityIcon className={cn("w-5 h-5", severityConfig.color)} />
                       </div>
 
-                      {/* Content */}
                       <div className="flex-1 min-w-0">
                         <div className="flex items-start justify-between gap-2 mb-1">
                           <h4 className="font-medium text-sm text-slate-900 line-clamp-1">
-                            {alert.title}
+                            {alert.alert_type}
                           </h4>
-                          {alert.escalated && (
+                          {alert.escalation_level > 0 && (
                             <Badge
                               variant="outline"
                               className="bg-red-100 text-red-800 border-red-300 text-xs"
@@ -204,7 +203,7 @@ export default function AlertBellNotification() {
 
                         <p className="text-xs text-slate-600 mb-2 line-clamp-1">
                           {alert.vehicle_registration && `${alert.vehicle_registration} • `}
-                          {alert.driver_name || "No driver assigned"}
+                          {alert.driver_name || alert.device_id}
                         </p>
 
                         <div className="flex items-center justify-between">
@@ -213,19 +212,16 @@ export default function AlertBellNotification() {
                             {formatDistanceToNow(new Date(alert.timestamp), { addSuffix: true })}
                           </div>
 
-                          {/* Action buttons */}
                           <div className="flex items-center gap-1">
-                            {isNew && (
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={(e) => handleAcknowledge(alert.id, e)}
-                                className="h-7 px-2 text-xs"
-                              >
-                                <CheckCircle2 className="w-3 h-3 mr-1" />
-                                Ack
-                              </Button>
-                            )}
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={(e) => handleAcknowledge(alert.id, e)}
+                              className="h-7 px-2 text-xs"
+                            >
+                              <CheckCircle2 className="w-3 h-3 mr-1" />
+                              Ack
+                            </Button>
                             <Button
                               variant="ghost"
                               size="sm"
@@ -245,8 +241,7 @@ export default function AlertBellNotification() {
           )}
         </ScrollArea>
 
-        {/* Footer */}
-        {recentAlerts.length > 0 && (
+        {alerts.length > 0 && (
           <>
             <Separator />
             <div className="p-3 bg-slate-50">

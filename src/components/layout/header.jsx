@@ -12,6 +12,7 @@ import { getGreeting } from '@/hooks/use-greeting'
 import { Bell } from 'lucide-react'
 
 // components
+import { NotificationBell } from '@/components/notifications/notification-bell'
 import { SidebarTrigger } from '@/components/ui/sidebar-provider'
 
 const Header = () => {
@@ -46,7 +47,7 @@ const Header = () => {
           {/* {titleSection?.title} */}
           {getGreeting(name)}
         </h2>
-        <Bell size={20} />
+        <NotificationBell />
         <SidebarTrigger />
       </div>
     </div>

@@ -16,7 +16,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Truck,
   Phone,
-  DollarSign,
+  Download,
   User,
   AlertTriangle,
   Clock,
@@ -48,6 +48,7 @@ import CardDemo from "@/components/userAvatar";
 import Link from "next/link";
 import DetailCard from "@/components/ui/detail-card";
 import { onCreate } from "@/hooks/use-auth";
+import VideoAlertsDashboardTab from "@/components/dashboard/video-alerts-dashboard-tab";
 import { useGlobalContext } from "@/context/global-context/context";
 import { ProgressWithWaypoints } from '@/components/ui/progress-with-waypoints'
 import { Progress } from '@/components/ui/progress'
@@ -69,7 +70,221 @@ import TestRouteMap from "@/components/map/test-route-map";
 import { DateTimePicker } from "@/components/ui/datetime-picker";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line, Area, AreaChart } from 'recharts';
 import { EditTripModal } from "@/components/ui/edit-trip-modal";
-import LiveMapView from "@/components/map/live-map-view";
+import VideoAlertsPage from '@/app/(protected)/video-alerts/page';
+import { NCRTemplate } from '@/components/reports/ncr-template';
+import { createRoot } from 'react-dom/client';
+
+// Reports Content Component
+function ReportsContent() {
+  const yesterday = new Date();
+  yesterday.setDate(yesterday.getDate() - 1);
+  const [selectedDate, setSelectedDate] = useState(yesterday.toISOString().split('T')[0]);
+  const [vehicleReports, setVehicleReports] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  // Auto-fetch on mount
+  useEffect(() => {
+    if (selectedDate) {
+      fetchReports();
+    }
+  }, []);
+
+  const fetchReports = async () => {
+    setLoading(true);
+    setLoading(true);
+    try {
+      const params = new URLSearchParams();
+      params.append('dateFrom', selectedDate);
+      params.append('dateTo', selectedDate);
+      
+      const res = await fetch(`/api/ncr/generate?${params}`);
+      const data = await res.json();
+      if (data.success) {
+        // Group NCRs by vehicle
+        const grouped = (data.ncrs || []).reduce((acc: any, ncr: any) => {
+          const vehicle = ncr.ncr_data.fleetNumber;
+          if (!acc[vehicle]) {
+            acc[vehicle] = {
+              vehicle,
+              driver: ncr.ncr_data.driverName,
+              violations: 0,
+              riskRating: ncr.ncr_data.riskRating,
+              ncr
+            };
+          }
+          acc[vehicle].violations += ncr.speeding_events?.length || 0;
+          return acc;
+        }, {});
+        setVehicleReports(Object.values(grouped));
+      }
+    } catch (err) {
+      console.error(err);
+    }
+    setLoading(false);
+  };
+
+  const downloadNCR = async (ncr: any) => {
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) return;
+
+    printWindow.document.write(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>NCR ${ncr.ncr_id}</title>
+          <script src="https://cdn.tailwindcss.com"></script>
+          <style>
+            @media print {
+              body { margin: 0; padding: 0; }
+              .no-print { display: none; }
+            }
+          </style>
+        </head>
+        <body>
+          <div id="root"></div>
+          <div class="no-print p-4 text-center">
+            <button onclick="window.print()" class="px-4 py-2 bg-blue-600 text-white rounded">Print / Save as PDF</button>
+          </div>
+        </body>
+      </html>
+    `);
+
+    printWindow.document.close();
+
+    setTimeout(() => {
+      const root = createRoot(printWindow.document.getElementById('root')!);
+      root.render(<NCRTemplate data={ncr.ncr_data} />);
+    }, 500);
+  };
+
+  return (
+    <div className="space-y-4">
+      {/* Compact Date Selector */}
+      <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl p-4 border border-blue-100">
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3 flex-1">
+            <div className="w-10 h-10 bg-white rounded-lg flex items-center justify-center shadow-sm">
+              <FileText className="w-5 h-5 text-blue-600" />
+            </div>
+            <div className="flex-1">
+              <label className="block text-sm font-semibold text-slate-700 mb-1.5">Select Report Date</label>
+              <input 
+                type="date" 
+                value={selectedDate} 
+                onChange={(e) => setSelectedDate(e.target.value)}
+                className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+              />
+            </div>
+          </div>
+          <Button 
+            onClick={fetchReports} 
+            disabled={loading}
+            className="px-5 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white font-medium rounded-lg transition-all shadow-sm hover:shadow"
+          >
+            {loading ? 'Loading...' : 'View Reports'}
+          </Button>
+        </div>
+      </div>
+
+      {/* Vehicle Reports Table */}
+      {selectedDate && (
+        <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
+          <div className="px-5 py-3 bg-slate-50 border-b border-slate-200">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-base font-semibold text-slate-900">Vehicle Reports</h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  {selectedDate ? new Date(selectedDate).toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }) : 'No date selected'}
+                </p>
+              </div>
+              {vehicleReports.length > 0 && (
+                <div className="flex items-center gap-2 px-3 py-1.5 bg-blue-100 rounded-lg">
+                  <Truck className="w-4 h-4 text-blue-700" />
+                  <span className="text-sm font-semibold text-blue-900">{vehicleReports.length} Vehicle{vehicleReports.length !== 1 ? 's' : ''}</span>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="overflow-x-auto">
+            {loading ? (
+              <div className="text-center py-12">
+                <div className="inline-block w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mb-3"></div>
+                <p className="text-sm text-slate-500">Loading reports...</p>
+              </div>
+            ) : vehicleReports.length === 0 ? (
+              <div className="text-center py-12">
+                <div className="w-14 h-14 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-3">
+                  <FileText className="w-7 h-7 text-slate-400" />
+                </div>
+                <h4 className="text-sm font-medium text-slate-900 mb-1">No Reports Found</h4>
+                <p className="text-xs text-slate-500">No NCR reports for this date</p>
+              </div>
+            ) : (
+              <table className="w-full">
+                <thead>
+                  <tr className="bg-slate-50 border-b border-slate-200">
+                    <th className="px-5 py-2.5 text-left text-xs font-semibold text-slate-600 uppercase tracking-wide">Vehicle</th>
+                    <th className="px-5 py-2.5 text-left text-xs font-semibold text-slate-600 uppercase tracking-wide">Driver</th>
+                    <th className="px-5 py-2.5 text-center text-xs font-semibold text-slate-600 uppercase tracking-wide">Violations</th>
+                    <th className="px-5 py-2.5 text-center text-xs font-semibold text-slate-600 uppercase tracking-wide">Risk Level</th>
+                    <th className="px-5 py-2.5 text-right text-xs font-semibold text-slate-600 uppercase tracking-wide">Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {vehicleReports.map((report, idx) => (
+                    <tr 
+                      key={idx} 
+                      onClick={() => downloadNCR(report.ncr)}
+                      className="hover:bg-blue-50 cursor-pointer transition-colors group"
+                    >
+                      <td className="px-5 py-3">
+                        <div className="flex items-center gap-3">
+                          <div className="w-9 h-9 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-lg flex items-center justify-center shadow-sm">
+                            <Truck className="w-4 h-4 text-white" />
+                          </div>
+                          <div>
+                            <div className="text-sm font-semibold text-slate-900">{report.vehicle}</div>
+                            <div className="text-xs text-slate-500">Fleet Vehicle</div>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-5 py-3">
+                        <div className="text-sm font-medium text-slate-900">{report.driver}</div>
+                        <div className="text-xs text-slate-500">Assigned Driver</div>
+                      </td>
+                      <td className="px-5 py-3 text-center">
+                        <div className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-red-100 rounded-full">
+                          <AlertTriangle className="w-3.5 h-3.5 text-red-700" />
+                          <span className="text-sm font-bold text-red-900">{report.violations}</span>
+                        </div>
+                      </td>
+                      <td className="px-5 py-3 text-center">
+                        <span className={`inline-block px-3 py-1 rounded-full text-xs font-semibold ${
+                          report.riskRating === 'High' ? 'bg-red-100 text-red-800' :
+                          report.riskRating === 'Medium' ? 'bg-yellow-100 text-yellow-800' :
+                          'bg-green-100 text-green-800'
+                        }`}>
+                          {report.riskRating || 'Low'}
+                        </span>
+                      </td>
+                      <td className="px-5 py-3 text-right">
+                        <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-sm font-medium text-slate-700 group-hover:border-blue-300 group-hover:bg-blue-50 group-hover:text-blue-700 transition-all">
+                          <Download className="w-4 h-4" />
+                          <span>Download</span>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 // Global vehicle data cache to prevent redundant API calls
 const vehicleDataCache = {
@@ -1621,7 +1836,7 @@ function TripReportsSection() {
 }
 
 export default function Dashboard() {
-  const [activeTab, setActiveTab] = useState<string>("routing");
+  const [activeTab, setActiveTab] = useState<string>("video-alerts");
   const [auditData, setAuditData] = useState<any[]>([]);
   const [auditLoading, setAuditLoading] = useState(true);
   const [userRole, setUserRole] = useState<string>("");
@@ -1854,16 +2069,16 @@ export default function Dashboard() {
                 Trip Routing
               </TabsTrigger>
               <TabsTrigger
+                value="video-alerts"
+                className="px-6 py-2 text-sm font-medium rounded-md data-[state=active]:bg-white data-[state=active]:shadow-sm"
+              >
+                Video Alerts
+              </TabsTrigger>
+              <TabsTrigger
                 value="live-map"
                 className="px-6 py-2 text-sm font-medium rounded-md data-[state=active]:bg-white data-[state=active]:shadow-sm"
               >
                 Live Map
-              </TabsTrigger>
-              <TabsTrigger
-                value="reports"
-                className="px-6 py-2 text-sm font-medium rounded-md data-[state=active]:bg-white data-[state=active]:shadow-sm"
-              >
-                Trip Reports
               </TabsTrigger>
             </TabsList>
           </Tabs>
@@ -1916,22 +2131,16 @@ export default function Dashboard() {
           >
             <TabsList className="flex w-fit items-center rounded-lg bg-slate-100 p-1 shadow-sm">
               <TabsTrigger
-                value="routing"
+                value="video-alerts"
                 className="px-6 py-2 text-sm font-medium rounded-md data-[state=active]:bg-white data-[state=active]:shadow-sm"
               >
-                Trip Routing
-              </TabsTrigger>
-              <TabsTrigger
-                value="live-map"
-                className="px-6 py-2 text-sm font-medium rounded-md data-[state=active]:bg-white data-[state=active]:shadow-sm"
-              >
-                Live Map
+                Video Alerts
               </TabsTrigger>
               <TabsTrigger
                 value="reports"
                 className="px-6 py-2 text-sm font-medium rounded-md data-[state=active]:bg-white data-[state=active]:shadow-sm"
               >
-                Trip Reports
+                Reports
               </TabsTrigger>
             </TabsList>
           </Tabs>
@@ -1942,7 +2151,7 @@ export default function Dashboard() {
           <div className="space-y-4">
             <div className="mb-4 flex justify-between items-center">
               <div>
-                <h2 className="text-3xl font-bold tracking-tight">Trip Routing</h2>
+                <h2 className="text-3xl font-bold tracking-tight">Trip Management</h2>
                 <p className="text-muted-foreground">Monitor all trips with progress tracking and waypoints</p>
               </div>
             </div>
@@ -1983,8 +2192,20 @@ export default function Dashboard() {
           </div>
         )}
 
+        {activeTab === "video-alerts" && (
+          <VideoAlertsDashboardTab />
+        )}
+
         {activeTab === "reports" && (
-          <TripReportsSection />
+          <div className="space-y-5">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-2xl font-bold text-slate-900">NCR Reports</h2>
+                <p className="text-sm text-slate-600 mt-1">Non-Conformance Reports for speeding violations</p>
+              </div>
+            </div>
+            <ReportsContent />
+          </div>
         )}
 
         {activeTab === "financials" && (

@@ -1,9 +1,9 @@
 module.exports = {
   apps: [{
-    name: 'eps-dashboard',
+    name: 'SRS',
     script: 'npm',
     args: 'start',
-    cwd: '/var/www/EPS-Dashboard',
+    cwd: '/var/www/SRS',
     env: {
       NODE_ENV: 'production',
       PORT: 3001

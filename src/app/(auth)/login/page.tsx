@@ -118,7 +118,7 @@ export default function LoginPage() {
           Welcome Back
         </CardTitle>
         <p className="text-gray-600 text-sm">
-          Sign in to access your EPS Dashboard
+          Sign in to access your SRS Dashboard
         </p>
       </CardHeader>
 
@@ -135,7 +135,7 @@ export default function LoginPage() {
               id="email"
               name="email"
               type="email"
-              placeholder="you@eps.co.za"
+              placeholder="you@srs.co.za"
               required
               value={email}
               onChange={(e) => setEmail(e.target.value)}

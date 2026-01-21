@@ -24,16 +24,16 @@ export default function AuthLayout({ children }: AuthLayoutProps) {
         {/* Logo */}
         <div className="text-center mb-8">
           <div className="flex justify-center mb-4">
-            <img
-              src="https://datatim.co.za/wp-content/uploads/2017/05/eps-logo.jpg"
-              alt="EPS Courier Services"
+            <Image
+              src="/Prem-logo_.png"
+              alt="SRS"
               width={100}
               height={100}
               className="object-contain"
             />
           </div>
-          <h1 className="text-3xl font-bold text-[#1A245E] mb-1">EPS Courier Services</h1>
-          <p className="text-gray-600 text-sm">Reliable. Professional. Nationwide.</p>
+          <h1 className="text-3xl font-bold text-[#1A245E] mb-1">Premier Cross Border</h1>
+          <p className="text-gray-600 text-sm">Seamless Cross-Border Transportation</p>
         </div>
 
         {children}

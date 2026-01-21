@@ -25,446 +25,223 @@ export const VideoAlertsProvider = ({ children }) => {
   const [state, dispatch] = useReducer(videoAlertsReducer, initialState);
   const { toast } = useToast();
 
-  // Load mock data on mount
+  // Load initial data on mount
   useEffect(() => {
-    const mockAlerts = [
-      {
-        id: "alert-1",
-        alert_type: "harsh_braking",
-        severity: "critical",
-        status: "new",
-        title: "Harsh Braking Detected",
-        description: "Vehicle braked suddenly at high speed",
-        vehicle_id: "vehicle-1",
-        vehicle_registration: "ABC-123",
-        driver_id: "driver-1",
-        driver_name: "John Smith",
-        timestamp: new Date().toISOString(),
-        location: {
-          latitude: 40.7128,
-          longitude: -74.006,
-          address: "New York, NY",
-        },
-        camera_ids: ["cam1", "cam2"],
-        screenshots: [
-          {
-            id: "ss-1",
-            alert_id: "alert-1",
-            camera_id: "cam1",
-            camera_name: "Front Camera",
-            url: "https://via.placeholder.com/640x360/FF5733/FFFFFF?text=Front+Camera",
-            timestamp: new Date().toISOString(),
-            capture_offset: -5,
-            created_at: new Date().toISOString(),
-          },
-          {
-            id: "ss-2",
-            alert_id: "alert-1",
-            camera_id: "cam2",
-            camera_name: "Rear Camera",
-            url: "https://via.placeholder.com/640x360/3498DB/FFFFFF?text=Rear+Camera",
-            timestamp: new Date().toISOString(),
-            capture_offset: 0,
-            created_at: new Date().toISOString(),
-          },
-        ],
-        notes: [
-          {
-            id: "note-1",
-            alert_id: "alert-1",
-            user_id: "user-1",
-            user_name: "Admin User",
-            content: "Reviewing footage for traffic conditions",
-            is_internal: false,
-            created_at: new Date().toISOString(),
-          },
-        ],
-        history: [
-          {
-            id: "hist-1",
-            alert_id: "alert-1",
-            action: "created",
-            user_id: "system",
-            user_name: "System",
-            details: "Alert automatically generated",
-            timestamp: new Date().toISOString(),
-          },
-        ],
-        escalated: false,
-        requires_action: true,
-        auto_resolved: false,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      },
-      {
-        id: "alert-2",
-        alert_type: "speeding",
-        severity: "high",
-        status: "acknowledged",
-        title: "Speed Limit Exceeded",
-        description: "Vehicle traveling at 85 mph in 65 mph zone",
-        vehicle_id: "vehicle-2",
-        vehicle_registration: "XYZ-789",
-        driver_id: "driver-2",
-        driver_name: "Jane Doe",
-        timestamp: new Date(Date.now() - 3600000).toISOString(),
-        location: {
-          latitude: 34.0522,
-          longitude: -118.2437,
-          address: "Los Angeles, CA",
-        },
-        camera_ids: ["cam1"],
-        screenshots: [
-          {
-            id: "ss-3",
-            alert_id: "alert-2",
-            camera_id: "cam1",
-            camera_name: "Dashboard Camera",
-            url: "https://via.placeholder.com/640x360/E74C3C/FFFFFF?text=Speeding+Alert",
-            timestamp: new Date(Date.now() - 3600000).toISOString(),
-            capture_offset: 0,
-            created_at: new Date(Date.now() - 3600000).toISOString(),
-          },
-        ],
-        notes: [],
-        history: [
-          {
-            id: "hist-2",
-            alert_id: "alert-2",
-            action: "acknowledged",
-            user_id: "user-1",
-            user_name: "Admin User",
-            details: "Alert acknowledged by operator",
-            timestamp: new Date(Date.now() - 1800000).toISOString(),
-          },
-        ],
-        escalated: false,
-        requires_action: true,
-        auto_resolved: false,
-        acknowledged_at: new Date(Date.now() - 1800000).toISOString(),
-        acknowledged_by: "user-1",
-        acknowledged_by_name: "Admin User",
-        created_at: new Date(Date.now() - 3600000).toISOString(),
-        updated_at: new Date(Date.now() - 1800000).toISOString(),
-      },
-      {
-        id: "alert-3",
-        alert_type: "driver_distraction",
-        severity: "medium",
-        status: "investigating",
-        title: "Driver Distraction Detected",
-        description: "Driver looking away from road for extended period",
-        vehicle_id: "vehicle-3",
-        vehicle_registration: "LMN-456",
-        driver_id: "driver-3",
-        driver_name: "Bob Wilson",
-        timestamp: new Date(Date.now() - 7200000).toISOString(),
-        location: {
-          latitude: 41.8781,
-          longitude: -87.6298,
-          address: "Chicago, IL",
-        },
-        camera_ids: ["cam4"],
-        screenshots: [
-          {
-            id: "ss-4",
-            alert_id: "alert-3",
-            camera_id: "cam4",
-            camera_name: "Interior Camera",
-            url: "https://via.placeholder.com/640x360/F39C12/FFFFFF?text=Interior+View",
-            timestamp: new Date(Date.now() - 7200000).toISOString(),
-            capture_offset: 0,
-            created_at: new Date(Date.now() - 7200000).toISOString(),
-          },
-        ],
-        notes: [
-          {
-            id: "note-2",
-            alert_id: "alert-3",
-            user_id: "user-1",
-            user_name: "Admin User",
-            content: "Driver was adjusting GPS. No safety concern.",
-            is_internal: false,
-            created_at: new Date(Date.now() - 3600000).toISOString(),
-          },
-        ],
-        history: [
-          {
-            id: "hist-3",
-            alert_id: "alert-3",
-            action: "status_changed",
-            user_id: "user-1",
-            user_name: "Admin User",
-            old_value: "acknowledged",
-            new_value: "investigating",
-            details: "Started investigation",
-            timestamp: new Date(Date.now() - 5400000).toISOString(),
-          },
-        ],
-        escalated: false,
-        requires_action: true,
-        auto_resolved: false,
-        created_at: new Date(Date.now() - 7200000).toISOString(),
-        updated_at: new Date(Date.now() - 5400000).toISOString(),
-      },
-    ];
-
-    const mockStatistics = {
-      total_alerts: 45,
-      new_alerts: 8,
-      acknowledged_alerts: 12,
-      investigating_alerts: 5,
-      escalated_alerts: 2,
-      resolved_today: 18,
-      critical_alerts: 3,
-      average_response_time_minutes: 12,
-      alerts_by_type: {},
-      alerts_by_severity: {},
-      alerts_by_vehicle: [],
-      alerts_by_driver: [],
-    };
-
-    // Store mock data in a ref so other functions can access it
-    window.__mockAlerts = mockAlerts;
-    window.__mockStatistics = mockStatistics;
-
-    dispatch(actions.fetchAlerts({ data: mockAlerts, statistics: mockStatistics }));
-    dispatch(actions.setUnreadCount(mockAlerts.filter((a) => a.status === "new").length));
+    dispatch(actions.setLoading(false));
   }, []);
 
-  // Fetch alerts with filters - USE MOCK DATA
   const fetchAlerts = useCallback(async (filters = {}) => {
     dispatch(actions.setLoading(true));
-    
-    // Simulate API delay
-    await new Promise(resolve => setTimeout(resolve, 300));
-    
-    const mockData = {
-      data: window.__mockAlerts || [],
-      statistics: window.__mockStatistics || null,
-    };
-    
-    dispatch(actions.fetchAlerts(mockData));
-    dispatch(actions.setLoading(false));
-    return mockData;
+    try {
+      const params = new URLSearchParams();
+      if (filters.status) params.append('status', filters.status);
+      if (filters.priority) params.append('priority', filters.priority);
+      if (filters.limit) params.append('limit', filters.limit);
+      
+      const response = await fetch(`/api/video-server/alerts?${params}`);
+      if (response.ok) {
+        const data = await response.json();
+        if (data.success && data.alerts) {
+          const alertsWithPlates = await Promise.all(
+            data.alerts.map(async function(alert) {
+              try {
+                const plateRes = await fetch(`/api/vehicle-lookup?deviceId=${alert.device_id}`);
+                if (plateRes.ok) {
+                  const plateData = await plateRes.json();
+                  if (plateData.success) {
+                    return { ...alert, vehicle_registration: plateData.plate, fleet_number: plateData.fleetNumber };
+                  }
+                }
+              } catch (e) {}
+              return alert;
+            })
+          );
+          dispatch(actions.fetchAlerts({ data: alertsWithPlates, statistics: { total: data.count } }));
+          dispatch(actions.setLoading(false));
+          return;
+        }
+      }
+      throw new Error('API failed');
+    } catch (error) {
+      dispatch(actions.setError('Video server unavailable'));
+      dispatch(actions.setLoading(false));
+    }
   }, [toast]);
 
-  // Fetch single alert - USE MOCK DATA
   const fetchAlert = useCallback(async (alertId) => {
     dispatch(actions.setLoading(true));
-    
-    // Simulate API delay
-    await new Promise(resolve => setTimeout(resolve, 300));
-    
-    const mockAlerts = window.__mockAlerts || [];
-    const alert = mockAlerts.find(a => a.id === alertId);
-    
-    if (alert) {
-      dispatch(actions.fetchAlert(alert));
+    try {
+      const response = await fetch(`/api/video-server/alerts/${alertId}`);
+      if (response.ok) {
+        const data = await response.json();
+        if (data.success && data.alert) {
+          dispatch(actions.fetchAlert(data.alert));
+          dispatch(actions.setLoading(false));
+          return data.alert;
+        }
+      }
+      throw new Error('API failed');
+    } catch (error) {
+      dispatch(actions.setError('Alert not found'));
       dispatch(actions.setLoading(false));
-      return alert;
-    } else {
-      dispatch(actions.setError("Alert not found"));
-      dispatch(actions.setLoading(false));
-      toast({
-        title: "Error",
-        description: "Alert not found",
-        variant: "destructive",
-      });
       return null;
     }
   }, [toast]);
 
-  // Acknowledge alert - USE MOCK DATA
   const acknowledgeAlert = useCallback(async (alertId, userId) => {
-    // Simulate API delay
-    await new Promise(resolve => setTimeout(resolve, 300));
-    
-    const mockData = { acknowledged_at: new Date().toISOString(), acknowledged_by: userId };
-    dispatch(actions.acknowledgeAlert(alertId, mockData));
-    
-    // Update mock data
-    const mockAlerts = window.__mockAlerts || [];
-    const alertIndex = mockAlerts.findIndex(a => a.id === alertId);
-    if (alertIndex !== -1) {
-      mockAlerts[alertIndex].status = 'acknowledged';
-      mockAlerts[alertIndex].acknowledged_at = mockData.acknowledged_at;
-      mockAlerts[alertIndex].acknowledged_by = userId;
-      window.__mockAlerts = mockAlerts;
+    try {
+      const response = await fetch(`/api/video-server/alerts/${alertId}/acknowledge`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ acknowledgedBy: userId })
+      });
+      if (response.ok) {
+        const data = await response.json();
+        if (data.success) {
+          dispatch(actions.acknowledgeAlert(alertId, data.alert || {}));
+          toast({ title: "Success", description: "Alert acknowledged" });
+          return data.alert;
+        }
+      }
+      throw new Error('API failed');
+    } catch (error) {
+      toast({ title: "Error", description: "Failed to acknowledge alert", variant: "destructive" });
+      return null;
     }
-    
-    toast({
-      title: "Success",
-      description: "Alert acknowledged",
-    });
-    return mockData;
   }, [toast]);
 
-  // Update alert status - USE MOCK DATA
   const updateAlertStatus = useCallback(async (alertId, newStatus, userId, details = {}) => {
-    // Simulate API delay
-    await new Promise(resolve => setTimeout(resolve, 300));
-    
-    const mockData = { status: newStatus, updated_at: new Date().toISOString() };
-    dispatch(actions.updateAlertStatus(alertId, newStatus, mockData));
-    
-    // Update mock data
-    const mockAlerts = window.__mockAlerts || [];
-    const alertIndex = mockAlerts.findIndex(a => a.id === alertId);
-    if (alertIndex !== -1) {
-      mockAlerts[alertIndex].status = newStatus;
-      mockAlerts[alertIndex].updated_at = mockData.updated_at;
-      window.__mockAlerts = mockAlerts;
-    }
-    
-    toast({
-      title: "Success",
-      description: `Alert status updated to ${newStatus}`,
-    });
-    return mockData;
-  }, [toast]);
-
-  // Add note to alert - USE MOCK DATA
-  const addNote = useCallback(async (alertId, noteData) => {
-    // Simulate API delay
-    await new Promise(resolve => setTimeout(resolve, 300));
-    
-    const newNote = {
-      id: `note-${Date.now()}`,
-      alert_id: alertId,
-      user_id: noteData.userId || "user-1",
-      user_name: noteData.userName || "Current User",
-      content: noteData.content,
-      is_internal: noteData.is_internal || false,
-      created_at: new Date().toISOString(),
-    };
-    
-    dispatch(actions.addNote(alertId, newNote));
-    
-    // Update mock data
-    const mockAlerts = window.__mockAlerts || [];
-    const alertIndex = mockAlerts.findIndex(a => a.id === alertId);
-    if (alertIndex !== -1) {
-      if (!mockAlerts[alertIndex].notes) mockAlerts[alertIndex].notes = [];
-      mockAlerts[alertIndex].notes.push(newNote);
-      window.__mockAlerts = mockAlerts;
-    }
-    
-    toast({
-      title: "Success",
-      description: "Note added to alert",
-    });
-    return newNote;
-  }, [toast]);
-
-  // Escalate alert - USE MOCK DATA
-  const escalateAlert = useCallback(async (alertId, escalationData) => {
-    // Simulate API delay
-    await new Promise(resolve => setTimeout(resolve, 300));
-    
-    const mockData = {
-      escalated: true,
-      escalated_at: new Date().toISOString(),
-      escalated_to: escalationData.escalate_to,
-      escalation_reason: escalationData.reason
-    };
-    
-    dispatch(actions.escalateAlert(alertId, mockData));
-    
-    // Update mock data
-    const mockAlerts = window.__mockAlerts || [];
-    const alertIndex = mockAlerts.findIndex(a => a.id === alertId);
-    if (alertIndex !== -1) {
-      Object.assign(mockAlerts[alertIndex], mockData);
-      window.__mockAlerts = mockAlerts;
-    }
-    
-    toast({
-      title: "Alert Escalated",
-      description: `Alert escalated to ${escalationData.escalate_to_name || "management"}`,
-      variant: "default",
-    });
-    return mockData;
-  }, [toast]);
-
-  // Close alert (requires notes) - USE MOCK DATA
-  const closeAlert = useCallback(async (alertId, closingData) => {
-    // Simulate API delay
-    await new Promise(resolve => setTimeout(resolve, 300));
-    
-    const mockData = {
-      status: 'resolved',
-      closed_at: new Date().toISOString(),
-      resolution_notes: closingData.notes,
-      is_false_positive: closingData.is_false_positive || false,
-      action_taken: closingData.action_taken
-    };
-    
-    dispatch(actions.closeAlert(alertId, mockData));
-    
-    // Update mock data
-    const mockAlerts = window.__mockAlerts || [];
-    const alertIndex = mockAlerts.findIndex(a => a.id === alertId);
-    if (alertIndex !== -1) {
-      Object.assign(mockAlerts[alertIndex], mockData);
-      window.__mockAlerts = mockAlerts;
-    }
-    
-    toast({
-      title: "Alert Closed",
-      description: "Alert has been successfully closed",
-    });
-    return mockData;
-  }, [toast]);
-
-  // Refresh screenshots - USE MOCK DATA
-  const refreshScreenshots = useCallback(async (alertId) => {
-    // Simulate API delay
-    await new Promise(resolve => setTimeout(resolve, 300));
-    
-    const mockAlerts = window.__mockAlerts || [];
-    const alert = mockAlerts.find(a => a.id === alertId);
-    
-    if (alert && alert.screenshots) {
-      // Update timestamps to simulate refresh
-      const refreshedScreenshots = alert.screenshots.map(ss => ({
-        ...ss,
-        timestamp: new Date().toISOString(),
-      }));
+    try {
+      let endpoint = `/api/video-server/alerts/${alertId}/acknowledge`;
+      let body = { acknowledgedBy: userId };
       
-      dispatch(actions.refreshScreenshots(alertId, refreshedScreenshots));
-      
-      // Update mock data
-      const alertIndex = mockAlerts.findIndex(a => a.id === alertId);
-      if (alertIndex !== -1) {
-        mockAlerts[alertIndex].screenshots = refreshedScreenshots;
-        window.__mockAlerts = mockAlerts;
+      if (newStatus === 'resolved') {
+        endpoint = `/api/video-server/alerts/${alertId}/resolve-with-notes`;
+        body = { notes: details.notes || 'Resolved', resolvedBy: userId };
       }
       
-      return refreshedScreenshots;
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      if (response.ok) {
+        const data = await response.json();
+        if (data.success) {
+          dispatch(actions.updateAlertStatus(alertId, newStatus, data.alert || {}));
+          toast({ title: "Success", description: `Alert status updated to ${newStatus}` });
+          return data.alert;
+        }
+      }
+      throw new Error('API failed');
+    } catch (error) {
+      toast({ title: "Error", description: "Failed to update alert status", variant: "destructive" });
+      return null;
+    }
+  }, [toast]);
+
+  const addNote = useCallback(async (alertId, noteData) => {
+    try {
+      const response = await fetch(`/api/video-server/alerts/${alertId}/resolve-with-notes`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ notes: noteData.note, resolvedBy: noteData.userId })
+      });
+      if (response.ok) {
+        const data = await response.json();
+        if (data.success) {
+          dispatch(actions.addNote(alertId, { note: noteData.note, userId: noteData.userId }));
+          toast({ title: "Success", description: "Note added to alert" });
+          return data.alert;
+        }
+      }
+      throw new Error('API failed');
+    } catch (error) {
+      toast({ title: "Error", description: "Failed to add note", variant: "destructive" });
+      return null;
+    }
+  }, [toast]);
+
+  const escalateAlert = useCallback(async (alertId, escalationData) => {
+    try {
+      const response = await fetch(`/api/video-server/alerts/${alertId}/escalate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason: escalationData.reason || 'Escalated by operator' })
+      });
+      if (response.ok) {
+        const data = await response.json();
+        if (data.success) {
+          dispatch(actions.escalateAlert(alertId, data.alert || {}));
+          toast({ title: "Alert Escalated", description: "Alert escalated to management" });
+          return data.alert;
+        }
+      }
+      throw new Error('API failed');
+    } catch (error) {
+      toast({ title: "Error", description: "Failed to escalate alert", variant: "destructive" });
+      return null;
+    }
+  }, [toast]);
+
+  const closeAlert = useCallback(async (alertId, closingData) => {
+    try {
+      const response = await fetch(`/api/video-server/alerts/${alertId}/resolve-with-notes`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ notes: closingData.notes, resolvedBy: closingData.userId })
+      });
+      if (response.ok) {
+        const data = await response.json();
+        if (data.success) {
+          dispatch(actions.closeAlert(alertId, data.alert || {}));
+          toast({ title: "Alert Closed", description: "Alert has been successfully closed" });
+          return data.alert;
+        }
+      }
+      throw new Error('API failed');
+    } catch (error) {
+      toast({ title: "Error", description: "Failed to close alert", variant: "destructive" });
+      return null;
+    }
+  }, [toast]);
+
+  const refreshScreenshots = useCallback(async (alertId) => {
+    try {
+      const response = await fetch(`/api/video-server/screenshots/recent?limit=50`);
+      if (response.ok) {
+        const data = await response.json();
+        if (data.success && data.screenshots) {
+          const alertScreenshots = data.screenshots.filter(s => s.alert_id === alertId);
+          dispatch(actions.refreshScreenshots(alertId, alertScreenshots));
+          return alertScreenshots;
+        }
+      }
+    } catch (error) {
+      console.error('Failed to refresh screenshots:', error);
     }
     return null;
   }, []);
 
-  // Fetch statistics - USE MOCK DATA
   const fetchStatistics = useCallback(async (dateFrom, dateTo) => {
-    // Simulate API delay
-    await new Promise(resolve => setTimeout(resolve, 300));
-    
-    const mockStats = window.__mockStatistics || {};
-    dispatch(actions.setStatistics(mockStats));
-    return mockStats;
+    try {
+      const response = await fetch('/api/video-server/alerts/stats');
+      if (response.ok) {
+        const data = await response.json();
+        if (data.success && data.stats) {
+          dispatch(actions.fetchStatistics(data.stats));
+          return data.stats;
+        }
+      }
+    } catch (error) {
+      console.error('Failed to fetch statistics:', error);
+    }
+    return null;
   }, []);
 
-  // Fetch unread count - USE MOCK DATA
   const fetchUnreadCount = useCallback(async (userId) => {
-    // Simulate API delay
-    await new Promise(resolve => setTimeout(resolve, 300));
-    
-    const mockAlerts = window.__mockAlerts || [];
-    const unreadCount = mockAlerts.filter(a => a.status === 'new').length;
-    dispatch(actions.setUnreadCount(unreadCount));
-    return unreadCount;
+    // Unread count will be calculated from alerts list
+    return 0;
   }, []);
 
   // Set filters

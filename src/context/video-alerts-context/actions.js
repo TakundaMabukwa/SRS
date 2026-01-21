@@ -65,6 +65,12 @@ export const refreshScreenshots = (alertId) => ({
 });
 
 // Set statistics
+export const fetchStatistics = (statistics) => ({
+  type: types.SET_STATISTICS,
+  payload: statistics,
+});
+
+// Set statistics
 export const setStatistics = (statistics) => ({
   type: types.SET_STATISTICS,
   payload: statistics,
