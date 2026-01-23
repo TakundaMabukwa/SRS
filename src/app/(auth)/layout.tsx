@@ -16,36 +16,36 @@ export default function AuthLayout({ children }: AuthLayoutProps) {
   return (
     <div className="min-h-screen bg-[#F5F6FA] relative overflow-hidden flex items-center justify-center">
       {/* Background diagonal accents */}
-      <div className="absolute inset-0 bg-gradient-to-br from-[#1A245E]/10 via-white to-[#C7322F]/10"></div>
-      <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-[#1A245E] to-[#C7322F]" />
+      <div className="absolute inset-0 bg-gradient-to-br from-[#1A245E]/10 via-white to-[#7A7D85]/10"></div>
+      <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-[#1A245E] to-[#7A7D85]" />
 
       {/* Auth Card */}
-      <div className="relative z-10 w-full max-w-md bg-white rounded-2xl shadow-xl p-8 mx-4 border border-gray-100">
+      <div className="relative z-10 w-full max-w-md bg-white rounded-2xl shadow-xl p-8 mx-4 border border-[#7A7D85]">
         {/* Logo */}
         <div className="text-center mb-8">
           <div className="flex justify-center mb-4">
             <Image
-              src="/Prem-logo_.png"
+              src="/image001.png"
               alt="SRS"
-              width={100}
-              height={100}
+              width={160}
+              height={160}
               className="object-contain"
             />
           </div>
           <h1 className="text-3xl font-bold text-[#1A245E] mb-1">Premier Cross Border</h1>
-          <p className="text-gray-600 text-sm">Seamless Cross-Border Transportation</p>
+          <p className="text-[#7A7D85] text-sm">Seamless Cross-Border Transportation</p>
         </div>
 
         {children}
 
         {/* Footer */}
-        <div className="mt-6 text-center text-xs text-gray-500">
+        <div className="mt-6 text-center text-xs text-[#7A7D85]">
           © 2025 EPS Courier Services. All rights reserved.
         </div>
       </div>
 
       {/* Decorative stripes (inspired by truck design) */}
-      <div className="absolute bottom-0 left-0 w-full h-20 bg-gradient-to-r from-[#1A245E] via-[#1A245E]/70 to-[#C7322F]/70 transform -skew-y-3"></div>
+      <div className="absolute bottom-0 left-0 w-full h-20 bg-gradient-to-r from-[#1A245E] via-[#1A245E]/70 to-[#7A7D85]/70 transform -skew-y-3"></div>
     </div>
   )
 }

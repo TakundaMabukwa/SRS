@@ -3,6 +3,7 @@
 import React, { useState, useEffect, use } from "react";
 import { useRouter } from "next/navigation";
 import { useVideoAlerts } from "@/context/video-alerts-context/context";
+import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
@@ -36,6 +37,7 @@ export default function AlertDetailPage({ params }) {
   const alertId = unwrappedParams.id;
   const router = useRouter();
   const {
+    alerts,
     selectedAlert,
     fetchAlert,
     updateAlertStatus,
@@ -43,6 +45,7 @@ export default function AlertDetailPage({ params }) {
     escalateAlert,
     refreshScreenshots,
   } = useVideoAlerts();
+  const { toast } = useToast();
 
   const [newNote, setNewNote] = useState("");
   const [addingNote, setAddingNote] = useState(false);
@@ -50,10 +53,13 @@ export default function AlertDetailPage({ params }) {
   const [currentUser] = useState({ id: "user-1", name: "Current User", role: "Operator" });
 
   useEffect(() => {
-    if (alertId) {
-      fetchAlert(alertId);
+    if (alertId && alerts.length > 0) {
+      const alert = alerts.find(a => a.id === alertId);
+      if (alert) {
+        fetchAlert(alert);
+      }
     }
-  }, [alertId]);
+  }, [alertId, alerts]);
 
   // Auto-refresh screenshots every 30 seconds
   useEffect(() => {
@@ -162,38 +168,28 @@ export default function AlertDetailPage({ params }) {
 
             {/* Action Buttons */}
             <div className="flex items-center gap-2">
-              {selectedAlert.status !== "closed" && (
+              {selectedAlert.status !== "closed" && selectedAlert.status !== "resolved" && (
                 <>
-                  {selectedAlert.status === "new" && (
-                    <Button variant="outline" onClick={() => handleStatusChange("acknowledged")}>
-                      <CheckCircle2 className="w-4 h-4 mr-2" />
-                      Acknowledge
-                    </Button>
-                  )}
-                  {selectedAlert.status === "acknowledged" && (
-                    <Button variant="outline" onClick={() => handleStatusChange("investigating")}>
-                      <AlertCircle className="w-4 h-4 mr-2" />
-                      Start Investigation
-                    </Button>
-                  )}
-                  {!selectedAlert.escalated && (
-                    <Button variant="outline" onClick={handleEscalate}>
-                      <ArrowUpCircle className="w-4 h-4 mr-2" />
-                      Escalate
-                    </Button>
-                  )}
-                  {selectedAlert.status === "investigating" && (
-                    <Button variant="outline" onClick={() => handleStatusChange("resolved")}>
-                      <CheckCircle2 className="w-4 h-4 mr-2 text-green-600" />
-                      Mark Resolved
-                    </Button>
-                  )}
-                  {selectedAlert.status === "resolved" && (
-                    <Button onClick={() => setShowCloseModal(true)}>
-                      <XCircle className="w-4 h-4 mr-2" />
-                      Close Alert
-                    </Button>
-                  )}
+                  <Button 
+                    variant="outline" 
+                    className="border-red-300 text-red-700 hover:bg-red-50"
+                    onClick={() => {
+                      if (confirm('Mark this alert as a false alarm?')) {
+                        updateAlertStatus(alertId, 'closed', currentUser.id, { false_positive: true });
+                        toast({ title: "False Alert", description: "Alert marked as false alarm" });
+                      }
+                    }}
+                  >
+                    <XCircle className="w-4 h-4 mr-2" />
+                    False Alert
+                  </Button>
+                  <Button 
+                    className="bg-green-600 hover:bg-green-700"
+                    onClick={() => setShowCloseModal(true)}
+                  >
+                    <CheckCircle2 className="w-4 h-4 mr-2" />
+                    Save Report
+                  </Button>
                 </>
               )}
             </div>

@@ -14,9 +14,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "EPS Breakdown Dashboard",
-  description: "Breakdown Dashboard for EPS Courier Services",
-  authors: [{ name: "Kilig Mukelani", url: "" }],
+  title: "Soteria Risk Solutions",
+  description: "Soteria Risk Solutions",
+  authors: [{ name: "Vik", url: "" }],
 };
 
 export default function RootLayout({
@@ -31,6 +31,7 @@ export default function RootLayout({
           href="https://api.mapbox.com/mapbox-gl-js/v3.14.0/mapbox-gl.css"
           rel="stylesheet"
         />
+        <link rel="icon" type="image/png" href="/image001.png" />
       </head>
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}

@@ -57,7 +57,7 @@ export default function VideoAlertsDashboardTab() {
   const alertStats = useAlertPolling();
   const [searchTerm, setSearchTerm] = useState("");
   const [activeTab, setActiveTab] = useState("all"); 
-  const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
+  const [viewMode, setViewMode] = useState<"grid" | "list">("list");
 
   // Mock current user
   const [currentUser] = useState({ id: "user-1", name: "Operator" });
@@ -357,8 +357,11 @@ export default function VideoAlertsDashboardTab() {
                        <p className="text-xs text-slate-500 uppercase tracking-wide mt-1">{alert.alert_type?.replace(/_/g, ' ')}</p>
                      </div>
                      <Badge variant="outline" className={cn(
-                       "capitalize",
-                       alert.status === 'new' ? "border-purple-200 text-purple-700 bg-purple-50" : "border-slate-200 text-slate-600"
+                       "capitalize font-semibold",
+                       alert.status === 'new' ? "border-purple-300 text-purple-700 bg-purple-50" : 
+                       alert.status === 'escalated' ? "border-red-300 text-red-700 bg-red-50" :
+                       alert.status === 'investigating' ? "border-blue-300 text-blue-700 bg-blue-50" :
+                       "border-slate-200 text-slate-600"
                      )}>
                        {alert.status}
                      </Badge>

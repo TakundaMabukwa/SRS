@@ -6,11 +6,14 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { Video, Search, Grid3x3, List, RefreshCw } from "lucide-react";
+import { createClient } from "@/lib/supabase/client";
 
 interface ConnectedVehicle {
   id: string;
   name: string;
+  phone?: string;
   channels: number[];
+  registration?: string;
 }
 
 export default function LiveStreamTab() {
@@ -19,6 +22,7 @@ export default function LiveStreamTab() {
   const [searchTerm, setSearchTerm] = useState("");
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   const [loading, setLoading] = useState(true);
+  const supabase = createClient();
 
   useEffect(() => {
     fetchConnectedVehicles();
@@ -31,7 +35,23 @@ export default function LiveStreamTab() {
       if (response.ok) {
         const data = await response.json();
         if (data.success && data.data) {
-          setVehicles(data.data);
+          // Match phone number to camera_sim_id
+          const vehiclesWithReg = await Promise.all(
+            data.data.map(async (vehicle: ConnectedVehicle) => {
+              const phoneNumber = vehicle.phone || vehicle.id;
+              const { data: vehicleData } = await supabase
+                .from('vehiclesc')
+                .select('registration_number, camera_sim_id')
+                .ilike('camera_sim_id', `%${phoneNumber}%`)
+                .single();
+              
+              return {
+                ...vehicle,
+                registration: vehicleData?.registration_number || vehicle.id
+              };
+            })
+          );
+          setVehicles(vehiclesWithReg);
         }
       }
     } catch (error) {
@@ -53,7 +73,8 @@ export default function LiveStreamTab() {
   const filteredVehicles = vehicles.filter((v) =>
     (v.channels && v.channels.length > 0 && v.connected) &&
     (v.id?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    v.name?.toLowerCase().includes(searchTerm.toLowerCase()))
+    v.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    v.registration?.toLowerCase().includes(searchTerm.toLowerCase()))
   );
 
   return (
@@ -146,7 +167,7 @@ export default function LiveStreamTab() {
                 <div className="flex items-center gap-3">
                   <Video className="h-8 w-8 text-slate-600" />
                   <div>
-                    <p className="font-bold">{vehicle.name || vehicle.id}</p>
+                    <p className="font-bold">{vehicle.registration || vehicle.id}</p>
                     <p className="text-xs text-slate-500">{vehicle.channels?.length || 0} channel(s)</p>
                   </div>
                 </div>
@@ -158,8 +179,8 @@ export default function LiveStreamTab() {
             <table className="w-full">
               <thead className="bg-slate-50">
                 <tr>
-                  <th className="px-4 py-3 text-left">Vehicle ID</th>
-                  <th className="px-4 py-3 text-left">Name</th>
+                  <th className="px-4 py-3 text-left">Registration</th>
+                  <th className="px-4 py-3 text-left">SIM ID</th>
                   <th className="px-4 py-3 text-left">Channels</th>
                   <th className="px-4 py-3 text-center">Action</th>
                 </tr>
@@ -167,8 +188,8 @@ export default function LiveStreamTab() {
               <tbody>
                 {filteredVehicles.map((vehicle) => (
                   <tr key={vehicle.id} className="border-t hover:bg-slate-50">
-                    <td className="px-4 py-3 font-medium">{vehicle.id}</td>
-                    <td className="px-4 py-3 text-slate-600">{vehicle.name || "-"}</td>
+                    <td className="px-4 py-3 font-medium">{vehicle.registration || "-"}</td>
+                    <td className="px-4 py-3 text-slate-600 font-mono text-xs">{vehicle.id}</td>
                     <td className="px-4 py-3 text-slate-600">{vehicle.channels?.length || 0}</td>
                     <td className="px-4 py-3 text-center">
                       <Button

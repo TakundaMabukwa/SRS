@@ -722,16 +722,9 @@ export default function Drivers() {
                         <Table>
                             <TableHeader>
                                 <TableRow className="bg-gray-50">
-                                    <TableHead className="font-semibold">Driver Code</TableHead>
                                     <TableHead className="font-semibold">Name</TableHead>
-                                    <TableHead className="font-semibold">ID/Passport Document</TableHead>
-                                    {/* <TableHead className="font-semibold">Passport Status</TableHead> */}
-                                    {/* <TableHead className="font-semibold">Passport Expiry</TableHead> */}
+                                    <TableHead className="font-semibold">Surname</TableHead>
                                     <TableHead className="font-semibold">Cell Number</TableHead>
-                                    <TableHead className="font-semibold">PDP Expiry Date</TableHead>
-                                    {/* <TableHead className="font-semibold">License Expiry Date</TableHead> */}
-                                    <TableHead className="font-semibold">HazCam Date</TableHead>
-                                    <TableHead className="font-semibold">Medic Exam Date</TableHead>
                                     <TableHead className="font-semibold">Actions</TableHead>
                                 </TableRow>
                             </TableHeader>
@@ -752,16 +745,9 @@ export default function Drivers() {
                                 ) : (
                                     filteredDrivers.map((driver) => (
                                         <TableRow key={driver.id} className="hover:bg-gray-50 transition-colors">
-                                            <TableCell className="text-sm">{driver.driver_restriction_code || '-'}</TableCell>
-                                            <TableCell className="text-sm font-medium">{driver.surname}</TableCell>
-                                            <TableCell className="text-sm">{driver.id_or_passport_document || '-'}</TableCell>
-                                            {/* <TableCell className="text-sm">{driver.passport_status || '-'}</TableCell> */}
-                                            {/* <TableCell className="text-sm">{formatDate(driver.passport_expiry)}</TableCell> */}
+                                            <TableCell className="text-sm font-medium">{driver.first_name || '-'}</TableCell>
+                                            <TableCell className="text-sm font-medium">{driver.surname || '-'}</TableCell>
                                             <TableCell className="text-sm">{driver.cell_number || '-'}</TableCell>
-                                            <TableCell className="text-sm">{formatDate(driver.pdp_expiry_date)}</TableCell>
-                                            {/* <TableCell className="text-sm">{formatDate(driver.license_expiry_date)}</TableCell> */}
-                                            <TableCell className="text-sm">{formatDate(driver.hazCamDate)}</TableCell>
-                                            <TableCell className="text-sm">{formatDate(driver.medic_exam_date)}</TableCell>
                                             <TableCell>
                                                 <div className="flex gap-1">
                                                     <Button size="sm" variant="outline" onClick={() => handleViewDriver(driver)}>View</Button>

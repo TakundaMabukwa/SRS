@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Bell } from 'lucide-react'
+import { Bell, Clock, Car, User } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -10,33 +10,26 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { useVideoWebSocket } from '@/hooks/use-video-websocket'
+import { useVideoAlerts } from '@/context/video-alerts-context/context'
 import { useRouter } from 'next/navigation'
+import { format } from 'date-fns'
 
 export default function VideoAlertBell() {
   const router = useRouter()
+  const { alerts } = useVideoAlerts()
   const [unreadCount, setUnreadCount] = useState(0)
-  const [recentAlerts, setRecentAlerts] = useState<any[]>([])
 
-  useVideoWebSocket((data) => {
-    if (data.type === 'new-alert' || data.type === 'alert-escalated') {
-      setUnreadCount(prev => prev + 1)
-      setRecentAlerts(prev => [data.alert, ...prev].slice(0, 5))
-      
-      if (data.alert?.priority === 'critical') {
-        const audio = new Audio('/alert-sound.mp3')
-        audio.play().catch(() => {})
-      }
-    }
-  })
+  const recentAlerts = alerts.filter(a => a.status === 'new').slice(0, 5)
+
+  useEffect(() => {
+    setUnreadCount(recentAlerts.length)
+  }, [recentAlerts.length])
 
   const handleViewAlert = (alertId: string) => {
-    setUnreadCount(prev => Math.max(0, prev - 1))
     router.push(`/video-alerts/${alertId}`)
   }
 
   const handleViewAll = () => {
-    setUnreadCount(0)
     router.push('/video-alerts')
   }
 
@@ -66,24 +59,33 @@ export default function VideoAlertBell() {
               <DropdownMenuItem
                 key={alert.id}
                 onClick={() => handleViewAlert(alert.id)}
-                className="cursor-pointer"
+                className="cursor-pointer p-3 hover:bg-slate-50"
               >
-                <div className="flex flex-col gap-1 w-full">
+                <div className="flex flex-col gap-2 w-full">
                   <div className="flex items-center justify-between">
-                    <span className="font-medium text-sm">{alert.alert_type}</span>
-                    <Badge variant={alert.priority === 'critical' ? 'destructive' : 'default'}>
-                      {alert.priority}
+                    <span className="font-semibold text-sm">{alert.title}</span>
+                    <Badge variant={alert.severity === 'critical' ? 'destructive' : alert.severity === 'high' ? 'default' : 'secondary'} className="text-xs">
+                      {alert.severity}
                     </Badge>
                   </div>
-                  <span className="text-xs text-gray-500">
-                    {new Date(alert.timestamp).toLocaleString()}
-                  </span>
+                  <div className="flex items-center gap-2 text-xs text-gray-600">
+                    <Car className="w-3 h-3" />
+                    <span className="font-mono">{alert.vehicle_registration}</span>
+                  </div>
+                  <div className="flex items-center gap-2 text-xs text-gray-600">
+                    <User className="w-3 h-3" />
+                    <span>{alert.driver_name}</span>
+                  </div>
+                  <div className="flex items-center gap-2 text-xs text-gray-500">
+                    <Clock className="w-3 h-3" />
+                    <span>{format(new Date(alert.timestamp), 'MMM dd, HH:mm')}</span>
+                  </div>
                 </div>
               </DropdownMenuItem>
             ))}
             <DropdownMenuItem
               onClick={handleViewAll}
-              className="cursor-pointer border-t font-medium text-center"
+              className="cursor-pointer border-t font-medium text-center justify-center"
             >
               View All Alerts
             </DropdownMenuItem>

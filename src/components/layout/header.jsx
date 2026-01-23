@@ -38,12 +38,12 @@ const Header = () => {
     <div className="sticky  h-16 top-0 z-10 px-4  md:px-6 bg-gray-100 dark:bg-gray-900 backdrop-blur supports-[backdrop-filter]:bg-gray-100/60 dark:supports-[backdrop-filter]:bg-gray-900/60 flex shrink-0 justify-between items-center shadow-sm ">
       <div className="flex items-center gap-3">
         <img
-          src="/Prem-logo_.png"
-          alt="Premier Cross Border"
+          src="/image001.png"
+          alt="Soteria Risk Solutions"
           className="h-10 w-10 object-contain"
         />
         <h2 className="text-2xl font-bold tracking-tight">
-          PREMIER CROSS BORDER
+          SOTERIA RISK SOLUTIONS
         </h2>
       </div>
 

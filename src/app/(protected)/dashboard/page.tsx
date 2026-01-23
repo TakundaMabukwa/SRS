@@ -1837,7 +1837,7 @@ function TripReportsSection() {
 }
 
 export default function Dashboard() {
-  const [activeTab, setActiveTab] = useState<string>("video-alerts");
+  const [activeTab, setActiveTab] = useState<string>("live-stream");
   const [auditData, setAuditData] = useState<any[]>([]);
   const [auditLoading, setAuditLoading] = useState(true);
   const [userRole, setUserRole] = useState<string>("");
@@ -2132,6 +2132,12 @@ export default function Dashboard() {
           >
             <TabsList className="flex w-fit items-center rounded-lg bg-slate-100 p-1 shadow-sm">
               <TabsTrigger
+                value="live-stream"
+                className="px-6 py-2 text-sm font-medium rounded-md data-[state=active]:bg-white data-[state=active]:shadow-sm"
+              >
+                Live Stream
+              </TabsTrigger>
+              <TabsTrigger
                 value="video-alerts"
                 className="px-6 py-2 text-sm font-medium rounded-md data-[state=active]:bg-white data-[state=active]:shadow-sm"
               >
@@ -2142,12 +2148,6 @@ export default function Dashboard() {
                 className="px-6 py-2 text-sm font-medium rounded-md data-[state=active]:bg-white data-[state=active]:shadow-sm"
               >
                 Reports
-              </TabsTrigger>
-              <TabsTrigger
-                value="live-stream"
-                className="px-6 py-2 text-sm font-medium rounded-md data-[state=active]:bg-white data-[state=active]:shadow-sm"
-              >
-                Live Stream
               </TabsTrigger>
             </TabsList>
           </Tabs>

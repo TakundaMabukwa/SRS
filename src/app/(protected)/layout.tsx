@@ -337,7 +337,7 @@ export default function ProtectedLayout({ children }: ProtectedLayoutProps) {
             <div className="flex flex-col items-center text-center">
               <span className="text-sm text-gray-500">Welcome back,</span>
               <span className="text-base font-semibold text-gray-800">
-                Premier Cross Border
+                Soteria Risk Solutions
               </span>
             </div>
             <div className="flex items-center gap-4">

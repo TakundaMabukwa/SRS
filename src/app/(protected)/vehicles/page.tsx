@@ -266,9 +266,7 @@ export default function Vehicles() {
   const fetchVehicles = async () => {
     const { data: vehicles, error } = await supabase
       .from("vehiclesc")
-      .select("*")
-      .or("type.is.null,type.eq.internal")
-      .neq("department_name", "SOLD");
+      .select("*");
     if (error) {
       console.error("the error is", error.name, error.message);
     } else {
@@ -1124,12 +1122,12 @@ export default function Vehicles() {
                 <TableHeader>
                   <TableRow className="bg-slate-50 border-b border-slate-200">
                     <TableHead className="h-10 px-3 text-xs font-semibold text-slate-700 uppercase tracking-wider">Registration</TableHead>
-                    <TableHead className="h-10 px-3 text-xs font-semibold text-slate-700 uppercase tracking-wider">Make/Model</TableHead>
-                    <TableHead className="h-10 px-3 text-xs font-semibold text-slate-700 uppercase tracking-wider">Type</TableHead>
-                    <TableHead className="h-10 px-3 text-xs font-semibold text-slate-700 uppercase tracking-wider">Year</TableHead>
-                    <TableHead className="h-10 px-3 text-xs font-semibold text-slate-700 uppercase tracking-wider">Fuel</TableHead>
-                    <TableHead className="h-10 px-3 text-xs font-semibold text-slate-700 uppercase tracking-wider">Priority</TableHead>
-                    <TableHead className="h-10 px-3 text-xs font-semibold text-slate-700 uppercase tracking-wider">Driver</TableHead>
+                    <TableHead className="h-10 px-3 text-xs font-semibold text-slate-700 uppercase tracking-wider">Fleet #</TableHead>
+                    <TableHead className="h-10 px-3 text-xs font-semibold text-slate-700 uppercase tracking-wider">Make</TableHead>
+                    <TableHead className="h-10 px-3 text-xs font-semibold text-slate-700 uppercase tracking-wider">Color</TableHead>
+                    <TableHead className="h-10 px-3 text-xs font-semibold text-slate-700 uppercase tracking-wider">Camera Serial</TableHead>
+                    <TableHead className="h-10 px-3 text-xs font-semibold text-slate-700 uppercase tracking-wider">SIM ID</TableHead>
+                    <TableHead className="h-10 px-3 text-xs font-semibold text-slate-700 uppercase tracking-wider">Install Date</TableHead>
                     <TableHead className="h-10 px-3 text-xs font-semibold text-slate-700 uppercase tracking-wider">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -1139,37 +1137,13 @@ export default function Vehicles() {
                       key={vehicle.id}
                       className="h-12 hover:bg-slate-50 border-b border-slate-100 transition-colors"
                     >
-                      <TableCell className="px-3 py-2 text-sm font-medium text-slate-900">{vehicle.registration_number || '-'}</TableCell>
-                      <TableCell className="px-3 py-2 text-sm text-slate-700">
-                        <div className="flex flex-col">
-                          <span className="font-medium">{vehicle.make || '-'}</span>
-                          <span className="text-xs text-slate-500">{vehicle.model || '-'}</span>
-                        </div>
-                      </TableCell>
-                      <TableCell className="px-3 py-2 text-sm text-slate-700">
-                        <div className="flex items-center gap-1">
-                          {getVehicleTypeIcon(vehicle.vehicle_type)}
-                          <span className="capitalize text-xs">{vehicle.vehicle_type || '-'}</span>
-                        </div>
-                      </TableCell>
-                      <TableCell className="px-3 py-2 text-sm text-slate-700">{vehicle.manufactured_year || '-'}</TableCell>
-                      <TableCell className="px-3 py-2 text-sm text-slate-700">
-                        <span className="capitalize text-xs">{vehicle.fuel_type || '-'}</span>
-                      </TableCell>
-                      <TableCell className="px-3 py-2 text-sm">
-                        {getPriorityBadge(vehicle.vehicle_priority)}
-                      </TableCell>
-                      <TableCell className="px-3 py-2 text-sm text-slate-700">
-                        {drivers.find(driver => driver.id === vehicle.driver_id) ? (
-                          <div className="flex items-center justify-between">
-                            <span className="text-xs">
-                              {drivers.find(driver => driver.id === vehicle.driver_id)?.first_name} {drivers.find(driver => driver.id === vehicle.driver_id)?.surname}
-                            </span>
-                          </div>
-                        ) : (
-                          <span className="text-xs text-slate-400">Unassigned</span>
-                        )}
-                      </TableCell>
+                      <TableCell className="px-3 py-2 text-sm font-medium text-slate-900">{(vehicle as any).registration_number || '-'}</TableCell>
+                      <TableCell className="px-3 py-2 text-sm text-slate-700">{(vehicle as any).fleet_number || '-'}</TableCell>
+                      <TableCell className="px-3 py-2 text-sm text-slate-700">{(vehicle as any).make || '-'}</TableCell>
+                      <TableCell className="px-3 py-2 text-sm text-slate-700">{(vehicle as any).color || '-'}</TableCell>
+                      <TableCell className="px-3 py-2 text-sm text-slate-700 font-mono text-xs">{(vehicle as any).camera_serial || '-'}</TableCell>
+                      <TableCell className="px-3 py-2 text-sm text-slate-700 font-mono text-xs">{(vehicle as any).camera_sim_id || '-'}</TableCell>
+                      <TableCell className="px-3 py-2 text-sm text-slate-700">{(vehicle as any).installation_date || '-'}</TableCell>
                       <TableCell className="px-3 py-2">
                         <div className="flex gap-1">
                           <Button 
@@ -1183,22 +1157,8 @@ export default function Vehicles() {
                           >
                             View
                           </Button>
-                          <SecureButton 
-                            page="vehicles"
-                            action="edit"
-                            variant="outline" 
-                            size="sm"
-                            className="h-7 px-2 text-xs"
-                            onClick={async () => {
-                              setEquipmentVehicleReg(vehicle.registration_number || '');
-                              await fetchEquipmentData(vehicle.registration_number || '');
-                              setIsEquipmentSheetOpen(true);
-                            }}
-                          >
-                            Equipment
-                          </SecureButton>
                           <Link href={`/vehicles/${vehicle.id}`}>
-                            <Button variant="default" size="sm" className="h-7 px-2 text-xs bg-slate-700 hover:bg-slate-800">Details</Button>
+                            <Button variant="default" size="sm" className="h-7 px-2 text-xs bg-slate-700 hover:bg-slate-800">Stream</Button>
                           </Link>
                         </div>
                       </TableCell>

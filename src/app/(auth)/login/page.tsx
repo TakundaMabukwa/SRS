@@ -117,7 +117,7 @@ export default function LoginPage() {
         <CardTitle className="text-2xl font-bold text-[#1A245E]">
           Welcome Back
         </CardTitle>
-        <p className="text-gray-600 text-sm">
+        <p className="text-[#A0A2A8] text-sm">
           Sign in to access your SRS Dashboard
         </p>
       </CardHeader>
@@ -139,7 +139,7 @@ export default function LoginPage() {
               required
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              className="w-full border-gray-300 focus:ring-2 focus:ring-[#1A245E] focus:border-[#1A245E] rounded-md"
+              className="w-full border-[#7A7D85] bg-white text-[#1A245E] focus:ring-2 focus:ring-[#1A245E] focus:border-[#1A245E] rounded-md placeholder-[#7A7D85]"
             />
           </div>
 
@@ -158,18 +158,18 @@ export default function LoginPage() {
               required
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="w-full border-gray-300 focus:ring-2 focus:ring-[#1A245E] focus:border-[#1A245E] rounded-md"
+              className="w-full border-[#7A7D85] bg-white text-[#1A245E] focus:ring-2 focus:ring-[#1A245E] focus:border-[#1A245E] rounded-md placeholder-[#7A7D85]"
             />
           </div>
 
-          {error && <p className="text-red-500 text-sm text-center">{error}</p>}
+          {error && <p className="text-[#C7322F] text-sm text-center">{error}</p>}
         </CardContent>
 
         <CardFooter className="flex flex-col space-y-4">
           <Button
             type="submit"
             disabled={isPending}
-            className={`w-full py-2 font-semibold text-white rounded-md transition-all duration-300 bg-blue-500 hover:opacity-90 ${
+            className={`w-full py-2 font-semibold text-white rounded-md transition-all duration-300 bg-[#1A245E] hover:bg-[#7A7D85] ${
               isPending ? "opacity-50 cursor-not-allowed" : ""
             }`}
           >
