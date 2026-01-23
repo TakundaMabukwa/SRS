@@ -51,8 +51,9 @@ export default function LiveStreamTab() {
   };
 
   const filteredVehicles = vehicles.filter((v) =>
-    v.id?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    v.name?.toLowerCase().includes(searchTerm.toLowerCase())
+    (v.channels && v.channels.length > 0 && v.connected) &&
+    (v.id?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    v.name?.toLowerCase().includes(searchTerm.toLowerCase()))
   );
 
   return (
@@ -103,18 +104,21 @@ export default function LiveStreamTab() {
       {/* Active Streams */}
       {selectedVehicles.size > 0 && (
         <div>
-          <h3 className="text-lg font-semibold mb-4">Active Streams ({selectedVehicles.size})</h3>
+          <h3 className="text-lg font-semibold mb-4">Active Streams</h3>
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-            {Array.from(selectedVehicles).map((vehicleId) => {
+            {Array.from(selectedVehicles).flatMap((vehicleId) => {
               const vehicle = vehicles.find((v) => v.id === vehicleId);
-              return (
+              if (!vehicle?.channels || vehicle.channels.length === 0) return [];
+              
+              return vehicle.channels.map((ch: any) => (
                 <HLSPlayer
-                  key={vehicleId}
+                  key={`${vehicleId}-${ch.logicalChannel}`}
                   vehicleId={vehicleId}
-                  channel={1}
-                  vehicleName={vehicle?.name || vehicleId}
+                  channel={ch.logicalChannel}
+                  vehicleName={`${vehicle?.name || vehicleId} - Ch ${ch.logicalChannel}`}
+                  onStop={() => toggleVehicle(vehicleId)}
                 />
-              );
+              ));
             })}
           </div>
         </div>
