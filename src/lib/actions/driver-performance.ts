@@ -9,7 +9,11 @@ export interface DriverPerformanceData {
     performanceRating: number
     insuranceRiskScore: number
     riskCategory: string
-    insuranceMultiplier: number
+    insuranceMultiplier?: number
+    smoking?: number
+    harshBraking?: number
+    speeding?: number
+    fatigue?: number
   }
   violations: {
     total: number

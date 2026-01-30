@@ -1,56 +1,40 @@
 "use client"
 
-import { useEffect, useState } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Cell } from 'recharts'
-
-interface ViolationsSummary {
-  speed_violations: number
-  route_violations: number
-  night_violations: number
-  total_violations: number
-}
+import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Cell, Tooltip, CartesianGrid } from 'recharts'
 
 export default function ViolationsChart() {
-  const [data, setData] = useState<ViolationsSummary | null>(null)
-  const [loading, setLoading] = useState(true)
-
-  useEffect(() => {
-    const fetchData = async () => {
-      try {
-        const response = await fetch('/api/eps-rewards/executive-dashboard')
-        const result = await response.json()
-        setData(result.violations_summary)
-      } catch (error) {
-        console.error('Failed to fetch violations:', error)
-      } finally {
-        setLoading(false)
-      }
-    }
-    fetchData()
-  }, [])
-
-  if (loading) return <Card className="h-64"><CardContent className="flex items-center justify-center h-full">Loading...</CardContent></Card>
-  if (!data) return <Card className="h-64"><CardContent className="flex items-center justify-center h-full">No data</CardContent></Card>
-
   const chartData = [
-    { name: 'Speed', value: data.speed_violations, color: '#ef4444' },
-    { name: 'Route', value: data.route_violations, color: '#f97316' },
-    { name: 'Night', value: data.night_violations, color: '#8b5cf6' }
+    { name: 'Speed', value: 245, color: '#ef4444' },
+    { name: 'Route', value: 128, color: '#f97316' },
+    { name: 'Night', value: 89, color: '#8b5cf6' },
+    { name: 'Harsh Braking', value: 167, color: '#ec4899' },
+    { name: 'Fatigue', value: 52, color: '#f59e0b' }
   ]
 
+  const total = chartData.reduce((sum, item) => sum + item.value, 0)
+
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-sm">Violations Summary</CardTitle>
-        <p className="text-xs text-gray-500">Total: {data.total_violations}</p>
+    <Card className="shadow-lg border-2 border-blue-100">
+      <CardHeader className="bg-gradient-to-r from-blue-50 to-cyan-50">
+        <CardTitle className="text-lg font-bold text-gray-800">Violations Summary</CardTitle>
+        <p className="text-sm font-semibold text-blue-600">Total: {total} violations</p>
       </CardHeader>
-      <CardContent>
-        <ResponsiveContainer width="100%" height={200}>
+      <CardContent className="pt-6">
+        <ResponsiveContainer width="100%" height={250}>
           <BarChart data={chartData}>
-            <XAxis dataKey="name" />
-            <YAxis />
-            <Bar dataKey="value">
+            <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+            <XAxis dataKey="name" tick={{ fontSize: 12, fontWeight: 600 }} />
+            <YAxis tick={{ fontSize: 12 }} />
+            <Tooltip 
+              contentStyle={{ 
+                backgroundColor: '#1f2937', 
+                border: 'none', 
+                borderRadius: '8px',
+                color: '#fff'
+              }}
+            />
+            <Bar dataKey="value" radius={[8, 8, 0, 0]}>
               {chartData.map((entry, index) => (
                 <Cell key={`cell-${index}`} fill={entry.color} />
               ))}

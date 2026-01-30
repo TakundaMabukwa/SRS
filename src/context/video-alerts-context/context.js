@@ -35,70 +35,8 @@ export const VideoAlertsProvider = ({ children }) => {
   const fetchAlerts = useCallback(async (filters = {}) => {
     dispatch(actions.setLoading(true));
     try {
-      const dummyDrivers = [
-        { id: 'd1', first_name: 'JOHANNES', surname: 'MPHAKA', cell_number: '(079) 387 0137' },
-        { id: 'd2', first_name: 'ARTWELL', surname: '(EXP)', cell_number: '(073) 471 5775' },
-        { id: 'd3', first_name: 'BANGANI', surname: 'MVELASE', cell_number: '(076) 145 6345' },
-        { id: 'd4', first_name: 'BHEKI', surname: 'LAWU', cell_number: '(072) 514 1183' },
-        { id: 'd5', first_name: 'BHEKI', surname: 'MDAKANE', cell_number: '(072) 225 2268' }
-      ];
-      
-      const dummyVehicles = [
-        { id: 'v1', registration_number: 'KZL693MP', fleet_number: 'LH22', make: 'Scania' },
-        { id: 'v2', registration_number: 'LDG415MP', fleet_number: 'LH30', make: 'Scania' },
-        { id: 'v3', registration_number: 'LDR057MP', fleet_number: 'LH40', make: 'Scania' },
-        { id: 'v4', registration_number: 'LDG421MP', fleet_number: 'LH32', make: 'Scania' },
-        { id: 'v5', registration_number: 'KVR574MP', fleet_number: 'LH26', make: 'Scania' },
-        { id: 'v6', registration_number: 'LDG425MP', fleet_number: 'LH34', make: 'Scania' },
-        { id: 'v7', registration_number: 'KSG039MP', fleet_number: 'LH16', make: 'Scania' },
-        { id: 'v8', registration_number: 'KZL671MP', fleet_number: 'LH21', make: 'Scania' },
-        { id: 'v9', registration_number: 'KSG040MP', fleet_number: 'LH17', make: 'Scania' }
-      ];
-      
-      const alertTypes = ['smoking', 'speeding'];
-      const severities = ['critical', 'high', 'medium', 'low'];
-      const statuses = ['new', 'acknowledged', 'investigating', 'escalated'];
-      
-      const randomItem = (arr) => arr[Math.floor(Math.random() * arr.length)];
-      const randomDate = (hoursAgo) => {
-        const date = new Date();
-        const minutesAgo = Math.floor(Math.random() * hoursAgo * 60);
-        date.setMinutes(date.getMinutes() - minutesAgo);
-        return date.toISOString();
-      };
-      
-      const dummyAlerts = Array.from({ length: 25 }, (_, i) => {
-        const driver = randomItem(dummyDrivers);
-        const vehicle = randomItem(dummyVehicles);
-        const alertType = randomItem(alertTypes);
-        const severity = randomItem(severities);
-        const status = randomItem(statuses);
-        const timestamp = randomDate(48);
-        
-        return {
-          id: `alert-${i + 1}`,
-          alert_type: alertType,
-          severity,
-          status,
-          priority: severity,
-          title: `${alertType.replace(/_/g, ' ').toUpperCase()} - ${vehicle.registration_number}`,
-          description: `Alert triggered for ${alertType.replace(/_/g, ' ')}`,
-          vehicle_id: vehicle.id,
-          vehicle_registration: vehicle.registration_number,
-          driver_id: driver.id,
-          driver_name: `${driver.first_name} ${driver.surname}`,
-          timestamp,
-          requires_action: severity === 'critical' || severity === 'high',
-          escalated: status === 'escalated',
-          screenshots: [],
-          notes: [],
-          history: [],
-          created_at: timestamp,
-          updated_at: timestamp
-        };
-      });
-      
-      dispatch(actions.fetchAlerts({ data: dummyAlerts, statistics: { total: dummyAlerts.length } }));
+      const response = await api.fetchAlertsAPI(filters);
+      dispatch(actions.fetchAlerts(response));
       dispatch(actions.setLoading(false));
     } catch (error) {
       dispatch(actions.setError('Failed to load alerts'));

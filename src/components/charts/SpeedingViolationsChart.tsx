@@ -1,85 +1,60 @@
 "use client"
 
-import { useEffect, useState } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { PieChart, Pie, Cell, ResponsiveContainer, Legend } from 'recharts'
-
-interface Driver {
-  driverName: string
-  speedingIncidents: number
-}
+import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip } from 'recharts'
 
 export default function SpeedingViolationsChart() {
-  const [data, setData] = useState<Driver[]>([])
-  const [loading, setLoading] = useState(true)
-
-  useEffect(() => {
-    const fetchData = async () => {
-      try {
-        const response = await fetch('/api/eps-rewards?endpoint=leaderboard')
-        const result = await response.json()
-        
-        // Ensure result is an array and handle data safely
-        const drivers = Array.isArray(result) ? result : []
-        const worstDrivers = drivers
-          .filter((d: Driver) => (d.speedingIncidents || 0) > 0)
-          .sort((a: Driver, b: Driver) => (b.speedingIncidents || 0) - (a.speedingIncidents || 0))
-          .slice(0, 10)
-        
-        setData(worstDrivers)
-      } catch (error) {
-        console.error('Failed to fetch speeding violations:', error)
-      } finally {
-        setLoading(false)
-      }
-    }
-    fetchData()
-  }, [])
-
-  if (loading) return <Card className="h-64"><CardContent className="flex items-center justify-center h-full">Loading...</CardContent></Card>
+  const colors = ['#dc2626', '#ef4444', '#f97316', '#fb923c', '#fbbf24', '#facc15', '#a3e635', '#4ade80', '#34d399', '#2dd4bf']
   
-  if (data.length === 0) {
-    return (
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm">Top 10 Speeding Violations</CardTitle>
-        </CardHeader>
-        <CardContent className="flex items-center justify-center h-48">
-          <p className="text-green-600 font-medium">No speeding violations recorded</p>
-        </CardContent>
-      </Card>
-    )
-  }
+  const chartData = [
+    { name: 'EMMANUEL MDWANDWE', value: 15, color: colors[0] },
+    { name: 'ELLIOT MAKANDELA', value: 14, color: colors[1] },
+    { name: 'JOSEPH ZWANE', value: 14, color: colors[2] },
+    { name: 'DONALD MOKOENA', value: 13, color: colors[3] },
+    { name: 'JOSEPH LEYNNA', value: 13, color: colors[4] },
+    { name: 'DANIEL MOISA', value: 12, color: colors[5] },
+    { name: 'JONAS PHANA', value: 12, color: colors[6] },
+    { name: 'DAN NGWENYA', value: 11, color: colors[7] },
+    { name: 'JOHANNES NHLAPO', value: 11, color: colors[8] },
+    { name: 'DALUVUYO MPHAFA', value: 10, color: colors[9] }
+  ]
 
-  const colors = ['#ef4444', '#dc2626', '#b91c1c', '#991b1b', '#7f1d1d', '#f97316', '#ea580c', '#c2410c', '#9a3412', '#7c2d12']
-  
-  const chartData = data.map((driver, index) => ({
-    name: (driver.driverName || 'Unknown').split(' ').slice(0, 2).join(' '),
-    value: driver.speedingIncidents || 0,
-    color: colors[index] || '#gray'
-  }))
+  const total = chartData.reduce((sum, d) => sum + d.value, 0)
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-sm">Top 10 Speeding Violations</CardTitle>
-        <p className="text-xs text-gray-500">Total incidents: {data.reduce((sum, d) => sum + (d.speedingIncidents || 0), 0)}</p>
+    <Card className="shadow-lg border-2 border-red-100">
+      <CardHeader className="bg-gradient-to-r from-red-50 to-orange-50">
+        <CardTitle className="text-lg font-bold text-gray-800">Top 10 Speeding Violations</CardTitle>
+        <p className="text-sm font-semibold text-red-600">Total incidents: {total}</p>
       </CardHeader>
-      <CardContent>
-        <ResponsiveContainer width="100%" height={200}>
+      <CardContent className="pt-6">
+        <ResponsiveContainer width="100%" height={250}>
           <PieChart>
             <Pie
               data={chartData}
               cx="50%"
               cy="50%"
-              outerRadius={60}
+              outerRadius={80}
               dataKey="value"
+              label={({ name, value }) => `${value}`}
+              labelLine={false}
             >
               {chartData.map((entry, index) => (
                 <Cell key={`cell-${index}`} fill={entry.color} />
               ))}
             </Pie>
-            <Legend />
+            <Tooltip 
+              contentStyle={{ 
+                backgroundColor: '#1f2937', 
+                border: 'none', 
+                borderRadius: '8px',
+                color: '#fff'
+              }}
+            />
+            <Legend 
+              wrapperStyle={{ fontSize: '11px' }}
+              iconType="circle"
+            />
           </PieChart>
         </ResponsiveContainer>
       </CardContent>

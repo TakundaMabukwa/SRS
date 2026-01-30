@@ -3,7 +3,7 @@
  * API calls for video alerts backend
  */
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_VIDEO_BASE_URL || "/api";
+const API_BASE_URL = "/api";
 
 // Helper for API calls
 const apiCall = async (endpoint, options = {}) => {
@@ -25,34 +25,16 @@ const apiCall = async (endpoint, options = {}) => {
 
 // Fetch all alerts with optional filters
 export const fetchAlertsAPI = async (filters = {}) => {
-  const queryParams = new URLSearchParams();
-  
-  // Add filters to query string
-  Object.entries(filters).forEach(([key, value]) => {
-    if (value !== undefined && value !== null && value !== "") {
-      if (Array.isArray(value)) {
-        value.forEach((v) => queryParams.append(key, v));
-      } else {
-        queryParams.append(key, value);
-      }
-    }
-  });
-
-  const queryString = queryParams.toString();
-  const endpoint = `/api/alerts/unresolved${queryString ? `?${queryString}` : ""}`;
-  
-  const response = await apiCall(endpoint);
-  
-  // Wrap response in expected format
+  const response = await apiCall("/alerts");
   return {
-    data: Array.isArray(response) ? response : response.data || [],
+    data: response.alerts || [],
     statistics: response.statistics || null
   };
 };
 
-// Fetch single alert by ID
+// Fetch single alert by ID with media
 export const fetchAlertByIdAPI = async (alertId) => {
-  return apiCall(`/video-alerts/${alertId}`);
+  return apiCall(`/api/alerts/${alertId}/media`);
 };
 
 // Acknowledge alert

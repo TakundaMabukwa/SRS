@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import React, { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import {
   Card,
@@ -20,6 +20,13 @@ import {
   User,
   AlertTriangle,
   Clock,
+  Cigarette,
+  Gauge,
+  ShieldAlert,
+  OctagonAlert,
+  AlertOctagon,
+  Ban,
+  Zap,
   CheckCircle,
   TrendingUp,
   Users,
@@ -37,6 +44,9 @@ import {
   ChevronDown,
   ChevronRight,
   Video,
+  Camera,
+  ArrowLeft,
+  XCircle,
 } from "lucide-react";
 import { getDashboardStats } from "@/lib/stats/dashboard";
 import { createClient } from "@/lib/supabase/client";
@@ -53,6 +63,7 @@ import LiveStreamTab from "@/components/dashboard/live-stream-tab";
 import { useGlobalContext } from "@/context/global-context/context";
 import { ProgressWithWaypoints } from '@/components/ui/progress-with-waypoints'
 import { Progress } from '@/components/ui/progress'
+import { useVideoAlerts } from '@/context/video-alerts-context/context'
 import {
   Table,
   TableBody,
@@ -73,30 +84,56 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContaine
 import { EditTripModal } from "@/components/ui/edit-trip-modal";
 import VideoAlertsPage from '@/app/(protected)/video-alerts/page';
 import { NCRTemplate } from '@/components/reports/ncr-template';
-import { createRoot } from 'react-dom/client';
+import NCRFormModal from '@/components/video-alerts/ncr-form-modal';
 
 // Reports Content Component
 function ReportsContent() {
   const yesterday = new Date();
   yesterday.setDate(yesterday.getDate() - 1);
-  const [selectedDate, setSelectedDate] = useState(yesterday.toISOString().split('T')[0]);
+  const [dateFrom, setDateFrom] = useState(yesterday.toISOString().split('T')[0]);
+  const [dateTo, setDateTo] = useState(yesterday.toISOString().split('T')[0]);
+  const [registrationFilter, setRegistrationFilter] = useState('');
   const [vehicleReports, setVehicleReports] = useState<any[]>([]);
+  const [filteredReports, setFilteredReports] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
+  const [stats, setStats] = useState({ total: 0, high: 0, medium: 0, low: 0 });
 
   // Auto-fetch on mount
   useEffect(() => {
-    if (selectedDate) {
+    if (dateFrom && dateTo) {
       fetchReports();
     }
   }, []);
 
+  // Filter reports when registration filter changes
+  useEffect(() => {
+    if (registrationFilter.trim()) {
+      const filtered = vehicleReports.filter(report => 
+        report.vehicle.toLowerCase().includes(registrationFilter.toLowerCase())
+      );
+      setFilteredReports(filtered);
+      updateStats(filtered);
+    } else {
+      setFilteredReports(vehicleReports);
+      updateStats(vehicleReports);
+    }
+  }, [registrationFilter, vehicleReports]);
+
+  const updateStats = (reports: any[]) => {
+    setStats({
+      total: reports.length,
+      high: reports.filter((r: any) => r.riskRating === 'High').length,
+      medium: reports.filter((r: any) => r.riskRating === 'Medium').length,
+      low: reports.filter((r: any) => r.riskRating === 'Low').length
+    });
+  };
+
   const fetchReports = async () => {
-    setLoading(true);
     setLoading(true);
     try {
       const params = new URLSearchParams();
-      params.append('dateFrom', selectedDate);
-      params.append('dateTo', selectedDate);
+      params.append('dateFrom', dateFrom);
+      params.append('dateTo', dateTo);
       
       const res = await fetch(`/api/ncr/generate?${params}`);
       const data = await res.json();
@@ -116,7 +153,10 @@ function ReportsContent() {
           acc[vehicle].violations += ncr.speeding_events?.length || 0;
           return acc;
         }, {});
-        setVehicleReports(Object.values(grouped));
+        const reports = Object.values(grouped);
+        setVehicleReports(reports);
+        setFilteredReports(reports);
+        updateStats(reports);
       }
     } catch (err) {
       console.error(err);
@@ -159,130 +199,200 @@ function ReportsContent() {
   };
 
   return (
-    <div className="space-y-4">
-      {/* Compact Date Selector */}
-      <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl p-4 border border-blue-100">
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-3 flex-1">
-            <div className="w-10 h-10 bg-white rounded-lg flex items-center justify-center shadow-sm">
-              <FileText className="w-5 h-5 text-blue-600" />
-            </div>
-            <div className="flex-1">
-              <label className="block text-sm font-semibold text-slate-700 mb-1.5">Select Report Date</label>
-              <input 
-                type="date" 
-                value={selectedDate} 
-                onChange={(e) => setSelectedDate(e.target.value)}
-                className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
-              />
-            </div>
-          </div>
-          <Button 
-            onClick={fetchReports} 
-            disabled={loading}
-            className="px-5 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white font-medium rounded-lg transition-all shadow-sm hover:shadow"
-          >
-            {loading ? 'Loading...' : 'View Reports'}
-          </Button>
-        </div>
-      </div>
-
-      {/* Vehicle Reports Table */}
-      {selectedDate && (
-        <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
-          <div className="px-5 py-3 bg-slate-50 border-b border-slate-200">
+    <div className="space-y-6">
+      {/* Header with Stats */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <Card className="bg-gradient-to-br from-blue-500 to-blue-600 text-white">
+          <CardContent className="p-6">
             <div className="flex items-center justify-between">
               <div>
-                <h3 className="text-base font-semibold text-slate-900">Vehicle Reports</h3>
-                <p className="text-xs text-slate-500 mt-0.5">
-                  {selectedDate ? new Date(selectedDate).toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }) : 'No date selected'}
-                </p>
+                <p className="text-blue-100 text-sm font-medium">Total Reports</p>
+                <h3 className="text-3xl font-bold mt-2">{stats.total}</h3>
               </div>
-              {vehicleReports.length > 0 && (
-                <div className="flex items-center gap-2 px-3 py-1.5 bg-blue-100 rounded-lg">
-                  <Truck className="w-4 h-4 text-blue-700" />
-                  <span className="text-sm font-semibold text-blue-900">{vehicleReports.length} Vehicle{vehicleReports.length !== 1 ? 's' : ''}</span>
-                </div>
-              )}
+              <FileText className="w-12 h-12 text-blue-200 opacity-80" />
+            </div>
+          </CardContent>
+        </Card>
+        
+        <Card className="bg-gradient-to-br from-red-500 to-red-600 text-white">
+          <CardContent className="p-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-red-100 text-sm font-medium">High Risk</p>
+                <h3 className="text-3xl font-bold mt-2">{stats.high}</h3>
+              </div>
+              <AlertTriangle className="w-12 h-12 text-red-200 opacity-80" />
+            </div>
+          </CardContent>
+        </Card>
+        
+        <Card className="bg-gradient-to-br from-yellow-500 to-yellow-600 text-white">
+          <CardContent className="p-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-yellow-100 text-sm font-medium">Medium Risk</p>
+                <h3 className="text-3xl font-bold mt-2">{stats.medium}</h3>
+              </div>
+              <AlertTriangle className="w-12 h-12 text-yellow-200 opacity-80" />
+            </div>
+          </CardContent>
+        </Card>
+        
+        <Card className="bg-gradient-to-br from-green-500 to-green-600 text-white">
+          <CardContent className="p-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-green-100 text-sm font-medium">Low Risk</p>
+                <h3 className="text-3xl font-bold mt-2">{stats.low}</h3>
+              </div>
+              <CheckCircle className="w-12 h-12 text-green-200 opacity-80" />
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Filters */}
+      <Card>
+        <CardContent className="p-6">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-2">From Date</label>
+              <input 
+                type="date" 
+                value={dateFrom} 
+                onChange={(e) => setDateFrom(e.target.value)}
+                className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-2">To Date</label>
+              <input 
+                type="date" 
+                value={dateTo} 
+                onChange={(e) => setDateTo(e.target.value)}
+                className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-2">Fleet Number</label>
+              <input 
+                type="text" 
+                value={registrationFilter}
+                onChange={(e) => setRegistrationFilter(e.target.value)}
+                placeholder="Search by fleet number..."
+                className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              />
+            </div>
+            <div className="flex items-end">
+              <Button 
+                onClick={fetchReports} 
+                disabled={loading}
+                className="w-full px-6 py-2 bg-blue-600 hover:bg-blue-700"
+              >
+                {loading ? 'Searching...' : 'Search Reports'}
+              </Button>
             </div>
           </div>
+        </CardContent>
+      </Card>
 
-          <div className="overflow-x-auto">
-            {loading ? (
-              <div className="text-center py-12">
-                <div className="inline-block w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mb-3"></div>
-                <p className="text-sm text-slate-500">Loading reports...</p>
-              </div>
-            ) : vehicleReports.length === 0 ? (
-              <div className="text-center py-12">
-                <div className="w-14 h-14 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-3">
-                  <FileText className="w-7 h-7 text-slate-400" />
-                </div>
-                <h4 className="text-sm font-medium text-slate-900 mb-1">No Reports Found</h4>
-                <p className="text-xs text-slate-500">No NCR reports for this date</p>
-              </div>
-            ) : (
-              <table className="w-full">
-                <thead>
-                  <tr className="bg-slate-50 border-b border-slate-200">
-                    <th className="px-5 py-2.5 text-left text-xs font-semibold text-slate-600 uppercase tracking-wide">Vehicle</th>
-                    <th className="px-5 py-2.5 text-left text-xs font-semibold text-slate-600 uppercase tracking-wide">Driver</th>
-                    <th className="px-5 py-2.5 text-center text-xs font-semibold text-slate-600 uppercase tracking-wide">Violations</th>
-                    <th className="px-5 py-2.5 text-center text-xs font-semibold text-slate-600 uppercase tracking-wide">Risk Level</th>
-                    <th className="px-5 py-2.5 text-right text-xs font-semibold text-slate-600 uppercase tracking-wide">Action</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {vehicleReports.map((report, idx) => (
-                    <tr 
-                      key={idx} 
-                      onClick={() => downloadNCR(report.ncr)}
-                      className="hover:bg-blue-50 cursor-pointer transition-colors group"
-                    >
-                      <td className="px-5 py-3">
+      {/* Vehicle Reports Grid */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle>NCR Reports</CardTitle>
+              <CardDescription>
+                {dateFrom === dateTo 
+                  ? new Date(dateFrom).toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })
+                  : `${new Date(dateFrom).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - ${new Date(dateTo).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`
+                }
+                {registrationFilter && ` • Filtered by: ${registrationFilter}`}
+              </CardDescription>
+            </div>
+            {filteredReports.length > 0 && (
+              <Badge variant="outline" className="text-base px-4 py-2">
+                <Truck className="w-4 h-4 mr-2" />
+                {filteredReports.length} Vehicle{filteredReports.length !== 1 ? 's' : ''}
+              </Badge>
+            )}
+          </div>
+        </CardHeader>
+        <CardContent>
+
+          {loading ? (
+            <div className="text-center py-16">
+              <div className="inline-block w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mb-4"></div>
+              <p className="text-slate-600">Searching reports...</p>
+            </div>
+          ) : filteredReports.length === 0 ? (
+            <div className="text-center py-16">
+              <FileText className="w-16 h-16 text-slate-300 mx-auto mb-4" />
+              <h4 className="text-lg font-semibold text-slate-900 mb-2">
+                {registrationFilter ? 'No Matching Reports' : 'No Reports Found'}
+              </h4>
+              <p className="text-slate-500">
+                {registrationFilter 
+                  ? `No reports found for "${registrationFilter}" in the selected date range`
+                  : 'No NCR reports available for this date range'
+                }
+              </p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {filteredReports.map((report, idx) => (
+                  <Card 
+                    key={idx} 
+                    className="cursor-pointer hover:shadow-lg transition-all border-2 hover:border-blue-400"
+                    onClick={() => downloadNCR(report.ncr)}
+                  >
+                    <CardContent className="p-6">
+                      <div className="flex items-start justify-between mb-4">
                         <div className="flex items-center gap-3">
-                          <div className="w-9 h-9 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-lg flex items-center justify-center shadow-sm">
-                            <Truck className="w-4 h-4 text-white" />
+                          <div className="w-12 h-12 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-xl flex items-center justify-center">
+                            <Truck className="w-6 h-6 text-white" />
                           </div>
                           <div>
-                            <div className="text-sm font-semibold text-slate-900">{report.vehicle}</div>
-                            <div className="text-xs text-slate-500">Fleet Vehicle</div>
+                            <h3 className="font-bold text-lg text-slate-900">{report.vehicle}</h3>
+                            <p className="text-sm text-slate-500">Fleet Vehicle</p>
                           </div>
                         </div>
-                      </td>
-                      <td className="px-5 py-3">
-                        <div className="text-sm font-medium text-slate-900">{report.driver}</div>
-                        <div className="text-xs text-slate-500">Assigned Driver</div>
-                      </td>
-                      <td className="px-5 py-3 text-center">
-                        <div className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-red-100 rounded-full">
-                          <AlertTriangle className="w-3.5 h-3.5 text-red-700" />
-                          <span className="text-sm font-bold text-red-900">{report.violations}</span>
-                        </div>
-                      </td>
-                      <td className="px-5 py-3 text-center">
-                        <span className={`inline-block px-3 py-1 rounded-full text-xs font-semibold ${
+                        <Badge className={cn(
+                          'text-xs font-bold',
                           report.riskRating === 'High' ? 'bg-red-100 text-red-800' :
                           report.riskRating === 'Medium' ? 'bg-yellow-100 text-yellow-800' :
                           'bg-green-100 text-green-800'
-                        }`}>
+                        )}>
                           {report.riskRating || 'Low'}
-                        </span>
-                      </td>
-                      <td className="px-5 py-3 text-right">
-                        <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-sm font-medium text-slate-700 group-hover:border-blue-300 group-hover:bg-blue-50 group-hover:text-blue-700 transition-all">
-                          <Download className="w-4 h-4" />
-                          <span>Download</span>
+                        </Badge>
+                      </div>
+                      
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between py-2 border-t border-slate-100">
+                          <span className="text-sm text-slate-600">Driver</span>
+                          <span className="text-sm font-semibold text-slate-900">{report.driver}</span>
                         </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                        
+                        <div className="flex items-center justify-between py-2 border-t border-slate-100">
+                          <span className="text-sm text-slate-600">Violations</span>
+                          <div className="flex items-center gap-2">
+                            <AlertTriangle className="w-4 h-4 text-red-600" />
+                            <span className="text-sm font-bold text-red-900">{report.violations}</span>
+                          </div>
+                        </div>
+                      </div>
+                      
+                      <Button className="w-full mt-4 bg-blue-600 hover:bg-blue-700">
+                        <Download className="w-4 h-4 mr-2" />
+                        Download NCR
+                      </Button>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
             )}
-          </div>
-        </div>
-      )}
+        </CardContent>
+      </Card>
     </div>
   );
 }
@@ -567,7 +677,7 @@ function DriverCard({ trip, userRole, handleViewMap, setCurrentTripForNote, setN
         </div>
         <div className="flex items-center justify-between">
           <span className="text-xs font-medium text-slate-900 truncate">
-            {vehicleLocation?.plate || vehicleInfo?.registration_number || assignment?.vehicle?.name || 'Not assigned'}
+            {vehicleLocation?.fleet_number || vehicleInfo?.fleet_number || assignment?.vehicle?.fleet_number || vehicleLocation?.plate || vehicleInfo?.registration_number || assignment?.vehicle?.name || 'Not assigned'}
           </span>
           <span className="text-xs text-slate-500">{vehicleLocation ? `${vehicleLocation.speed} km/h` : ''}</span>
         </div>
@@ -946,29 +1056,65 @@ function DriverCard({ trip, userRole, handleViewMap, setCurrentTripForNote, setN
 }
 
 // Enhanced routing components with proper waypoints
-function RoutingSection({ userRole, handleViewMap, setCurrentTripForNote, setNoteText, setNoteOpen, setAvailableDrivers, setCurrentTripForChange, setChangeDriverOpen, refreshTrigger, setRefreshTrigger, setPickupTimeOpen, setDropoffTimeOpen, setCurrentTripForTime, setTimeType, setSelectedTime, currentUnauthorizedTrip, setCurrentUnauthorizedTrip, setUnauthorizedStopModalOpen, loadingPhotos, setLoadingPhotos, setCurrentTripPhotos, setPhotosModalOpen, setCurrentTripAlerts, setAlertsModalOpen, setCurrentTripForClose, setCloseReason, setCloseTripOpen, setCurrentTripForEdit, setEditTripOpen, setCurrentTripForApproval, setApprovalModalOpen, isVisible = true }: any) {
+function RoutingSection({ userRole, handleViewMap, setCurrentTripForNote, setNoteText, setNoteOpen, setAvailableDrivers, setCurrentTripForChange, setChangeDriverOpen, refreshTrigger, setRefreshTrigger, setPickupTimeOpen, setDropoffTimeOpen, setCurrentTripForTime, setTimeType, setSelectedTime, currentUnauthorizedTrip, setCurrentUnauthorizedTrip, setUnauthorizedStopModalOpen, loadingPhotos, setLoadingPhotos, setCurrentTripPhotos, setPhotosModalOpen, setCurrentTripAlerts, setAlertsModalOpen, setCurrentTripForClose, setCloseReason, setCloseTripOpen, setCurrentTripForEdit, setEditTripOpen, setCurrentTripForApproval, setApprovalModalOpen, setSelectedAlert, setAlertDetailModalOpen, isVisible = true }: any) {
   const [trips, setTrips] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
+  const { alerts } = useVideoAlerts()
 
   useEffect(() => {
     async function fetchTrips() {
       try {
         const supabase = createClient()
-        const { data, error } = await supabase.from('trips').select('*')
-        if (error) throw error
-        setTrips(data || [])
         
-        // Check for most recent unauthorized stop
-        const recentUnauthorized = (data || [])
-          .filter(trip => trip.unauthorized_stops_count > 0)
-          .sort((a, b) => new Date(b.updated_at || 0).getTime() - new Date(a.updated_at || 0).getTime())[0]
+        // Get unique vehicle IDs from alerts
+        const uniqueVehicles = [...new Set(alerts.map(a => a.vehicleId))]
         
-        if (recentUnauthorized && !currentUnauthorizedTrip) {
-          setCurrentUnauthorizedTrip(recentUnauthorized)
-          // Removed automatic modal opening
-        }
+        // Lookup vehicle details for each vehicleId (camera_sim_id)
+        const vehicleLookups = await Promise.all(
+          uniqueVehicles.map(async (vehicleId) => {
+            const { data } = await supabase
+              .from('vehiclesc')
+              .select('registration_number, fleet_number, driver_name')
+              .eq('camera_sim_id', vehicleId)
+              .maybeSingle()
+            return { vehicleId, vehicle: data }
+          })
+        )
+        
+        // Transform to trip format
+        const transformedTrips = uniqueVehicles.map(vehicleId => {
+          const vehicleAlerts = alerts.filter(a => a.vehicleId === vehicleId)
+          const latestAlert = vehicleAlerts[0]
+          const vehicleData = vehicleLookups.find(v => v.vehicleId === vehicleId)?.vehicle
+          
+          return {
+            id: vehicleId,
+            trip_id: vehicleId,
+            status: vehicleAlerts.some(a => a.priority === 'high') ? 'pending' : 'on-trip',
+            origin: 'Alert Location',
+            destination: 'Monitoring',
+            created_at: latestAlert?.timestamp,
+            updated_at: latestAlert?.timestamp,
+            vehicleassignments: [{
+              vehicle: {
+                id: vehicleId,
+                name: vehicleData?.registration_number || vehicleData?.fleet_number || vehicleId
+              },
+              drivers: [{
+                id: vehicleId,
+                name: 'N/A',
+                first_name: 'N/A',
+                surname: 'N/A',
+                phone_number: 'N/A'
+              }]
+            }],
+            alert_data: vehicleAlerts
+          }
+        })
+        
+        setTrips(transformedTrips)
       } catch (err) {
-        console.error('Error fetching trips:', err)
+        console.error('Error creating trips from alerts:', err)
         setTrips([])
       } finally {
         setLoading(false)
@@ -976,33 +1122,16 @@ function RoutingSection({ userRole, handleViewMap, setCurrentTripForNote, setNot
     }
     
     fetchTrips()
-    
-    // Real-time subscription
-    const supabase = createClient()
-    const channel = supabase
-      .channel('trips-changes')
-      .on('postgres_changes', 
-        { event: '*', schema: 'public', table: 'trips' },
-        () => fetchTrips()
-      )
-      .subscribe()
-    
-    return () => {
-      supabase.removeChannel(channel)
-    }
-  }, [refreshTrigger])
+  }, [refreshTrigger, alerts])
 
-  // Sort trips to put unauthorized stops at the top
+  // Sort trips to put faulty inspections at the top
   const tripsList = trips
     .filter(trip => trip.status?.toLowerCase() !== 'delivered' && trip.status?.toLowerCase() !== 'completed')
     .sort((a, b) => {
-      // First sort by unauthorized stops (descending)
-      const aUnauthorized = a.unauthorized_stops_count || 0
-      const bUnauthorized = b.unauthorized_stops_count || 0
-      if (aUnauthorized !== bUnauthorized) {
-        return bUnauthorized - aUnauthorized
-      }
-      // Then by creation date (newest first)
+      // First sort by status (pending/faulty first)
+      if (a.status === 'pending' && b.status !== 'pending') return -1
+      if (a.status !== 'pending' && b.status === 'pending') return 1
+      // Then by date (newest first)
       return new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime()
     })
 
@@ -1130,200 +1259,208 @@ function RoutingSection({ userRole, handleViewMap, setCurrentTripForNote, setNot
               setApprovalModalOpen={setApprovalModalOpen}
             />
             {/* Trip Card - 70% */}
-            <div className={cn(
-              "w-[70%] rounded-xl p-3 bg-white shadow-sm border border-slate-200 transition-transform duration-200 hover:scale-[1.01] text-black",
-              trip.unauthorized_stops_count > 0 && trip.status?.toLowerCase() !== 'delivered'
-              ? "ring-2 ring-red-400"
-              : "ring-0"
-            )} style={{ backgroundImage: "linear-gradient(180deg, rgba(255,255,255,1), rgba(249,250,251,1))" }}>
-              {/* Top accent */}
-              <div className="h-1 w-full rounded-full bg-gradient-to-r from-blue-500 via-blue-400 to-blue-400 mb-3 opacity-100" />
-
-              {/* Elevation Alert Banner */}
-              {trip.elevate && (
-                <div className="flex items-center justify-between p-2 mb-3 text-xs bg-gradient-to-r from-orange-50 to-amber-50 border border-orange-200 rounded-lg">
-                  <div className="flex items-center gap-2">
-                    <AlertTriangle className="w-3 h-3 text-orange-600 flex-shrink-0" />
-                    <span className="font-semibold text-orange-700 uppercase tracking-wide">Pending Approval</span>
-                    <span className="text-orange-600">•</span>
-                    <span className="text-orange-600">Requires management approval</span>
-                  </div>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="h-6 px-2 text-xs border-orange-300 text-orange-700 hover:bg-orange-100"
-                    onClick={() => {
-                      setCurrentTripForApproval(trip);
-                      setApprovalModalOpen(true);
-                    }}
-                  >
-                    Review
-                  </Button>
+            <div className="w-[70%] bg-white border border-gray-200 rounded-lg shadow-sm">
+              {/* Compact Header */}
+              <div className="bg-gray-50 px-3 py-2 border-b border-gray-200 flex items-center justify-between rounded-t-lg">
+                <div className="flex items-center gap-2">
+                  <div className="w-1 h-5 bg-blue-500 rounded-full"></div>
+                  <span className="text-gray-900 font-semibold text-sm">#{trip.trip_id || trip.id}</span>
+                  <span className="text-gray-400 text-xs">|</span>
+                  <span className="text-gray-700 text-sm truncate max-w-xs">{title}</span>
                 </div>
-              )}
+                <div className={cn(
+                  "px-2 py-1 text-xs font-medium uppercase rounded-full",
+                  trip.status?.toLowerCase() === 'delivered' ? 'bg-emerald-100 text-emerald-700' :
+                  'bg-blue-100 text-blue-700'
+                )}>
+                  {trip.status || 'UNKNOWN'}
+                </div>
+              </div>
 
               {/* Alert Banner */}
               {(() => {
-                return ((trip.unauthorized_stops_count > 0 && trip.status?.toLowerCase() !== 'delivered') || 
-                        (trip.alert_message && ((Array.isArray(trip.alert_message) && trip.alert_message.length > 0) || 
-                         (typeof trip.alert_message === 'string' && trip.alert_message.trim() !== ''))));
-              })() && (
-              <div className="rounded-md p-2 mb-2 text-xs bg-red-50 border border-red-200">
-                <div className="flex items-center gap-2">
-                  <AlertTriangle className="w-3 h-3 text-red-600 flex-shrink-0" />
-                  <div className="flex-1 min-w-0">
-                    {(() => {
-                      if (trip.alert_message) {
-                        let latestAlert = null;
-                        if (Array.isArray(trip.alert_message) && trip.alert_message.length > 0) {
-                          latestAlert = trip.alert_message[trip.alert_message.length - 1];
-                        } else if (typeof trip.alert_message === 'string' && trip.alert_message.trim() !== '') {
-                          latestAlert = trip.alert_message;
-                        }
-                        
-                        if (latestAlert) {
-                          const message = typeof latestAlert === 'object' ? latestAlert.message : latestAlert;
-                          const shortMessage = message.length > 60 ? message.substring(0, 60) + '...' : message;
-                          return (
-                            <div className="text-red-700 font-medium truncate">
-                              {shortMessage}
-                            </div>
-                          );
-                        }
-                      }
-                      
-                      return (
-                        <div className="text-red-700 font-medium">
-                          Unauthorized Stop — {trip.unauthorized_stops_count} detected
-                        </div>
-                      );
-                    })()
-                    }
-                  </div>
-                  {trip.alert_message && (
+                const tripAlerts = alerts.slice(0, 5);
+                
+                if (tripAlerts.length === 0) return null;
+                
+                return (
+                  <div className="bg-red-50 border-b border-red-200 px-3 py-2 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <AlertOctagon className="w-4 h-4 text-red-600" />
+                      <span className="text-sm font-semibold text-red-700">{tripAlerts.length} ALERT{tripAlerts.length !== 1 ? 'S' : ''}</span>
+                    </div>
                     <Button
                       size="sm"
                       variant="outline"
-                      className="h-5 px-2 text-xs border-red-300 text-red-700 hover:bg-red-100"
+                      className="h-7 px-3 text-xs font-medium border-red-300 text-red-700 hover:bg-red-100"
                       onClick={() => {
-                        let alerts = [];
-                        if (Array.isArray(trip.alert_message)) {
-                          alerts = trip.alert_message;
-                        } else if (typeof trip.alert_message === 'string' && trip.alert_message.trim() !== '') {
-                          alerts = [trip.alert_message];
-                        }
-                        if (alerts.length > 0) {
-                          setCurrentTripAlerts({ tripId: trip.trip_id || trip.id, alerts });
-                          setAlertsModalOpen(true);
-                        }
+                        setCurrentTripAlerts({ tripId: trip.trip_id || trip.id, alerts: tripAlerts });
+                        setAlertsModalOpen(true);
                       }}
                     >
-                      View
+                      VIEW FEED
                     </Button>
-                  )}
-                </div>
-              </div>
-              )}
+                  </div>
+                );
+              })()}
 
-              <div className="p-2">
-              {/* Header Section */}
-              <div className="flex items-start justify-between mb-2">
-              <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2 mb-1">
-              <div className="w-7 h-7 bg-indigo-100 rounded-lg flex items-center justify-center border border-indigo-200">
-              <Truck className="w-3 h-3 text-indigo-700" />
-              </div>
-              <div className="min-w-0">
-              <h3 className="font-semibold text-black text-xs truncate">{title}</h3>
-              <p className="text-xs text-gray-700">Trip #{trip.trip_id || trip.id}</p>
-              </div>
-              </div>
-              </div>
-              <div className="flex flex-col items-end">
-              <span className={cn(
-              "px-2 py-0.5 rounded-full text-xs font-semibold uppercase tracking-wide",
-              trip.status?.toLowerCase() === 'delivered' ? 'bg-emerald-100 text-emerald-800' :
-              trip.status?.toLowerCase() === 'on-trip' ? 'bg-sky-100 text-sky-800' :
-              ['pending', 'accepted'].includes(trip.status?.toLowerCase()) ? 'bg-amber-100 text-amber-800' :
-              ['rejected', 'cancelled', 'stopped'].includes(trip.status?.toLowerCase()) ? 'bg-rose-100 text-rose-800' :
-              ['completed', 'depo', 'handover'].includes(trip.status?.toLowerCase()) ? 'bg-lime-100 text-lime-800' :
-              'bg-slate-100 text-slate-800'
-              )}>
-              {trip.status || 'Unknown'}
-              </span>
-              </div>
-              </div>
-
-              {/* Route Information */}
-              <div className="grid grid-cols-2 gap-1 mb-2">
-              <div className="bg-white rounded-lg p-1.5 border border-slate-100">
-              <div className="flex items-center gap-1 mb-0.5">
-              <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full"></div>
-              <span className="text-xs font-medium text-gray-700 uppercase">Pickup</span>
-              </div>
-              <p className="text-xs font-medium text-black truncate">{trip.origin || 'Not specified'}</p>
-              </div>
-              <div className="bg-white rounded-lg p-1.5 border border-slate-100">
-              <div className="flex items-center gap-1 mb-0.5">
-              <div className="w-1.5 h-1.5 bg-red-500 rounded-full"></div>
-              <span className="text-xs font-medium text-gray-700 uppercase">Drop-off</span>
-              </div>
-              <p className="text-xs font-medium text-black truncate">{trip.destination || 'Not specified'}</p>
-              </div>
-              </div>
-
-              {/* Enhanced Timeline */}
-              <div className="mb-3">
-              <div className="flex items-center justify-between mb-2">
-              <h4 className="text-xs font-semibold text-black">Trip Progress</h4>
-              <span className="text-xs text-gray-700">{Math.round(progress)}% Complete</span>
-              </div>
-              <div className="relative">
-              <div className="flex justify-between items-center">
-              {waypoints.map((waypoint, index) => (
-              <div key={index} className="flex flex-col items-center relative z-10 group">
-              <div className={cn(
-              "w-7 h-7 rounded-full border-2 flex items-center justify-center text-xs font-bold transition-all duration-300",
-              waypoint.isStop ? "bg-orange-500 border-orange-600 text-white" :
-              waypoint.current ? "bg-blue-500 border-blue-700 text-white" :
-              waypoint.completed ? "bg-emerald-600 border-emerald-700 text-white" :
-              "bg-slate-100 border-slate-200 text-slate-600"
-              )}>
-              {waypoint.isStop ? (
-                <MapPin className="w-3 h-3" />
-              ) : waypoint.completed ? (
-                <CheckCircle className="w-3 h-3" />
-              ) : waypoint.current ? (
-                <div className="w-2 h-2 bg-white rounded-full animate-pulse" />
-              ) : (
-                index + 1
-              )}
-              </div>
-              <span className={cn(
-              "text-xs mt-1 text-center max-w-12 leading-tight",
-              waypoint.isStop ? "text-orange-600 font-medium" :
-              waypoint.current ? "text-sky-700 font-semibold" :
-              waypoint.completed ? "text-emerald-700 font-medium" :
-              "text-gray-600"
-              )}>
-              {waypoint.label.split(' ')[0]}
-              </span>
-              {waypoint.isStop && (
-              <div className="absolute bottom-full mb-1 px-2 py-1 bg-white border rounded text-xs text-gray-700 opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-20">
-                {typeof waypoint.stopId === 'object' ? waypoint.stopId.name : waypoint.stopId}
-              </div>
-              )}
-              </div>
-              ))}
-              </div>
-              <div className="absolute top-3 left-3 right-3 h-1 bg-slate-100 -z-0 rounded">
-              <div 
-              className="h-full rounded bg-gradient-to-r from-blue-500 via-sky-500 to-blue-400 transition-all duration-500 ease-out"
-              style={{ width: `${progress}%` }}
-              />
-              </div>
-              </div>
-              </div>
+              <div className="p-3">
+                {/* Compact Timeline */}
+                {(() => {
+                  const tripAlerts = alerts.slice(0, 5);
+                  
+                  if (tripAlerts.length === 0) return null;
+                  
+                  return (
+                    <div className="mb-3">
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-2">
+                          <AlertOctagon className="w-4 h-4 text-red-600" />
+                          <span className="text-sm font-semibold text-gray-900">INCIDENT LOG</span>
+                          <span className="px-2 py-0.5 bg-red-100 text-red-700 text-xs font-bold rounded-full">
+                            {tripAlerts.length}
+                          </span>
+                        </div>
+                        <span className="text-sm font-medium text-gray-600">{Math.round(progress)}%</span>
+                      </div>
+                      
+                      <div className="relative h-16 bg-white border border-gray-200 rounded mb-2">
+                        <div className="absolute top-1/2 left-2 right-2 h-1 bg-gray-200 rounded-full transform -translate-y-1/2">
+                          <div className="h-full bg-blue-500 rounded-full transition-all" style={{ width: `${progress}%` }} />
+                        </div>
+                        
+                        {tripAlerts.map((alert, index) => {
+                          const spacing = 100 / (tripAlerts.length + 1);
+                          const position = spacing * (index + 1);
+                          const isResolved = alert.resolved || false;
+                          const baseColor = isResolved ? 'bg-green-500 border-green-600' : {
+                            critical: 'bg-red-500 border-red-600',
+                            high: 'bg-orange-500 border-orange-600',
+                            medium: 'bg-yellow-500 border-yellow-600',
+                            low: 'bg-blue-500 border-blue-600'
+                          }[alert.severity] || 'bg-red-500 border-red-600';
+                          
+                          return (
+                            <React.Fragment key={alert.id}>
+                              <div
+                                className="absolute group cursor-pointer"
+                                style={{ left: `calc(${position}%)`, top: '50%', transform: 'translate(-50%, -50%)' }}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  // Fetch vehicle info from trip
+                                  const vehicleData = trip.vehicleassignments?.[0]?.vehicle;
+                                  const enrichedAlert = {
+                                    ...alert,
+                                    vehicleId: trip.id,
+                                    vehicle_registration: vehicleData?.name || trip.id,
+                                    fleet_number: vehicleData?.fleet_number
+                                  };
+                                  setSelectedAlert(enrichedAlert);
+                                  setAlertDetailModalOpen(true);
+                                }}
+                              >
+                                <div className={cn(
+                                  "w-7 h-7 rounded-full flex items-center justify-center border-2 bg-white shadow-md hover:scale-125 transition-all",
+                                  baseColor,
+                                  !isResolved && "animate-pulse"
+                                )}>
+                                  {alert.alert_type === 'smoking' ? (
+                                    <Cigarette className="w-3.5 h-3.5 text-white" strokeWidth={2.5} />
+                                  ) : (
+                                    <Zap className="w-3.5 h-3.5 text-white" strokeWidth={2.5} />
+                                  )}
+                                </div>
+                                
+                                <div className="absolute top-full mt-1 left-1/2 transform -translate-x-1/2 text-center">
+                                  <div className="text-[10px] font-bold text-gray-700 whitespace-nowrap rounded-full bg-white/80 px-1.5 py-0.5 shadow-sm">
+                                    {new Date(alert.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                                  </div>
+                                </div>
+                                
+                                <div className="absolute bottom-full mb-2 left-1/2 transform -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10">
+                                <div className="bg-gray-900 text-white p-2.5 rounded-lg shadow-xl text-xs min-w-[180px]">
+                                  <div className="flex items-center gap-2 mb-1.5 pb-1.5 border-b border-gray-700">
+                                    {alert.alert_type === 'smoking' ? (
+                                      <Cigarette className="w-4 h-4 text-red-400" />
+                                    ) : (
+                                      <Zap className="w-4 h-4 text-yellow-400" />
+                                    )}
+                                    <span className="font-bold">{alert.type || alert.alert_type || 'Alert'}</span>
+                                  </div>
+                                  <div className="space-y-1">
+                                    <div className="flex items-center gap-1.5 text-gray-300">
+                                      <Truck className="w-3 h-3" />
+                                      <span>{alert.vehicle_registration}</span>
+                                    </div>
+                                    <div className="flex items-center gap-1.5 text-gray-300">
+                                      <User className="w-3 h-3" />
+                                      <span>{alert.driver_name}</span>
+                                    </div>
+                                    <div className="flex items-center gap-1.5 text-gray-300">
+                                      <Clock className="w-3 h-3" />
+                                      <span>{new Date(alert.timestamp).toLocaleTimeString()}</span>
+                                    </div>
+                                  </div>
+                                  <div className={cn(
+                                    "mt-2 pt-2 border-t border-gray-700 text-xs font-semibold flex items-center gap-1",
+                                    isResolved ? "text-green-400" : "text-red-400"
+                                  )}>
+                                    {isResolved ? (
+                                      <><CheckCircle className="w-3 h-3" /> Resolved</>
+                                    ) : (
+                                      <><AlertTriangle className="w-3 h-3" /> Pending</>  
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                              </div>
+                              {index < tripAlerts.length - 1 && (
+                                <div 
+                                  className="absolute h-12 w-px bg-gradient-to-b from-gray-300 via-gray-400 to-gray-300"
+                                  style={{ 
+                                    left: `${position + spacing / 2}%`, 
+                                    top: '50%', 
+                                    transform: 'translate(-50%, -50%)' 
+                                  }}
+                                />
+                              )}
+                            </React.Fragment>
+                          );
+                        })}
+                      </div>
+                      
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="flex items-center gap-2 text-xs">
+                          <div className="flex items-center gap-1">
+                            <div className="w-3 h-3 rounded-full bg-red-500 animate-pulse"></div>
+                            <span className="text-gray-600">Pending:</span>
+                          </div>
+                          <span className="font-bold text-red-600">{tripAlerts.filter(a => !a.resolved).length}</span>
+                        </div>
+                        <div className="flex items-center gap-2 text-xs">
+                          <div className="flex items-center gap-1">
+                            <div className="w-3 h-3 rounded-full bg-green-500"></div>
+                            <span className="text-gray-600">Resolved:</span>
+                          </div>
+                          <span className="font-bold text-green-600">{tripAlerts.filter(a => a.resolved).length}</span>
+                        </div>
+                      </div>
+                      
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="w-full h-8 text-xs font-medium mt-2"
+                        onClick={() => {
+                          setCurrentTripAlerts({ tripId: trip.trip_id || trip.id, alerts: tripAlerts });
+                          setAlertsModalOpen(true);
+                        }}
+                      >
+                        <FileText className="w-3 h-3 mr-1" />
+                        View All Incidents
+                      </Button>
+                    </div>
+                  );
+                })()}
 
               {/* Cargo Information */}
               {trip.cargo && (
@@ -1878,6 +2015,9 @@ export default function Dashboard() {
   const [currentTripForApproval, setCurrentTripForApproval] = useState<any>(null);
   const [videoModalOpen, setVideoModalOpen] = useState(false);
   const [currentTripForVideo, setCurrentTripForVideo] = useState<any>(null);
+  const [selectedAlert, setSelectedAlert] = useState<any>(null);
+  const [alertDetailModalOpen, setAlertDetailModalOpen] = useState(false);
+  const [showNCRModal, setShowNCRModal] = useState(false);
   useEffect(() => {
     const getCookie = (name: string) => {
       const value = `; ${document.cookie}`;
@@ -2144,6 +2284,12 @@ export default function Dashboard() {
                 Video Alerts
               </TabsTrigger>
               <TabsTrigger
+                value="routing"
+                className="px-6 py-2 text-sm font-medium rounded-md data-[state=active]:bg-white data-[state=active]:shadow-sm"
+              >
+                Trip Routing
+              </TabsTrigger>
+              <TabsTrigger
                 value="reports"
                 className="px-6 py-2 text-sm font-medium rounded-md data-[state=active]:bg-white data-[state=active]:shadow-sm"
               >
@@ -2195,6 +2341,8 @@ export default function Dashboard() {
               setEditTripOpen={setEditTripOpen}
               setCurrentTripForApproval={setCurrentTripForApproval}
               setApprovalModalOpen={setApprovalModalOpen}
+              setSelectedAlert={setSelectedAlert}
+              setAlertDetailModalOpen={setAlertDetailModalOpen}
             />
           </div>
         )}
@@ -3393,7 +3541,7 @@ export default function Dashboard() {
                     <AlertTriangle className="w-4 h-4 text-white" />
                   </div>
                   <div>
-                    <h2 className="text-base font-semibold text-gray-900">Alerts</h2>
+                    <h2 className="text-base font-semibold text-gray-900">Incident Logs</h2>
                     <p className="text-xs text-gray-500">Trip #{currentTripAlerts.tripId}</p>
                   </div>
                 </div>
@@ -3412,68 +3560,79 @@ export default function Dashboard() {
             {/* Alerts List */}
             <div className="overflow-y-auto max-h-[calc(85vh-80px)]">
               {currentTripAlerts.alerts && currentTripAlerts.alerts.length > 0 ? (
-                <div className="divide-y divide-gray-100">
+                <div className="p-4 space-y-3">
                   {currentTripAlerts.alerts.map((alert, index) => {
-                    const isLatest = index === currentTripAlerts.alerts.length - 1;
-                    const alertMessage = typeof alert === 'object' ? alert.message : alert;
-                    
-                    // Parse vehicle and location from message
-                    const vehicleMatch = alertMessage.match(/Vehicle ([A-Z0-9]+)/);
-                    const locationMatch = alertMessage.match(/at ([^:]+): ([^|]+)/);
-                    const geozoneMatch = alertMessage.match(/Geozone: ([^,]+)/);
-                    
-                    const vehicle = vehicleMatch ? vehicleMatch[1] : null;
-                    const location = locationMatch ? locationMatch[2].trim() : null;
-                    const geozone = geozoneMatch ? geozoneMatch[1].trim() : null;
+                    const isResolved = alert.resolved || false;
                     
                     return (
-                      <div key={index} className={cn(
-                        "p-4 transition-colors hover:bg-gray-50",
-                        isLatest && "bg-red-50"
-                      )}>
-                        <div className="flex gap-3">
-                          {/* Avatar */}
-                          <div className={cn(
-                            "w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0",
-                            isLatest ? "bg-red-500" : "bg-gray-400"
-                          )}>
-                            <span className="text-white text-xs font-bold">
-                              {vehicle ? vehicle.slice(-2) : "!"}
+                      <div 
+                        key={alert.id || index} 
+                        className={cn(
+                          "flex items-center gap-3 p-3 rounded-lg border transition-all cursor-pointer hover:shadow-md",
+                          isResolved 
+                            ? "bg-green-50 border-green-200" 
+                            : "bg-white border-gray-200 hover:border-red-300"
+                        )}
+                        onClick={() => {
+                          // Fetch alert media and open detail view
+                          fetch(`/api/alerts/${alert.id}/media`)
+                            .then(res => res.json())
+                            .then(data => {
+                              setSelectedAlert({ ...alert, media: data });
+                              setAlertDetailModalOpen(true);
+                            })
+                            .catch(err => {
+                              console.error('Failed to fetch alert media:', err);
+                              setSelectedAlert(alert);
+                              setAlertDetailModalOpen(true);
+                            });
+                        }}
+                      >
+                        {/* Icon */}
+                        <div className={cn(
+                          "w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0",
+                          isResolved ? "bg-green-500" : "bg-red-500",
+                          !isResolved && "animate-pulse"
+                        )}>
+                          <AlertTriangle className="w-5 h-5 text-white" strokeWidth={2} />
+                        </div>
+                        
+                        {/* Content */}
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className="text-sm font-semibold text-gray-900">
+                              {alert.type || 'Alert'}
+                            </span>
+                            <span className={cn(
+                              "px-2 py-0.5 text-xs font-medium rounded-full",
+                              alert.priority === 'high' ? 'bg-red-100 text-red-700' :
+                              alert.priority === 'medium' ? 'bg-yellow-100 text-yellow-700' :
+                              'bg-blue-100 text-blue-700'
+                            )}>
+                              {alert.priority || 'info'}
                             </span>
                           </div>
-                          
-                          {/* Content */}
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2 mb-1">
-                              {vehicle && (
-                                <span className="text-sm font-semibold text-gray-900">
-                                  {vehicle}
-                                </span>
-                              )}
-                              {isLatest && (
-                                <span className="px-2 py-0.5 bg-red-100 text-red-700 text-xs font-medium rounded-full">
-                                  New
-                                </span>
-                              )}
-                              <span className="text-xs text-gray-500 ml-auto">
-                                {typeof alert === 'object' && alert.timestamp ? 
-                                  new Date(alert.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) :
-                                  'now'
-                                }
-                              </span>
-                            </div>
-                            
-                            <p className="text-sm text-gray-700 mb-2">
-                              {location || 'At toll gate'}
-                            </p>
-                            
-                            {geozone && (
-                              <div className="flex items-center gap-1 text-xs text-gray-500">
-                                <MapPin className="w-3 h-3" />
-                                <span className="truncate">{geozone}</span>
-                              </div>
-                            )}
+                          <div className="flex items-center gap-3 text-xs text-gray-600">
+                            <span className="flex items-center gap-1">
+                              <Clock className="w-3 h-3" />
+                              {new Date(alert.timestamp).toLocaleString()}
+                            </span>
                           </div>
+                        </div>
+                        
+                        {/* Status Badge */}
+                        <div className="flex-shrink-0">
+                          {isResolved ? (
+                            <div className="flex items-center gap-1 px-2 py-1 bg-green-100 text-green-700 rounded-full text-xs font-medium">
+                              <CheckCircle className="w-3 h-3" />
+                              Resolved
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-1 px-2 py-1 bg-red-100 text-red-700 rounded-full text-xs font-medium">
+                              <AlertTriangle className="w-3 h-3" />
+                              Pending
+                            </div>
+                          )}
                         </div>
                       </div>
                     );
@@ -3747,6 +3906,380 @@ export default function Dashboard() {
           }
         }}
       />
+
+      {/* Alert Detail Modal */}
+      {alertDetailModalOpen && selectedAlert && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-gradient-to-br from-slate-50 to-slate-100 rounded-lg shadow-2xl w-full max-w-[95vw] h-[90vh] overflow-hidden flex flex-col">
+            {/* Header */}
+            <div className="bg-white border-b border-slate-200 shadow-sm px-6 py-4 flex-shrink-0">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                  <Button variant="ghost" size="sm" onClick={() => {
+                    setAlertDetailModalOpen(false);
+                    setSelectedAlert(null);
+                  }}>
+                    <ArrowLeft className="w-4 h-4 mr-2" />
+                    Back
+                  </Button>
+                  <div className="h-6 w-px bg-slate-300" />
+                  <div>
+                    <div className="flex items-center gap-2 mb-1">
+                      <h1 className="text-xl font-bold text-slate-900">
+                        {selectedAlert.alert_type === 'smoking' ? 'Smoking Violation' : 'Speeding Violation'}
+                      </h1>
+                      <Badge variant="outline" className={cn(
+                        "flex items-center gap-1",
+                        selectedAlert.severity === 'critical' ? 'bg-red-100 text-red-800 border-red-300' :
+                        selectedAlert.severity === 'high' ? 'bg-orange-100 text-orange-800 border-orange-300' :
+                        selectedAlert.severity === 'medium' ? 'bg-yellow-100 text-yellow-800 border-yellow-300' :
+                        'bg-blue-100 text-blue-800 border-blue-300'
+                      )}>
+                        <AlertTriangle className="w-3 h-3" />
+                        {selectedAlert.severity?.toUpperCase() || 'INFO'}
+                      </Badge>
+                    </div>
+                    <p className="text-sm text-slate-600">
+                      Alert ID: {selectedAlert.id} • {new Date(selectedAlert.timestamp).toLocaleString()}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Action Buttons */}
+                <div className="flex items-center gap-2">
+                  {!selectedAlert.resolved && (
+                    <>
+                      <Button 
+                        variant="outline" 
+                        className="border-red-300 text-red-700 hover:bg-red-50"
+                        onClick={() => {
+                          if (confirm('Mark this alert as a false alarm?')) {
+                            setAlertDetailModalOpen(false);
+                            setSelectedAlert(null);
+                          }
+                        }}
+                      >
+                        <XCircle className="w-4 h-4 mr-2" />
+                        False Alert
+                      </Button>
+                      <Button 
+                        className="bg-green-600 hover:bg-green-700"
+                        onClick={() => setShowNCRModal(true)}
+                      >
+                        <CheckCircle className="w-4 h-4 mr-2" />
+                        Fill NCR Form
+                      </Button>
+                    </>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto px-6 py-6">
+              <div className="grid grid-cols-12 gap-6">
+                {/* Main Content */}
+                <div className="col-span-8">
+                  <Tabs defaultValue="screenshots" className="w-full">
+                    <TabsList className="w-full justify-start">
+                      <TabsTrigger value="screenshots">Screenshots</TabsTrigger>
+                      <TabsTrigger value="videos">Event Video</TabsTrigger>
+                      <TabsTrigger value="timeline">Timeline</TabsTrigger>
+                    </TabsList>
+
+                    {/* Screenshots Tab */}
+                    <TabsContent value="screenshots" className="mt-4">
+                      <Card className="p-4">
+                        <div className="flex items-center justify-between mb-4">
+                          <h3 className="text-lg font-semibold text-slate-900">
+                            Camera Screenshots
+                          </h3>
+                        </div>
+                        <div className="grid grid-cols-2 gap-4">
+                          {selectedAlert.media?.screenshots?.length > 0 ? (
+                            selectedAlert.media.screenshots.map((screenshot, idx) => (
+                              <Card key={idx} className="overflow-hidden">
+                                <div className="relative aspect-video bg-slate-900">
+                                  <img
+                                    src={screenshot.url}
+                                    alt={`Screenshot ${idx + 1}`}
+                                    className="w-full h-full object-cover"
+                                  />
+                                  <div className="absolute top-2 left-2 bg-black/80 text-white px-3 py-1 rounded text-xs font-medium">
+                                    Camera {idx + 1}
+                                  </div>
+                                  <div className="absolute bottom-2 right-2 bg-black/80 text-white px-3 py-1 rounded text-xs">
+                                    {new Date(screenshot.timestamp || selectedAlert.timestamp).toLocaleTimeString()}
+                                  </div>
+                                </div>
+                                <div className="p-2 border-t flex justify-between items-center">
+                                  <span className="text-xs text-slate-600">+{screenshot.offset || 0}s</span>
+                                  <Button variant="ghost" size="sm" onClick={() => window.open(screenshot.url, '_blank')}>
+                                    <Download className="w-3 h-3" />
+                                  </Button>
+                                </div>
+                              </Card>
+                            ))
+                          ) : selectedAlert.video_url ? (
+                            <Card className="overflow-hidden">
+                              <div className="relative aspect-video bg-slate-900">
+                                <img
+                                  src={selectedAlert.video_url}
+                                  alt="Screenshot"
+                                  className="w-full h-full object-cover"
+                                />
+                                <div className="absolute top-2 left-2 bg-black/80 text-white px-3 py-1 rounded text-xs font-medium">
+                                  Camera 1
+                                </div>
+                                <div className="absolute bottom-2 right-2 bg-black/80 text-white px-3 py-1 rounded text-xs">
+                                  {new Date(selectedAlert.timestamp).toLocaleTimeString()}
+                                </div>
+                              </div>
+                              <div className="p-2 border-t flex justify-between items-center">
+                                <span className="text-xs text-slate-600">+0s</span>
+                                <Button variant="ghost" size="sm">
+                                  <Download className="w-3 h-3" />
+                                </Button>
+                              </div>
+                            </Card>
+                          ) : (
+                            <div className="col-span-2 text-center py-12 text-slate-500">
+                              N/A
+                            </div>
+                          )}
+                        </div>
+                      </Card>
+                    </TabsContent>
+
+                    {/* Video Clips Tab */}
+                    <TabsContent value="videos" className="mt-4">
+                      <Card className="p-4">
+                        <h3 className="text-lg font-semibold text-slate-900 mb-4">
+                          Event Video (SD Card)
+                        </h3>
+                        <div className="space-y-4">
+                          {selectedAlert.media?.videos?.length > 0 ? (
+                            selectedAlert.media.videos.map((video, idx) => (
+                              <Card key={idx} className="p-4">
+                                <video controls className="w-full rounded mb-3">
+                                  <source src={video.url} type="video/mp4" />
+                                  Your browser does not support video playback.
+                                </video>
+                                <div className="flex items-center justify-between">
+                                  <div className="flex items-center gap-3">
+                                    <Video className="w-5 h-5 text-slate-600" />
+                                    <div>
+                                      <p className="font-medium text-slate-900">{video.camera || `Camera ${idx + 1}`}</p>
+                                      <p className="text-sm text-slate-600">{video.description || 'Event video from vehicle camera'}</p>
+                                    </div>
+                                  </div>
+                                  <Button variant="outline" size="sm" onClick={() => window.open(video.url, '_blank')}>
+                                    <Download className="w-4 h-4 mr-2" />
+                                    Download
+                                  </Button>
+                                </div>
+                              </Card>
+                            ))
+                          ) : selectedAlert.video_url ? (
+                            <Card className="p-4">
+                              <video controls className="w-full rounded mb-3">
+                                <source src={selectedAlert.video_url} type="video/mp4" />
+                                Your browser does not support video playback.
+                              </video>
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-3">
+                                  <Video className="w-5 h-5 text-slate-600" />
+                                  <div>
+                                    <p className="font-medium text-slate-900">Camera SD Card Recording</p>
+                                    <p className="text-sm text-slate-600">Event video from vehicle camera</p>
+                                  </div>
+                                </div>
+                                <Button variant="outline" size="sm">
+                                  <Download className="w-4 h-4 mr-2" />
+                                  Download
+                                </Button>
+                              </div>
+                            </Card>
+                          ) : (
+                            <div className="text-center py-12 text-slate-500">
+                              N/A
+                            </div>
+                          )}
+                        </div>
+                      </Card>
+                    </TabsContent>
+
+                    {/* Timeline Tab */}
+                    <TabsContent value="timeline" className="mt-4">
+                      <Card className="p-4">
+                        <h3 className="text-lg font-semibold text-slate-900 mb-4">Alert History</h3>
+                        <div className="space-y-4">
+                          <div className="text-center py-12 text-slate-500">
+                            No history available
+                          </div>
+                        </div>
+                      </Card>
+                    </TabsContent>
+                  </Tabs>
+                </div>
+
+                {/* Sidebar */}
+                <div className="col-span-4 space-y-4">
+                  {/* Alert Details */}
+                  <Card className="p-4">
+                    <h3 className="font-semibold text-slate-900 mb-4">Alert Details</h3>
+                    <div className="space-y-3 text-sm">
+                      <div className="flex items-start gap-2">
+                        <Car className="w-4 h-4 text-slate-500 mt-0.5" />
+                        <div>
+                          <p className="text-slate-600">Vehicle</p>
+                          <p className="font-medium text-slate-900">
+                            {selectedAlert.vehicle_registration || selectedAlert.fleet_number || selectedAlert.vehicleId || "N/A"}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="border-t border-slate-200" />
+                      <div className="flex items-start gap-2">
+                        <User className="w-4 h-4 text-slate-500 mt-0.5" />
+                        <div>
+                          <p className="text-slate-600">Driver</p>
+                          <p className="font-medium text-slate-900">
+                            {selectedAlert.driver_name || "N/A"}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="border-t border-slate-200" />
+                      <div className="flex items-start gap-2">
+                        <MapPin className="w-4 h-4 text-slate-500 mt-0.5" />
+                        <div>
+                          <p className="text-slate-600">Location</p>
+                          <p className="font-medium text-slate-900">
+                            {selectedAlert.location?.latitude && selectedAlert.location?.longitude
+                              ? `${selectedAlert.location.latitude.toFixed(6)}, ${selectedAlert.location.longitude.toFixed(6)}`
+                              : selectedAlert.metadata?.latitude && selectedAlert.metadata?.longitude
+                              ? `${selectedAlert.metadata.latitude.toFixed(6)}, ${selectedAlert.metadata.longitude.toFixed(6)}`
+                              : "No location data"}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="border-t border-slate-200" />
+                      <div className="flex items-start gap-2">
+                        <AlertTriangle className="w-4 h-4 text-slate-500 mt-0.5" />
+                        <div>
+                          <p className="text-slate-600">Alert Type</p>
+                          <p className="font-medium text-slate-900">
+                            {selectedAlert.type || selectedAlert.alert_type?.replace(/_/g, " ").toUpperCase() || "N/A"}
+                          </p>
+                        </div>
+                      </div>
+                      {selectedAlert.metadata && (
+                        <>
+                          <div className="border-t border-slate-200" />
+                          <div className="space-y-2">
+                            <p className="text-slate-600 font-medium text-xs">Additional Information</p>
+                            {selectedAlert.metadata.speed !== undefined && (
+                              <div className="flex justify-between text-xs">
+                                <span className="text-slate-600">Speed:</span>
+                                <span className="font-medium">{selectedAlert.metadata.speed} km/h</span>
+                              </div>
+                            )}
+                            {selectedAlert.metadata.direction !== undefined && (
+                              <div className="flex justify-between text-xs">
+                                <span className="text-slate-600">Direction:</span>
+                                <span className="font-medium">{selectedAlert.metadata.direction}°</span>
+                              </div>
+                            )}
+                            {selectedAlert.metadata.altitude !== undefined && (
+                              <div className="flex justify-between text-xs">
+                                <span className="text-slate-600">Altitude:</span>
+                                <span className="font-medium">{selectedAlert.metadata.altitude}m</span>
+                              </div>
+                            )}
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  </Card>
+
+                  {/* Notes Section */}
+                  <Card className="p-4">
+                    <h3 className="font-semibold text-slate-900 mb-4">Notes</h3>
+                    
+                    {/* Mini Map */}
+                    {(selectedAlert.location?.latitude || selectedAlert.metadata?.latitude) && (
+                      <div 
+                        className="w-full h-48 rounded border bg-slate-100 mb-4"
+                        ref={(el) => {
+                          if (el && !el.dataset.mapInitialized) {
+                            el.dataset.mapInitialized = 'true';
+                            const lat = selectedAlert.location?.latitude || selectedAlert.metadata?.latitude;
+                            const lng = selectedAlert.location?.longitude || selectedAlert.metadata?.longitude;
+                            
+                            el.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#64748b;font-size:14px;">Loading map...</div>';
+                            
+                            const script = document.createElement('script');
+                            script.src = 'https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.js';
+                            script.async = true;
+                            script.onload = () => {
+                              const link = document.createElement('link');
+                              link.href = 'https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.css';
+                              link.rel = 'stylesheet';
+                              document.head.appendChild(link);
+                              
+                              el.innerHTML = '';
+                              
+                              if (window.mapboxgl) {
+                                window.mapboxgl.accessToken = 'pk.eyJ1Ijoic29sZm8tYWRtaW4iLCJhIjoiY21nbmt0amY5MHZieTJsc2FjNTdwcDR1MCJ9.ksls0mQkEYmskyI_851Zxw';
+                                const map = new window.mapboxgl.Map({
+                                  container: el,
+                                  style: 'mapbox://styles/mapbox/streets-v12',
+                                  center: [lng, lat],
+                                  zoom: 13,
+                                  attributionControl: false
+                                });
+                                
+                                new window.mapboxgl.Marker({ color: '#ef4444' })
+                                  .setLngLat([lng, lat])
+                                  .addTo(map);
+                              }
+                            };
+                            
+                            if (!document.querySelector('script[src*="mapbox-gl.js"]')) {
+                              document.head.appendChild(script);
+                            } else if (window.mapboxgl) {
+                              script.onload();
+                            }
+                          }
+                        }}
+                      />
+                    )}
+                    
+                    <p className="text-sm text-slate-500 text-center py-4">No notes yet</p>
+                  </Card>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Close Alert Modal */}
+      {showNCRModal && selectedAlert && (
+        <NCRFormModal
+          isOpen={showNCRModal}
+          onClose={() => setShowNCRModal(false)}
+          driverInfo={{
+            name: selectedAlert.driver_name || 'Unknown Driver',
+            fleetNumber: selectedAlert.vehicle_registration || selectedAlert.device_id,
+            department: 'Fleet Operations',
+            timestamp: selectedAlert.timestamp,
+            location: selectedAlert.location || 'Location from alert'
+          }}
+        />
+      )}
+
+
+
+
     </>
   );
 }

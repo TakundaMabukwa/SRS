@@ -7,7 +7,7 @@ import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { ArrowLeft, Camera, Video, Clock, CheckCircle, AlertTriangle } from 'lucide-react'
 import { useRouter } from 'next/navigation'
-import CloseAlertModal from '@/components/video-alerts/close-alert-modal'
+import NCRFormModal from '@/components/video-alerts/ncr-form-modal'
 
 export default function AlertDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params)
@@ -15,7 +15,7 @@ export default function AlertDetailPage({ params }: { params: Promise<{ id: stri
   const [alert, setAlert] = useState<any>(null)
   const [history, setHistory] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
-  const [showCloseModal, setShowCloseModal] = useState(false)
+  const [showNCRModal, setShowNCRModal] = useState(false)
 
   const fetchAlert = async () => {
     try {
@@ -218,8 +218,8 @@ export default function AlertDetailPage({ params }: { params: Promise<{ id: stri
                     <AlertTriangle className="w-4 h-4 mr-2" />
                     Escalate
                   </Button>
-                  <Button variant="outline" className="w-full" onClick={() => setShowCloseModal(true)}>
-                    Close Alert
+                  <Button variant="outline" className="w-full" onClick={() => setShowNCRModal(true)}>
+                    Fill NCR Form
                   </Button>
                 </>
               )}
@@ -228,12 +228,17 @@ export default function AlertDetailPage({ params }: { params: Promise<{ id: stri
         </div>
       </div>
 
-      <CloseAlertModal
-        isOpen={showCloseModal}
-        onClose={() => setShowCloseModal(false)}
-        alertId={id}
-        onSuccess={fetchAlert}
-      />
+      <NCRFormModal
+        isOpen={showNCRModal}
+        onClose={() => setShowNCRModal(false)}
+        driverInfo={{
+          name: alert.metadata?.driver_name || 'Unknown Driver',
+          fleetNumber: alert.metadata?.fleet_number || alert.device_id,
+          department: alert.metadata?.department,
+          timestamp: alert.timestamp,
+          location: alert.metadata?.location
+        }}
+      />>
     </div>
   )
 }

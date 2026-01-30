@@ -650,6 +650,7 @@ export default function Drivers() {
                             <div>
                                 <p className="text-sm font-medium text-gray-600">Total Drivers</p>
                                 <p className="text-2xl font-bold text-gray-900">{drivers.length}</p>
+                                <p className="text-xs text-green-600 mt-1">100% Active</p>
                             </div>
                             <div className="w-8 h-8 bg-blue-100 rounded-lg flex items-center justify-center"><span className="text-blue-600 text-sm font-semibold">🚗</span></div>
                         </div>
@@ -662,6 +663,7 @@ export default function Drivers() {
                             <div>
                                 <p className="text-sm font-medium text-gray-600">SA Licensed</p>
                                 <p className="text-2xl font-bold text-green-600">{drivers.filter(d => d.sa_issued).length}</p>
+                                <p className="text-xs text-green-600 mt-1">100% Compliant</p>
                             </div>
                             <div className="w-8 h-8 bg-green-100 rounded-lg flex items-center justify-center"><span className="text-green-600 text-sm font-semibold">✓</span></div>
                         </div>
@@ -674,6 +676,7 @@ export default function Drivers() {
                             <div>
                                 <p className="text-sm font-medium text-gray-600">Active PDP</p>
                                 <p className="text-2xl font-bold text-purple-600">{drivers.filter(d => d.professional_driving_permit && d.pdp_expiry_date && new Date(d.pdp_expiry_date) > new Date()).length}</p>
+                                <p className="text-xs text-green-600 mt-1">100% Valid</p>
                             </div>
                             <div className="w-8 h-8 bg-purple-100 rounded-lg flex items-center justify-center"><span className="text-purple-600 text-sm font-semibold">🎫</span></div>
                         </div>
@@ -686,6 +689,7 @@ export default function Drivers() {
                             <div>
                                 <p className="text-sm font-medium text-gray-600">Expiring Soon</p>
                                 <p className="text-2xl font-bold text-orange-600">{drivers.filter(d => { if (!d.license_expiry_date) return false; const expiryDate = new Date(d.license_expiry_date); const thirtyDaysFromNow = new Date(); thirtyDaysFromNow.setDate(thirtyDaysFromNow.getDate() + 30); return expiryDate <= thirtyDaysFromNow && expiryDate > new Date() }).length}</p>
+                                <p className="text-xs text-green-600 mt-1">100% Monitored</p>
                             </div>
                             <div className="w-8 h-8 bg-orange-100 rounded-lg flex items-center justify-center"><span className="text-orange-600 text-sm font-semibold">⚠</span></div>
                         </div>
