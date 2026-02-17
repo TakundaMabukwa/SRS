@@ -8,7 +8,10 @@ interface WebSocketMessage {
   count?: number
 }
 
-const WS_URL = process.env.NEXT_PUBLIC_VIDEO_BASE_URL?.replace('http', 'ws') || 'ws://164.90.182.2:3000'
+const VIDEO_BASE_URL = process.env.NEXT_PUBLIC_VIDEO_BASE_URL
+const WS_URL = VIDEO_BASE_URL
+  ? `ws://${VIDEO_BASE_URL.replace(/^https?:\/\//, '').replace(/\/$/, '')}/ws/alerts`
+  : null
 
 export function useVideoWebSocket(onMessage?: (data: WebSocketMessage) => void) {
   const ws = useRef<WebSocket | null>(null)
@@ -17,6 +20,11 @@ export function useVideoWebSocket(onMessage?: (data: WebSocketMessage) => void) 
   const reconnectTimeout = useRef<NodeJS.Timeout>()
 
   useEffect(() => {
+    if (!WS_URL) {
+      console.error('NEXT_PUBLIC_VIDEO_BASE_URL is not set. WebSocket disabled.')
+      return
+    }
+
     const connect = () => {
       try {
         ws.current = new WebSocket(WS_URL)

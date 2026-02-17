@@ -32,7 +32,7 @@ export default function AuthLayout({ children }: AuthLayoutProps) {
               className="object-contain"
             />
           </div>
-          <h1 className="text-3xl font-bold text-[#1A245E] mb-1">Premier Cross Border</h1>
+          <h1 className="text-3xl font-bold text-[#1A245E] mb-1">SRS Group</h1>
           <p className="text-[#7A7D85] text-sm">Seamless Cross-Border Transportation</p>
         </div>
 

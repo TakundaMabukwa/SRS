@@ -148,7 +148,21 @@ export default function VideoAlertsDashboardTab() {
     <div className="flex flex-col space-y-6 animate-in fade-in duration-500">
       
       {/* Bell Notification */}
-      <div className="flex justify-end">
+      <div className="flex justify-between items-center gap-2">
+        <div className="flex flex-wrap gap-2">
+          <Button variant="outline" size="sm" onClick={() => router.push('/video-alerts/management')}>
+            Management
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => router.push('/video-alerts/unattended')}>
+            Unattended
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => router.push('/video-alerts/escalations')}>
+            Escalations
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => router.push('/video-alerts/flooding')}>
+            Flooding
+          </Button>
+        </div>
         <Button 
           variant="outline" 
           size="sm" 

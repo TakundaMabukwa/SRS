@@ -44,33 +44,57 @@ export const VideoAlertsProvider = ({ children }) => {
     }
   }, [toast]);
 
-  const fetchAlert = useCallback(async (alertId) => {
-    const alert = state.alerts.find(a => a.id === alertId);
-    if (alert) {
-      const enrichedAlert = {
-        ...alert,
-        screenshots: [],
-        history: [
-          {
-            id: 'h1',
-            alert_id: alertId,
-            action: 'Alert Created',
-            user_name: 'System',
-            details: `${alert.alert_type} detected`,
-            timestamp: alert.timestamp
-          }
-        ],
-        location: {
-          latitude: -26.2041,
-          longitude: 28.0473,
-          address: 'N1 Highway, Johannesburg, Gauteng'
+  const fetchAlert = useCallback(async (alertOrId) => {
+    const alertId = typeof alertOrId === "object" ? alertOrId?.id : alertOrId;
+    if (!alertId) return null;
+
+    const localAlert =
+      typeof alertOrId === "object"
+        ? alertOrId
+        : state.alerts.find((a) => a.id === alertId);
+
+    let remoteAlert = null;
+    let remoteHistory = [];
+
+    try {
+      const [alertRes, historyRes] = await Promise.all([
+        fetch(`/api/video-server/alerts/${alertId}`),
+        fetch(`/api/video-server/alerts/${alertId}/history`),
+      ]);
+
+      if (alertRes.ok) {
+        const alertData = await alertRes.json();
+        if (alertData?.success) {
+          remoteAlert = alertData.alert || alertData.data || null;
         }
-      };
-      
-      dispatch(actions.fetchAlert(enrichedAlert));
-      return enrichedAlert;
+      }
+
+      if (historyRes.ok) {
+        const historyData = await historyRes.json();
+        if (historyData?.success) {
+          remoteHistory = historyData.history || historyData.data || [];
+        }
+      }
+    } catch (_) {
+      // Keep local alert as fallback when remote fetch fails
     }
-    return null;
+
+    const finalAlert = {
+      ...(localAlert || {}),
+      ...(remoteAlert || {}),
+      id: alertId,
+      screenshots: remoteAlert?.screenshots || localAlert?.screenshots || [],
+      notes: remoteAlert?.notes || localAlert?.notes || [],
+      history:
+        remoteHistory.length > 0
+          ? remoteHistory
+          : remoteAlert?.history || localAlert?.history || [],
+    };
+
+    if (!finalAlert?.id) return null;
+
+    dispatch(actions.fetchAlert(finalAlert));
+    return finalAlert;
   }, [state.alerts]);
 
   const acknowledgeAlert = useCallback(async (alertId, userId) => {
@@ -135,7 +159,18 @@ export const VideoAlertsProvider = ({ children }) => {
   }, [toast]);
 
   const refreshScreenshots = useCallback(async (alertId) => {
-    return [];
+    try {
+      const res = await fetch(`/api/video-server/alerts/${alertId}`);
+      if (!res.ok) return [];
+
+      const data = await res.json();
+      const alert = data.alert || data.data;
+      const screenshots = alert?.screenshots || alert?.media?.screenshots || [];
+      dispatch(actions.refreshScreenshots(alertId, screenshots));
+      return screenshots;
+    } catch (_) {
+      return [];
+    }
   }, []);
 
   const fetchStatistics = useCallback(async (dateFrom, dateTo) => {

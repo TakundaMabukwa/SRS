@@ -238,16 +238,16 @@ export default function ProtectedLayout({ children }: ProtectedLayoutProps) {
       <div className="flex h-screen bg-gray-100 text-gray-900">
         {/* Sidebar */}
         <aside
-        className={`fixed inset-y-0 left-0 z-50 flex flex-col justify-between bg-gradient-to-br from-blue-950 to-blue-800 text-white shadow-2xl transition-width duration-300 ease-in-out overflow-hidden ${sidebarExpanded ? "w-64" : "w-20"
+        className={`fixed inset-y-0 left-0 z-50 flex flex-col justify-between bg-gradient-to-b from-black via-[#150909] to-[#2b0a0a] text-white shadow-2xl border-r border-red-900/40 transition-width duration-300 ease-in-out overflow-hidden ${sidebarExpanded ? "w-64" : "w-20"
           }`}
       >
         {/* Top: logo + toggle */}
         <div className="px-3 py-4">
           <div className="flex items-center justify-between">
             <img
-              src="/Logo.png"
-              alt="EPS Logo"
-              className="h-10 w-10 rounded-lg bg-white p-1 shadow"
+              src="https://srsgroup.co.za/wp-content/uploads/2023/12/SRS-WEB-LOGO-WHITE-3.png"
+              alt="SRS Logo"
+              className={`object-contain ${sidebarExpanded ? "h-10 w-32" : "h-10 w-10"}`}
             />
             {/* Toggle is duplicated here visually hidden on small but kept for layout */}
             <div className="hidden"></div>
@@ -270,10 +270,16 @@ export default function ProtectedLayout({ children }: ProtectedLayoutProps) {
                     href={item.href}
                     className={`group flex items-center gap-3 p-2 rounded-xl transition-colors duration-200 w-full
                       ${isActive
-                        ? "bg-white/90 text-blue-900 shadow-md"
-                        : "text-gray-300 hover:text-white hover:bg-blue-900/40"
+                        ? "relative bg-gradient-to-r from-red-700/35 to-red-900/20 text-white border border-red-500/40 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]"
+                        : "text-gray-300 hover:text-white hover:bg-white/5 border border-transparent hover:border-white/10"
                       }`}
                   >
+                    {isActive && (
+                      <span
+                        aria-hidden="true"
+                        className="absolute left-0 top-2 bottom-2 w-1 rounded-r-full bg-red-500"
+                      />
+                    )}
                     <span
                       title={item.name}
                       className={`flex-shrink-0 flex items-center justify-center ${sidebarExpanded ? "ml-1" : "mx-auto"
@@ -282,7 +288,7 @@ export default function ProtectedLayout({ children }: ProtectedLayoutProps) {
                       <span
                         className={`p-2 rounded-full flex items-center justify-center transition-colors duration-150
                           ${isActive
-                            ? "bg-white text-blue-900"
+                            ? "bg-red-500 text-white ring-2 ring-red-300/30"
                             : "bg-white/10 text-white group-hover:bg-white/20 group-hover:text-white"
                           }`}
                         style={{ width: 36, height: 36 }}
@@ -292,7 +298,9 @@ export default function ProtectedLayout({ children }: ProtectedLayoutProps) {
                     </span>
 
                     {sidebarExpanded && (
-                      <span className="font-medium">{item.name}</span>
+                      <span className={isActive ? "font-semibold tracking-wide" : "font-medium"}>
+                        {item.name}
+                      </span>
                     )}
                   </Link>
                 </li>
@@ -325,7 +333,7 @@ export default function ProtectedLayout({ children }: ProtectedLayoutProps) {
             <Button
               size="icon"
               onClick={() => setSidebarExpanded(!sidebarExpanded)}
-              className="text-white bg-blue-700 hover:bg-blue-800"
+              className="text-white bg-[#7a1515] hover:bg-[#5f1010]"
               aria-label="Toggle sidebar"
             >
               {sidebarExpanded ? (

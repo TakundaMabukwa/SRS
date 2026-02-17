@@ -8,6 +8,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { AlertTriangle, Clock, CheckCircle, RefreshCw } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { useVideoWebSocket } from '@/hooks/use-video-websocket'
+import AlertsSubnav from '@/components/video-alerts/alerts-subnav'
 
 export default function AlertManagementPage() {
   const router = useRouter()
@@ -58,8 +59,8 @@ export default function AlertManagementPage() {
     <div className="p-6 space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold">Alert Management</h1>
-          <p className="text-gray-600">Monitor and manage video alerts in real-time</p>
+          <h1 className="text-3xl font-bold text-slate-900">Alert Management</h1>
+          <p className="text-slate-600">Priority queue optimized for real-time triage</p>
         </div>
         <Button onClick={fetchAlerts} disabled={loading}>
           <RefreshCw className={`w-4 h-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
@@ -67,38 +68,40 @@ export default function AlertManagementPage() {
         </Button>
       </div>
 
-      <div className="grid grid-cols-4 gap-4">
-        <Card className="p-4 border-l-4 border-l-red-500">
+      <AlertsSubnav />
+
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <Card className="p-4 border-l-4 border-l-red-500 bg-white shadow-sm">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm text-gray-600">Critical</p>
+              <p className="text-sm text-slate-600">Critical</p>
               <p className="text-2xl font-bold">{alerts.critical?.length || 0}</p>
             </div>
             <AlertTriangle className="w-8 h-8 text-red-500" />
           </div>
         </Card>
-        <Card className="p-4 border-l-4 border-l-orange-500">
+        <Card className="p-4 border-l-4 border-l-orange-500 bg-white shadow-sm">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm text-gray-600">High</p>
+              <p className="text-sm text-slate-600">High</p>
               <p className="text-2xl font-bold">{alerts.high?.length || 0}</p>
             </div>
             <Clock className="w-8 h-8 text-orange-500" />
           </div>
         </Card>
-        <Card className="p-4 border-l-4 border-l-yellow-500">
+        <Card className="p-4 border-l-4 border-l-yellow-500 bg-white shadow-sm">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm text-gray-600">Medium</p>
+              <p className="text-sm text-slate-600">Medium</p>
               <p className="text-2xl font-bold">{alerts.medium?.length || 0}</p>
             </div>
             <Clock className="w-8 h-8 text-yellow-500" />
           </div>
         </Card>
-        <Card className="p-4 border-l-4 border-l-blue-500">
+        <Card className="p-4 border-l-4 border-l-blue-500 bg-white shadow-sm">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm text-gray-600">Low</p>
+              <p className="text-sm text-slate-600">Low</p>
               <p className="text-2xl font-bold">{alerts.low?.length || 0}</p>
             </div>
             <CheckCircle className="w-8 h-8 text-blue-500" />
@@ -107,7 +110,7 @@ export default function AlertManagementPage() {
       </div>
 
       <Tabs value={selectedPriority} onValueChange={setSelectedPriority}>
-        <TabsList>
+        <TabsList className="bg-slate-100">
           <TabsTrigger value="all">All ({allAlerts.length})</TabsTrigger>
           <TabsTrigger value="critical">Critical ({alerts.critical?.length || 0})</TabsTrigger>
           <TabsTrigger value="high">High ({alerts.high?.length || 0})</TabsTrigger>

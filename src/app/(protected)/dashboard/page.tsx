@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import {
   Card,
@@ -60,10 +60,10 @@ import DetailCard from "@/components/ui/detail-card";
 import { onCreate } from "@/hooks/use-auth";
 import VideoAlertsDashboardTab from "@/components/dashboard/video-alerts-dashboard-tab";
 import LiveStreamTab from "@/components/dashboard/live-stream-tab";
+import ScreenshotsDashboardTab from "@/components/dashboard/screenshots-dashboard-tab";
 import { useGlobalContext } from "@/context/global-context/context";
 import { ProgressWithWaypoints } from '@/components/ui/progress-with-waypoints'
 import { Progress } from '@/components/ui/progress'
-import { useVideoAlerts } from '@/context/video-alerts-context/context'
 import {
   Table,
   TableBody,
@@ -85,6 +85,7 @@ import { EditTripModal } from "@/components/ui/edit-trip-modal";
 import VideoAlertsPage from '@/app/(protected)/video-alerts/page';
 import { NCRTemplate } from '@/components/reports/ncr-template';
 import NCRFormModal from '@/components/video-alerts/ncr-form-modal';
+import IncidentReportTemplateModal from '@/components/video-alerts/incident-report-template-modal';
 
 // Reports Content Component
 function ReportsContent() {
@@ -307,7 +308,7 @@ function ReportsContent() {
                   ? new Date(dateFrom).toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })
                   : `${new Date(dateFrom).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - ${new Date(dateTo).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`
                 }
-                {registrationFilter && ` • Filtered by: ${registrationFilter}`}
+                {registrationFilter && ` â€¢ Filtered by: ${registrationFilter}`}
               </CardDescription>
             </div>
             {filteredReports.length > 0 && (
@@ -576,7 +577,7 @@ function DriverCard({ trip, userRole, handleViewMap, setCurrentTripForNote, setN
 
   if (loading) {
     return (
-      <div className="w-[30%] bg-white rounded-lg border border-slate-200 shadow-sm p-3 animate-pulse">
+      <div className="w-full lg:w-[30%] bg-white rounded-lg border border-slate-200 shadow-sm p-2.5 animate-pulse">
         <div className="flex items-center gap-2 mb-2">
           <div className="w-8 h-8 rounded-lg bg-slate-200"></div>
           <div className="flex-1">
@@ -590,7 +591,7 @@ function DriverCard({ trip, userRole, handleViewMap, setCurrentTripForNote, setN
 
   return (
     <div className={cn(
-      "w-[30%] rounded-xl p-3 bg-white/30 backdrop-blur-md border border-white/10 shadow-lg transition-transform duration-200 hover:scale-[1.02] hover:shadow-2xl",
+      "w-full lg:w-[30%] rounded-lg p-2.5 bg-white/30 backdrop-blur-md border border-white/10 shadow-md transition-transform duration-200 hover:shadow-lg",
       trip.unauthorized_stops_count > 0 && trip.status?.toLowerCase() !== 'delivered'
         ? isFlashing
           ? "ring-2 ring-red-400 animate-pulse"
@@ -598,11 +599,11 @@ function DriverCard({ trip, userRole, handleViewMap, setCurrentTripForNote, setN
         : "border-slate-200/30"
     )}>
       {/* Top accent */}
-      <div className="h-1 w-full rounded-full bg-gradient-to-r from-blue-400 via-blue-400  to-indigo-500 mb-3 opacity-90" />
+      <div className="h-0.5 w-full rounded-full bg-gradient-to-r from-blue-400 via-blue-400  to-indigo-500 mb-2 opacity-90" />
 
       <div className="flex items-center gap-2 mb-2">
         <div
-          className="w-8 h-8 rounded-lg flex items-center justify-center text-xs font-semibold text-white"
+          className="w-7 h-7 rounded-md flex items-center justify-center text-[11px] font-semibold text-white"
           style={{
             background: "linear-gradient(135deg, #1e3a8a 0%, #3b82f6 100%)",
             boxShadow: "0 6px 18px rgba(59,130,246,0.18)"
@@ -611,12 +612,12 @@ function DriverCard({ trip, userRole, handleViewMap, setCurrentTripForNote, setN
           {initials}
         </div>
         <div className="min-w-0 flex-1">
-          <div className="text-xs font-semibold text-slate-900 truncate">{typeof driverInfo?.surname === 'string' ? driverInfo.surname : String(driverInfo?.surname || 'Unassigned')}</div>
-          <div className="text-xs text-slate-600">{driverInfo ? driverInfo.phone_number : 'No driver assigned'}</div>
+          <div className="text-[11px] font-semibold text-slate-900 truncate">{typeof driverInfo?.surname === 'string' ? driverInfo.surname : String(driverInfo?.surname || 'Unassigned')}</div>
+          <div className="text-[11px] text-slate-600">{driverInfo ? driverInfo.phone_number : 'No driver assigned'}</div>
         </div>
         <div className="flex-shrink-0">
           <span className={cn(
-            "px-1.5 py-0.5 rounded-full text-xs font-semibold uppercase tracking-wide",
+            "px-1.5 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wide",
             driverInfo?.available ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-800'
           )}>
             {driverInfo?.available ? 'Available' : 'Unavailable'}
@@ -626,12 +627,12 @@ function DriverCard({ trip, userRole, handleViewMap, setCurrentTripForNote, setN
 
       {/* Rate Information */}
       {trip.rate && (
-        <div className="mb-2 p-2 rounded-lg bg-white/20 border border-white/5">
+        <div className="mb-2 p-1.5 rounded-md bg-white/20 border border-white/5">
           <div className="flex items-center gap-1 mb-1">
             <div className="w-1.5 h-1.5 bg-green-500 rounded-full" />
-            <span className="text-xs font-medium text-slate-700 uppercase">Rate</span>
+            <span className="text-[10px] font-medium text-slate-700 uppercase">Rate</span>
           </div>
-          <div className="text-xs font-medium text-green-600">
+          <div className="text-[11px] font-medium text-green-600">
             R{parseFloat(trip.rate).toLocaleString()}
           </div>
         </div>
@@ -639,18 +640,18 @@ function DriverCard({ trip, userRole, handleViewMap, setCurrentTripForNote, setN
 
       {/* Unauthorized Stop Alert */}
       {trip.unauthorized_stops_count > 0 && trip.status?.toLowerCase() !== 'delivered' && (
-        <div className="mb-3 p-3 rounded-lg bg-red-50/70 border border-red-200/40 backdrop-blur-sm">
+        <div className="mb-2 p-2 rounded-md bg-red-50/70 border border-red-200/40 backdrop-blur-sm">
           <div className="flex items-start gap-2">
             <div className="flex-shrink-0">
               <AlertTriangle className="w-4 h-4 text-red-600" />
             </div>
             <div className="flex-1">
-              <div className="text-xs font-semibold text-red-800 uppercase">Unauthorized Stop Alert</div>
-              <div className="text-sm font-medium text-red-900">
+              <div className="text-[10px] font-semibold text-red-800 uppercase">Unauthorized Stop Alert</div>
+              <div className="text-xs font-medium text-red-900">
                 {trip.unauthorized_stops_count} unauthorized stop{trip.unauthorized_stops_count > 1 ? 's' : ''} detected
               </div>
               {trip.route_points && trip.route_points.length > 0 && (
-                <div className="text-xs text-red-700 mt-1">
+                <div className="text-[11px] text-red-700 mt-1">
                   Last: {(() => {
                     const last = trip.route_points[trip.route_points.length - 1]
                     return last ? `${last.lat?.toFixed(4)}, ${last.lng?.toFixed(4)}` : 'Unknown'
@@ -662,37 +663,37 @@ function DriverCard({ trip, userRole, handleViewMap, setCurrentTripForNote, setN
         </div>
       )}
 
-      <div className="mb-2 p-2 rounded-lg bg-white/20 border border-white/5">
+      <div className="mb-2 p-1.5 rounded-md bg-white/20 border border-white/5">
         <div className="flex items-center gap-1 mb-1">
           <div className="w-1.5 h-1.5 bg-slate-500 rounded-full" />
-          <span className="text-xs font-medium text-slate-700 uppercase">Note</span>
+          <span className="text-[10px] font-medium text-slate-700 uppercase">Note</span>
         </div>
-        <div className="text-xs text-slate-900">{trip.status_notes || 'No notes added'}</div>
+        <div className="text-[11px] text-slate-900">{trip.status_notes || 'No notes added'}</div>
       </div>
 
-      <div className="mb-2 p-2 rounded-lg bg-white/20 border border-white/5">
+      <div className="mb-2 p-1.5 rounded-md bg-white/20 border border-white/5">
         <div className="flex items-center gap-1 mb-1">
           <div className="w-1.5 h-1.5 bg-slate-500 rounded-full" />
-          <span className="text-xs font-medium text-slate-700 uppercase">Vehicle</span>
+          <span className="text-[10px] font-medium text-slate-700 uppercase">Vehicle</span>
         </div>
         <div className="flex items-center justify-between">
-          <span className="text-xs font-medium text-slate-900 truncate">
+          <span className="text-[11px] font-medium text-slate-900 truncate">
             {vehicleLocation?.fleet_number || vehicleInfo?.fleet_number || assignment?.vehicle?.fleet_number || vehicleLocation?.plate || vehicleInfo?.registration_number || assignment?.vehicle?.name || 'Not assigned'}
           </span>
-          <span className="text-xs text-slate-500">{vehicleLocation ? `${vehicleLocation.speed} km/h` : ''}</span>
+          <span className="text-[11px] text-slate-500">{vehicleLocation ? `${vehicleLocation.speed} km/h` : ''}</span>
         </div>
         {vehicleLocation && (
-          <div className="mt-1 text-xs text-slate-600 truncate">
+          <div className="mt-1 text-[11px] text-slate-600 truncate">
             {vehicleLocation.address}
           </div>
         )}
       </div>
 
-      <div className="grid grid-cols-2 gap-2">
+      <div className="grid grid-cols-2 gap-1.5">
         <Button
           size="sm"
           variant="link"
-          className="h-8 text-xs border"
+          className="h-7 text-[11px] border"
           onClick={async () => {
             // Use existing vehicle location or pass plate info for map to handle
             let matchedVehicleLocation = vehicleLocation;
@@ -720,7 +721,7 @@ function DriverCard({ trip, userRole, handleViewMap, setCurrentTripForNote, setN
         <Button
           size="sm"
           variant="link"
-          className="h-8 text-xs border"
+          className="h-7 text-[11px] border"
           onClick={async () => {
             const supabase = createClient();
             let routeCoords = null;
@@ -977,7 +978,7 @@ function DriverCard({ trip, userRole, handleViewMap, setCurrentTripForNote, setN
           action="edit"
           size="sm"
           variant="link"
-          className="h-8 text-xs border"
+          className="h-7 text-[11px] border"
           onClick={() => {
             setCurrentTripForNote(trip);
             setNoteText(trip.status_notes || '');
@@ -992,7 +993,7 @@ function DriverCard({ trip, userRole, handleViewMap, setCurrentTripForNote, setN
           action="edit"
           size="sm"
           variant="link"
-          className="h-8 text-xs border"
+          className="h-7 text-[11px] border"
           onClick={async () => {
             const supabase = createClient();
             const { data: drivers } = await supabase.from('drivers').select('*');
@@ -1008,7 +1009,7 @@ function DriverCard({ trip, userRole, handleViewMap, setCurrentTripForNote, setN
           <Button
             size="sm"
             variant="outline"
-            className="h-8 text-xs border"
+            className="h-7 text-[11px] border"
             onClick={() => {
               setCurrentTripForEdit({ ...trip, showHistoryOnly: true });
               setEditTripOpen(true);
@@ -1023,7 +1024,7 @@ function DriverCard({ trip, userRole, handleViewMap, setCurrentTripForNote, setN
           action="delete"
           size="sm"
           variant="destructive"
-          className="h-8 text-xs border"
+          className="h-7 text-[11px] border"
           onClick={() => {
             setCurrentTripForClose(trip);
             setCloseReason('');
@@ -1038,7 +1039,7 @@ function DriverCard({ trip, userRole, handleViewMap, setCurrentTripForNote, setN
       <Button
         size="sm"
         variant="default"
-        className="h-10 text-sm font-semibold w-full mt-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white shadow-lg hover:shadow-xl transition-all duration-200 border-0"
+        className="h-8 text-xs font-semibold w-full mt-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white shadow-md hover:shadow-lg transition-all duration-200 border-0"
         onClick={() => {
           const driver = driverInfo 
             ? `${driverInfo.first_name || ''} ${driverInfo.surname || ''}`.trim() || 'Unassigned'
@@ -1048,7 +1049,7 @@ function DriverCard({ trip, userRole, handleViewMap, setCurrentTripForNote, setN
           router.push(`/video-feeds?driver=${encodeURIComponent(driver)}&vehicle=${encodeURIComponent(vehicle)}`);
         }}
       >
-        <Video className="w-4 h-4 mr-2" />
+          <Video className="w-3.5 h-3.5 mr-1.5" />
         View Live Camera Feeds
       </Button>
     </div>
@@ -1056,41 +1057,196 @@ function DriverCard({ trip, userRole, handleViewMap, setCurrentTripForNote, setN
 }
 
 // Enhanced routing components with proper waypoints
-function RoutingSection({ userRole, handleViewMap, setCurrentTripForNote, setNoteText, setNoteOpen, setAvailableDrivers, setCurrentTripForChange, setChangeDriverOpen, refreshTrigger, setRefreshTrigger, setPickupTimeOpen, setDropoffTimeOpen, setCurrentTripForTime, setTimeType, setSelectedTime, currentUnauthorizedTrip, setCurrentUnauthorizedTrip, setUnauthorizedStopModalOpen, loadingPhotos, setLoadingPhotos, setCurrentTripPhotos, setPhotosModalOpen, setCurrentTripAlerts, setAlertsModalOpen, setCurrentTripForClose, setCloseReason, setCloseTripOpen, setCurrentTripForEdit, setEditTripOpen, setCurrentTripForApproval, setApprovalModalOpen, setSelectedAlert, setAlertDetailModalOpen, isVisible = true }: any) {
+function RoutingSection({ userRole, handleViewMap, setCurrentTripForNote, setNoteText, setNoteOpen, setAvailableDrivers, setCurrentTripForChange, setChangeDriverOpen, refreshTrigger, setRefreshTrigger, setPickupTimeOpen, setDropoffTimeOpen, setCurrentTripForTime, setTimeType, setSelectedTime, currentUnauthorizedTrip, setCurrentUnauthorizedTrip, setUnauthorizedStopModalOpen, loadingPhotos, setLoadingPhotos, setCurrentTripPhotos, setPhotosModalOpen, setCurrentTripAlerts, setAlertsModalOpen, setCurrentTripForClose, setCloseReason, setCloseTripOpen, setCurrentTripForEdit, setEditTripOpen, setCurrentTripForApproval, setApprovalModalOpen, onOpenAlertDetail, setIncidentReportModalOpen, setSelectedTripForIncident, isVisible = true }: any) {
   const [trips, setTrips] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
-  const { alerts } = useVideoAlerts()
+  const [groupedAlerts, setGroupedAlerts] = useState<any[]>([])
+  const videoBaseUrl = (process.env.NEXT_PUBLIC_VIDEO_BASE_URL || "").replace(/\/$/, "")
+  const videoProxyBase = "/api/video-server"
+  const normalizeId = (value: unknown) => (value === null || value === undefined ? "" : String(value).trim())
+  const extractVehicleKey = (alert: any) =>
+    normalizeId(
+      alert?.vehicleId ||
+      alert?.vehicle_id ||
+      alert?.device_id ||
+      alert?.deviceId ||
+      alert?.phone ||
+      alert?.vehicle_registration ||
+      alert?.fleet_number
+    )
+
+  const isValidDisplayUrl = (url?: string) =>
+    !!url && /^https?:\/\//i.test(url) && url !== "upload-failed" && url !== "local-only";
+
+  const fetchAlertMediaById = useCallback(async (alertId: string) => {
+    const detailRes = await fetch(`${videoProxyBase}/alerts/${alertId}`);
+
+    const detailJson = detailRes.ok ? await detailRes.json() : null;
+
+    const detailAlert = detailJson?.alert || {};
+    const screenshots = Array.isArray(detailAlert?.screenshots) ? detailAlert.screenshots : [];
+
+    return { detailAlert, screenshots };
+  }, []);
+
+  const fetchGroupedAlerts = useCallback(async () => {
+    try {
+      const activeRes = await fetch(`${videoProxyBase}/alerts/active`);
+      if (!activeRes.ok) throw new Error("Failed to fetch active alerts");
+      const activeJson = await activeRes.json();
+      const activeList = Array.isArray(activeJson?.alerts)
+        ? activeJson.alerts
+        : Array.isArray(activeJson?.data?.alerts)
+          ? activeJson.data.alerts
+          : Array.isArray(activeJson?.data)
+            ? activeJson.data
+            : [];
+
+      const grouped = await Promise.all(
+        activeList.map(async (activeAlert: any) => {
+          try {
+            const alertId = normalizeId(activeAlert?.id);
+            const { detailAlert, screenshots } = alertId
+              ? await fetchAlertMediaById(alertId)
+              : { detailAlert: {}, screenshots: [] };
+            const mergedAlert = { ...activeAlert, ...detailAlert };
+            const screenshotTimestamps = screenshots
+              .map((s: any) => s?.timestamp)
+              .filter(Boolean)
+              .sort((a: string, b: string) => new Date(b).getTime() - new Date(a).getTime());
+
+            const normalizedScreenshots = screenshots
+              .filter((s: any) => isValidDisplayUrl(s?.storage_url))
+              .map((s: any) => ({
+                id: s?.id,
+                url: s?.storage_url,
+                timestamp: s?.timestamp || mergedAlert?.timestamp,
+                channel: s?.channel,
+                file_path: s?.file_path,
+              }));
+
+            return {
+              ...mergedAlert,
+              vehicleId: extractVehicleKey(mergedAlert),
+              alert_type: mergedAlert?.alert_type || String(mergedAlert?.type || "alert").toLowerCase().replace(/\s+/g, "_"),
+              severity: mergedAlert?.severity || mergedAlert?.priority || "high",
+              media: {
+                screenshots: normalizedScreenshots,
+                videos: [],
+              },
+              screenshot_timestamps: screenshotTimestamps,
+              videos: {},
+            };
+          } catch {
+            return {
+              ...activeAlert,
+              vehicleId: extractVehicleKey(activeAlert),
+              alert_type: activeAlert?.alert_type || String(activeAlert?.type || "alert").toLowerCase().replace(/\s+/g, "_"),
+              severity: activeAlert?.severity || activeAlert?.priority || "high",
+              media: { screenshots: [], videos: [] },
+              screenshot_timestamps: [],
+              videos: {},
+            };
+          }
+        })
+      );
+
+      const deduped = new Map<string, any>();
+      grouped
+        .sort((a: any, b: any) => {
+          const aTs = a?.screenshot_timestamps?.[0] || a?.timestamp || 0;
+          const bTs = b?.screenshot_timestamps?.[0] || b?.timestamp || 0;
+          return new Date(bTs).getTime() - new Date(aTs).getTime();
+        })
+        .forEach((alert: any) => {
+          const key = normalizeId(alert?.id) || `${normalizeId(alert?.vehicleId)}-${normalizeId(alert?.timestamp)}`;
+          if (!deduped.has(key)) deduped.set(key, alert);
+        });
+      setGroupedAlerts(Array.from(deduped.values()));
+    } catch (err) {
+      console.error("Failed to fetch grouped alerts:", err);
+      setGroupedAlerts([]);
+    }
+  }, [videoBaseUrl, fetchAlertMediaById]);
+
+  useEffect(() => {
+    fetchGroupedAlerts();
+  }, [fetchGroupedAlerts, refreshTrigger]);
+
+  useEffect(() => {
+    // Always poll through Next proxy so UI still works even if NEXT_PUBLIC_VIDEO_BASE_URL
+    // is only available server-side or changed without client restart.
+    const poller = setInterval(() => {
+      fetchGroupedAlerts();
+    }, 30000);
+
+    let ws: WebSocket | null = null;
+    if (videoBaseUrl) {
+      try {
+        const wsHost = videoBaseUrl.replace(/^https?:\/\//i, "");
+        ws = new WebSocket(`ws://${wsHost}/ws/alerts`);
+        ws.onmessage = () => {
+          fetchGroupedAlerts();
+        };
+      } catch (err) {
+        console.warn("Trip routing alerts websocket unavailable:", err);
+      }
+    }
+
+    return () => {
+      clearInterval(poller);
+      if (ws) ws.close();
+    };
+  }, [videoBaseUrl, fetchGroupedAlerts]);
 
   useEffect(() => {
     async function fetchTrips() {
       try {
         const supabase = createClient()
         
-        // Get unique vehicle IDs from alerts
-        const uniqueVehicles = [...new Set(alerts.map(a => a.vehicleId))]
+        // Get unique vehicle keys from alerts so new alerts always surface on routing cards.
+        const uniqueVehicles = [
+          ...new Set(
+            groupedAlerts
+              .map((a) => extractVehicleKey(a))
+              .filter(Boolean)
+          ),
+        ]
         
         // Lookup vehicle details for each vehicleId (camera_sim_id)
-        const vehicleLookups = await Promise.all(
-          uniqueVehicles.map(async (vehicleId) => {
-            const { data } = await supabase
-              .from('vehiclesc')
-              .select('registration_number, fleet_number, driver_name')
-              .eq('camera_sim_id', vehicleId)
-              .maybeSingle()
-            return { vehicleId, vehicle: data }
-          })
-        )
+        let vehicleLookups: Array<{ vehicleId: string; vehicle: any }> = []
+        try {
+          vehicleLookups = await Promise.all(
+            uniqueVehicles.map(async (vehicleId) => {
+              const { data } = await supabase
+                .from('vehiclesc')
+                .select('registration_number, fleet_number, driver_name')
+                .eq('camera_sim_id', vehicleId)
+                .maybeSingle()
+              return { vehicleId, vehicle: data }
+            })
+          )
+        } catch (lookupErr) {
+          console.warn('Vehicle lookup failed, continuing with raw vehicle IDs:', lookupErr)
+        }
         
         // Transform to trip format
         const transformedTrips = uniqueVehicles.map(vehicleId => {
-          const vehicleAlerts = alerts.filter(a => a.vehicleId === vehicleId)
+          const vehicleAlerts = groupedAlerts.filter((a) =>
+            [
+              extractVehicleKey(a),
+              normalizeId(a.vehicle_registration),
+              normalizeId(a.fleet_number),
+              normalizeId(a.vehicle_id),
+            ].includes(vehicleId)
+          )
           const latestAlert = vehicleAlerts[0]
           const vehicleData = vehicleLookups.find(v => v.vehicleId === vehicleId)?.vehicle
           
           return {
             id: vehicleId,
             trip_id: vehicleId,
-            status: vehicleAlerts.some(a => a.priority === 'high') ? 'pending' : 'on-trip',
+            status: vehicleAlerts.some(a => ['critical', 'high'].includes(String(a.priority || a.severity || '').toLowerCase())) ? 'pending' : 'on-trip',
             origin: 'Alert Location',
             destination: 'Monitoring',
             created_at: latestAlert?.timestamp,
@@ -1122,7 +1278,7 @@ function RoutingSection({ userRole, handleViewMap, setCurrentTripForNote, setNot
     }
     
     fetchTrips()
-  }, [refreshTrigger, alerts])
+  }, [refreshTrigger, groupedAlerts])
 
   // Sort trips to put faulty inspections at the top
   const tripsList = trips
@@ -1212,6 +1368,19 @@ function RoutingSection({ userRole, handleViewMap, setCurrentTripForNote, setNot
     return ((statusIndex + 1) / WORKFLOW_STATUSES.length) * 100
   }
 
+  const getTripAlerts = (trip: any) => {
+    const tripLevelAlerts = Array.isArray(trip?.alert_data) ? trip.alert_data : []
+    const getAlertDisplayTimestamp = (alert: any) =>
+      alert?.screenshot_timestamps?.[0] ||
+      alert?.media?.screenshots?.[0]?.timestamp ||
+      alert?.timestamp ||
+      null
+
+    return tripLevelAlerts
+      .sort((a: any, b: any) => new Date(getAlertDisplayTimestamp(b) || 0).getTime() - new Date(getAlertDisplayTimestamp(a) || 0).getTime())
+      .slice(0, 10)
+  }
+
   if (loading) {
     return <div className="text-center py-8">Loading trips...</div>
   }
@@ -1220,7 +1389,10 @@ function RoutingSection({ userRole, handleViewMap, setCurrentTripForNote, setNot
     return (
       <div className="space-y-4">
         <div className="text-center py-8 text-muted-foreground">
-          No trips available in database
+          No active alert trips found
+          <div className="mt-2 text-xs text-slate-500">
+            Active alerts fetched: {groupedAlerts.length}
+          </div>
         </div>
       </div>
     )
@@ -1229,18 +1401,20 @@ function RoutingSection({ userRole, handleViewMap, setCurrentTripForNote, setNot
   return (
     <div className="space-y-6">
       {tripsList.map((trip: any) => {
-        const waypoints = getWaypointsWithStops(trip)
-        const progress = getTripProgress(trip.status)
+        const tripAlerts = getTripAlerts(trip)
+        const pendingAlerts = tripAlerts.filter((a: any) => !(a?.resolved || a?.status === "resolved" || a?.status === "closed"))
+        const resolvedAlerts = tripAlerts.length - pendingAlerts.length
+        const incidentResolutionProgress = tripAlerts.length > 0 ? (resolvedAlerts / tripAlerts.length) * 100 : 0
 
         const clientDetails = typeof trip.clientdetails === 'string' ? JSON.parse(trip.clientdetails) : trip.clientdetails
         const title = clientDetails?.name || trip.selectedClient || trip.clientDetails?.name || `Trip ${trip.trip_id || trip.id}`
         const hasUnauthorizedStops = trip.unauthorized_stops_count > 0
 
         return (
-          <div key={trip.id || trip.trip_id} className="flex gap-4 border-b-gray-500 border-b-2 pb-10">
+          <div key={trip.id || trip.trip_id} className="flex flex-col gap-3 border-b border-slate-200 pb-6 lg:flex-row">
             {/* Driver Card - 30% */}
-            <DriverCard 
-              trip={trip} 
+            <DriverCard
+              trip={trip}
               userRole={userRole}
               isVisible={isVisible}
               handleViewMap={handleViewMap}
@@ -1259,17 +1433,17 @@ function RoutingSection({ userRole, handleViewMap, setCurrentTripForNote, setNot
               setApprovalModalOpen={setApprovalModalOpen}
             />
             {/* Trip Card - 70% */}
-            <div className="w-[70%] bg-white border border-gray-200 rounded-lg shadow-sm">
-              {/* Compact Header */}
-              <div className="bg-gray-50 px-3 py-2 border-b border-gray-200 flex items-center justify-between rounded-t-lg">
+            <div className="flex-1 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
+              {/* Header */}
+              <div className="bg-gradient-to-r from-slate-50 to-white px-3 py-2 border-b border-slate-200 flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <div className="w-1 h-5 bg-blue-500 rounded-full"></div>
-                  <span className="text-gray-900 font-semibold text-sm">#{trip.trip_id || trip.id}</span>
-                  <span className="text-gray-400 text-xs">|</span>
-                  <span className="text-gray-700 text-sm truncate max-w-xs">{title}</span>
+                  <div className="w-1 h-5 bg-blue-600 rounded-full"></div>
+                  <span className="text-slate-900 font-semibold text-xs">#{trip.trip_id || trip.id}</span>
+                  <span className="text-slate-400 text-xs">|</span>
+                  <span className="text-slate-700 text-xs truncate max-w-xs">{title}</span>
                 </div>
                 <div className={cn(
-                  "px-2 py-1 text-xs font-medium uppercase rounded-full",
+                  "px-2 py-0.5 text-[10px] font-semibold uppercase rounded-full",
                   trip.status?.toLowerCase() === 'delivered' ? 'bg-emerald-100 text-emerald-700' :
                   'bg-blue-100 text-blue-700'
                 )}>
@@ -1277,199 +1451,144 @@ function RoutingSection({ userRole, handleViewMap, setCurrentTripForNote, setNot
                 </div>
               </div>
 
-              {/* Alert Banner */}
-              {(() => {
-                const tripAlerts = alerts.slice(0, 5);
-                
-                if (tripAlerts.length === 0) return null;
-                
-                return (
-                  <div className="bg-red-50 border-b border-red-200 px-3 py-2 flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <AlertOctagon className="w-4 h-4 text-red-600" />
-                      <span className="text-sm font-semibold text-red-700">{tripAlerts.length} ALERT{tripAlerts.length !== 1 ? 'S' : ''}</span>
+              {tripAlerts.length > 0 && (
+                <div className="bg-red-50/80 border-b border-red-200 px-3 py-2 flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <AlertOctagon className="w-3.5 h-3.5 text-red-600" />
+                    <span className="text-xs font-semibold text-red-700">{tripAlerts.length} ALERT{tripAlerts.length !== 1 ? 'S' : ''} DETECTED</span>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 px-2.5 text-[11px] font-semibold border-red-300 text-red-700 hover:bg-red-100"
+                    onClick={() => {
+                      setCurrentTripAlerts({ tripId: trip.trip_id || trip.id, alerts: tripAlerts });
+                      setAlertsModalOpen(true);
+                    }}
+                  >
+                    VIEW FEED
+                  </Button>
+                </div>
+              )}
+
+              <div className="p-3">
+                {tripAlerts.length > 0 && (
+                  <div className="mb-3 rounded-lg border border-slate-200 p-2.5 bg-slate-50/50">
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2">
+                        <AlertOctagon className="w-3.5 h-3.5 text-red-600" />
+                        <span className="text-xs font-semibold text-slate-900">Alert Timeline</span>
+                        <span className="px-2 py-0.5 bg-red-100 text-red-700 text-xs font-bold rounded-full">
+                          {tripAlerts.length}
+                        </span>
+                      </div>
+                      <span className="text-xs font-medium text-slate-700">{Math.round(incidentResolutionProgress)}% Resolved</span>
                     </div>
+
+                    <div className="relative rounded-md border border-slate-200 bg-white px-2 py-3 overflow-x-auto">
+                      <div className="absolute left-3 right-3 top-8 h-1 rounded-full bg-slate-200" />
+                      <div className="absolute left-3 top-8 h-1 rounded-full bg-emerald-500 transition-all duration-300" style={{ width: `${incidentResolutionProgress}%` }} />
+                      <div className="relative grid min-w-[560px] gap-1.5" style={{ gridTemplateColumns: `repeat(${Math.max(tripAlerts.length, 1)}, minmax(0, 1fr))` }}>
+                        {tripAlerts.map((alert: any) => {
+                          const isResolved = alert?.resolved || alert?.status === 'resolved' || alert?.status === 'closed'
+                          const severity = alert?.priority || alert?.severity || 'critical'
+                          const displayTs =
+                            alert?.screenshot_timestamps?.[0] ||
+                            (Array.isArray(alert?.media?.screenshots) && alert.media.screenshots.length > 0
+                              ? alert.media.screenshots[0]?.timestamp
+                              : null) ||
+                            alert?.timestamp
+                          const severityClass = isResolved
+                            ? 'bg-emerald-500 border-emerald-600'
+                            : severity === 'high'
+                              ? 'bg-orange-500 border-orange-600'
+                              : severity === 'medium'
+                                ? 'bg-yellow-500 border-yellow-600'
+                                : severity === 'low'
+                                  ? 'bg-blue-500 border-blue-600'
+                                  : 'bg-red-500 border-red-600'
+
+                          return (
+                            <button
+                              key={alert.id}
+                              type="button"
+                              className="group relative flex flex-col items-center pt-1"
+                              onClick={() => {
+                                const vehicleData = trip.vehicleassignments?.[0]?.vehicle
+                                onOpenAlertDetail({
+                                  ...alert,
+                                  vehicleId: trip.id,
+                                  vehicle_registration: alert?.vehicle_registration || vehicleData?.name || trip.id,
+                                  fleet_number: alert?.fleet_number || vehicleData?.fleet_number
+                                }, trip)
+                              }}
+                            >
+                              <div className={cn(
+                                "z-10 flex h-8 w-8 items-center justify-center rounded-full border-2 text-white shadow-sm transition-transform group-hover:scale-110",
+                                severityClass,
+                                !isResolved && 'animate-pulse'
+                              )}>
+                                {alert?.alert_type === 'smoking'
+                                  ? <Cigarette className="w-3.5 h-3.5" />
+                                  : <Zap className="w-3.5 h-3.5" />}
+                              </div>
+                              <span className="mt-1.5 rounded-full border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[9px] font-semibold text-slate-700 shadow-sm">
+                                {displayTs
+                                  ? new Date(displayTs).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+                                  : 'N/A'}
+                              </span>
+                              <span className="mt-0.5 text-[9px] font-medium text-slate-500">
+                                {displayTs
+                                  ? new Date(displayTs).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })
+                                  : 'N/A'}
+                              </span>
+                              {displayTs && Date.now() - new Date(displayTs).getTime() < 5 * 60 * 1000 && (
+                                <span className="absolute -top-1.5 right-1 rounded-full bg-red-600 px-1 py-0.5 text-[8px] font-bold text-white">
+                                  NEW
+                                </span>
+                              )}
+                            </button>
+                          )
+                        })}
+                      </div>
+                    </div>
+
+                    <div className="mt-2 grid grid-cols-2 gap-2 text-[11px]">
+                      <div className="flex items-center gap-2">
+                        <span className="h-3 w-3 rounded-full bg-red-500 animate-pulse" />
+                        <span className="text-slate-600">Pending:</span>
+                        <span className="font-bold text-red-600">{pendingAlerts.length}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="h-3 w-3 rounded-full bg-emerald-500" />
+                        <span className="text-slate-600">Resolved:</span>
+                        <span className="font-bold text-emerald-600">{resolvedAlerts}</span>
+                      </div>
+                    </div>
+
                     <Button
                       size="sm"
                       variant="outline"
-                      className="h-7 px-3 text-xs font-medium border-red-300 text-red-700 hover:bg-red-100"
+                      className="w-full h-8 text-[11px] font-semibold mt-2 border-slate-300 hover:bg-slate-100"
                       onClick={() => {
                         setCurrentTripAlerts({ tripId: trip.trip_id || trip.id, alerts: tripAlerts });
                         setAlertsModalOpen(true);
                       }}
                     >
-                      VIEW FEED
+                      <FileText className="w-3 h-3 mr-1" />
+                      View All Incidents
                     </Button>
                   </div>
-                );
-              })()}
-
-              <div className="p-3">
-                {/* Compact Timeline */}
-                {(() => {
-                  const tripAlerts = alerts.slice(0, 5);
-                  
-                  if (tripAlerts.length === 0) return null;
-                  
-                  return (
-                    <div className="mb-3">
-                      <div className="flex items-center justify-between mb-2">
-                        <div className="flex items-center gap-2">
-                          <AlertOctagon className="w-4 h-4 text-red-600" />
-                          <span className="text-sm font-semibold text-gray-900">INCIDENT LOG</span>
-                          <span className="px-2 py-0.5 bg-red-100 text-red-700 text-xs font-bold rounded-full">
-                            {tripAlerts.length}
-                          </span>
-                        </div>
-                        <span className="text-sm font-medium text-gray-600">{Math.round(progress)}%</span>
-                      </div>
-                      
-                      <div className="relative h-16 bg-white border border-gray-200 rounded mb-2">
-                        <div className="absolute top-1/2 left-2 right-2 h-1 bg-gray-200 rounded-full transform -translate-y-1/2">
-                          <div className="h-full bg-blue-500 rounded-full transition-all" style={{ width: `${progress}%` }} />
-                        </div>
-                        
-                        {tripAlerts.map((alert, index) => {
-                          const spacing = 100 / (tripAlerts.length + 1);
-                          const position = spacing * (index + 1);
-                          const isResolved = alert.resolved || false;
-                          const baseColor = isResolved ? 'bg-green-500 border-green-600' : {
-                            critical: 'bg-red-500 border-red-600',
-                            high: 'bg-orange-500 border-orange-600',
-                            medium: 'bg-yellow-500 border-yellow-600',
-                            low: 'bg-blue-500 border-blue-600'
-                          }[alert.severity] || 'bg-red-500 border-red-600';
-                          
-                          return (
-                            <React.Fragment key={alert.id}>
-                              <div
-                                className="absolute group cursor-pointer"
-                                style={{ left: `calc(${position}%)`, top: '50%', transform: 'translate(-50%, -50%)' }}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  // Fetch vehicle info from trip
-                                  const vehicleData = trip.vehicleassignments?.[0]?.vehicle;
-                                  const enrichedAlert = {
-                                    ...alert,
-                                    vehicleId: trip.id,
-                                    vehicle_registration: vehicleData?.name || trip.id,
-                                    fleet_number: vehicleData?.fleet_number
-                                  };
-                                  setSelectedAlert(enrichedAlert);
-                                  setAlertDetailModalOpen(true);
-                                }}
-                              >
-                                <div className={cn(
-                                  "w-7 h-7 rounded-full flex items-center justify-center border-2 bg-white shadow-md hover:scale-125 transition-all",
-                                  baseColor,
-                                  !isResolved && "animate-pulse"
-                                )}>
-                                  {alert.alert_type === 'smoking' ? (
-                                    <Cigarette className="w-3.5 h-3.5 text-white" strokeWidth={2.5} />
-                                  ) : (
-                                    <Zap className="w-3.5 h-3.5 text-white" strokeWidth={2.5} />
-                                  )}
-                                </div>
-                                
-                                <div className="absolute top-full mt-1 left-1/2 transform -translate-x-1/2 text-center">
-                                  <div className="text-[10px] font-bold text-gray-700 whitespace-nowrap rounded-full bg-white/80 px-1.5 py-0.5 shadow-sm">
-                                    {new Date(alert.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
-                                  </div>
-                                </div>
-                                
-                                <div className="absolute bottom-full mb-2 left-1/2 transform -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10">
-                                <div className="bg-gray-900 text-white p-2.5 rounded-lg shadow-xl text-xs min-w-[180px]">
-                                  <div className="flex items-center gap-2 mb-1.5 pb-1.5 border-b border-gray-700">
-                                    {alert.alert_type === 'smoking' ? (
-                                      <Cigarette className="w-4 h-4 text-red-400" />
-                                    ) : (
-                                      <Zap className="w-4 h-4 text-yellow-400" />
-                                    )}
-                                    <span className="font-bold">{alert.type || alert.alert_type || 'Alert'}</span>
-                                  </div>
-                                  <div className="space-y-1">
-                                    <div className="flex items-center gap-1.5 text-gray-300">
-                                      <Truck className="w-3 h-3" />
-                                      <span>{alert.vehicle_registration}</span>
-                                    </div>
-                                    <div className="flex items-center gap-1.5 text-gray-300">
-                                      <User className="w-3 h-3" />
-                                      <span>{alert.driver_name}</span>
-                                    </div>
-                                    <div className="flex items-center gap-1.5 text-gray-300">
-                                      <Clock className="w-3 h-3" />
-                                      <span>{new Date(alert.timestamp).toLocaleTimeString()}</span>
-                                    </div>
-                                  </div>
-                                  <div className={cn(
-                                    "mt-2 pt-2 border-t border-gray-700 text-xs font-semibold flex items-center gap-1",
-                                    isResolved ? "text-green-400" : "text-red-400"
-                                  )}>
-                                    {isResolved ? (
-                                      <><CheckCircle className="w-3 h-3" /> Resolved</>
-                                    ) : (
-                                      <><AlertTriangle className="w-3 h-3" /> Pending</>  
-                                    )}
-                                  </div>
-                                </div>
-                              </div>
-                              </div>
-                              {index < tripAlerts.length - 1 && (
-                                <div 
-                                  className="absolute h-12 w-px bg-gradient-to-b from-gray-300 via-gray-400 to-gray-300"
-                                  style={{ 
-                                    left: `${position + spacing / 2}%`, 
-                                    top: '50%', 
-                                    transform: 'translate(-50%, -50%)' 
-                                  }}
-                                />
-                              )}
-                            </React.Fragment>
-                          );
-                        })}
-                      </div>
-                      
-                      <div className="grid grid-cols-2 gap-2">
-                        <div className="flex items-center gap-2 text-xs">
-                          <div className="flex items-center gap-1">
-                            <div className="w-3 h-3 rounded-full bg-red-500 animate-pulse"></div>
-                            <span className="text-gray-600">Pending:</span>
-                          </div>
-                          <span className="font-bold text-red-600">{tripAlerts.filter(a => !a.resolved).length}</span>
-                        </div>
-                        <div className="flex items-center gap-2 text-xs">
-                          <div className="flex items-center gap-1">
-                            <div className="w-3 h-3 rounded-full bg-green-500"></div>
-                            <span className="text-gray-600">Resolved:</span>
-                          </div>
-                          <span className="font-bold text-green-600">{tripAlerts.filter(a => a.resolved).length}</span>
-                        </div>
-                      </div>
-                      
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="w-full h-8 text-xs font-medium mt-2"
-                        onClick={() => {
-                          setCurrentTripAlerts({ tripId: trip.trip_id || trip.id, alerts: tripAlerts });
-                          setAlertsModalOpen(true);
-                        }}
-                      >
-                        <FileText className="w-3 h-3 mr-1" />
-                        View All Incidents
-                      </Button>
-                    </div>
-                  );
-                })()}
+                )}
 
               {/* Cargo Information */}
               {trip.cargo && (
-              <div className="bg-white rounded-lg p-2 mb-3 border border-slate-100">
+              <div className="bg-slate-50 rounded-lg p-2 mb-2 border border-slate-200">
               <div className="flex items-center gap-1 mb-1">
               <div className="w-1.5 h-1.5 bg-slate-400 rounded-full"></div>
-              <span className="text-xs font-medium text-gray-700 uppercase">Cargo</span>
+              <span className="text-[11px] font-semibold text-slate-600 uppercase tracking-wide">Cargo</span>
               </div>
-              <p className="text-sm font-medium text-black">
+              <p className="text-xs font-semibold text-slate-900">
               {trip.cargo}{trip.cargo_weight && ` (${trip.cargo_weight})`}
               </p>
               </div>
@@ -1482,30 +1601,30 @@ function RoutingSection({ userRole, handleViewMap, setCurrentTripForNote, setNot
               const pickupTime = trip.pickup_locations?.[0]?.scheduled_time || trip.pickuplocations?.[0]?.scheduled_time;
               const dropoffTime = trip.dropoff_locations?.[0]?.scheduled_time || trip.dropofflocations?.[0]?.scheduled_time;
               return (pickupTime || dropoffTime) && (
-              <div className="bg-white rounded p-2 mb-2 border border-slate-100">
+              <div className="bg-slate-50 rounded-lg p-2 mb-2 border border-slate-200">
               <div className="flex items-center gap-1 mb-1">
-              <Clock className="w-3 h-3 text-sky-500" />
-              <span className="text-xs font-medium text-gray-700">Schedule</span>
+              <Clock className="w-3 h-3 text-blue-600" />
+              <span className="text-[11px] font-semibold text-slate-600 uppercase tracking-wide">Schedule</span>
               </div>
-              <div className="space-y-1">
+              <div className="space-y-0.5">
               {pickupTime && (
-              <div className="flex items-center justify-between text-xs">
+              <div className="flex items-center justify-between text-[11px]">
               <div className="flex items-center gap-1">
                 <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full"></div>
-                <span className="font-medium text-gray-800">Pickup</span>
+                <span className="font-semibold text-slate-700">Pickup</span>
               </div>
-              <span className="font-semibold text-black">
+              <span className="font-semibold text-slate-900">
                 {new Date(pickupTime).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })} {new Date(pickupTime).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
               </span>
               </div>
               )}
               {dropoffTime && (
-              <div className="flex items-center justify-between text-xs">
+              <div className="flex items-center justify-between text-[11px]">
               <div className="flex items-center gap-1">
                 <div className="w-1.5 h-1.5 bg-red-500 rounded-full"></div>
-                <span className="font-medium text-gray-800">Drop-off</span>
+                <span className="font-semibold text-slate-700">Drop-off</span>
               </div>
-              <span className="font-semibold text-black">
+              <span className="font-semibold text-slate-900">
                 {new Date(dropoffTime).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })} {new Date(dropoffTime).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
               </span>
               </div>
@@ -1516,13 +1635,13 @@ function RoutingSection({ userRole, handleViewMap, setCurrentTripForNote, setNot
               })()}
 
               {/* Action Buttons */}
-              <div className="flex flex-wrap gap-2 mt-1">
+              <div className="flex flex-wrap gap-1.5 mt-1.5">
               <SecureButton 
               page="dashboard"
               action="edit"
               size="sm" 
               variant="outline" 
-              className="h-8 text-xs"
+              className="h-8 text-[11px] font-semibold border-slate-300 bg-white hover:bg-slate-100"
               onClick={() => {
               setCurrentTripForTime(trip);
               setTimeType('pickup');
@@ -1539,7 +1658,7 @@ function RoutingSection({ userRole, handleViewMap, setCurrentTripForNote, setNot
               action="edit"
               size="sm" 
               variant="outline" 
-              className="h-8 text-xs"
+              className="h-8 text-[11px] font-semibold border-slate-300 bg-white hover:bg-slate-100"
               onClick={() => {
               setCurrentTripForTime(trip);
               setTimeType('dropoff');
@@ -1553,8 +1672,8 @@ function RoutingSection({ userRole, handleViewMap, setCurrentTripForNote, setNot
               </SecureButton>
               <Button 
               size="sm"
-              variant="link"
-              className="h-8 text-xs ml-auto border border-gray-300"
+              variant="outline"
+              className="h-8 text-[11px] font-semibold ml-auto border-slate-300 bg-white hover:bg-slate-100"
               onClick={async () => {
               setLoadingPhotos(true);
               try {
@@ -1722,7 +1841,7 @@ function TripReportsSection() {
                         {clientDetails?.name || 'Unknown Client'} - Trip #{trip.trip_id || trip.id}
                       </CardTitle>
                       <p className="text-sm text-slate-600">
-                        {trip.origin} → {trip.destination}
+                        {trip.origin} â†’ {trip.destination}
                       </p>
                     </div>
                   </div>
@@ -1931,7 +2050,7 @@ function TripReportsSection() {
                                 <span className="text-slate-600">Compliant Route</span>
                               </div>
                               <span className="font-semibold text-emerald-700">
-                                {unauthorizedStops === 0 ? '✓' : '✗'}
+                                {unauthorizedStops === 0 ? 'âœ“' : 'âœ—'}
                               </span>
                             </div>
                             <div className="flex items-center justify-between text-sm">
@@ -2017,7 +2136,106 @@ export default function Dashboard() {
   const [currentTripForVideo, setCurrentTripForVideo] = useState<any>(null);
   const [selectedAlert, setSelectedAlert] = useState<any>(null);
   const [alertDetailModalOpen, setAlertDetailModalOpen] = useState(false);
+  const [alertRealtimeLoading, setAlertRealtimeLoading] = useState(false);
   const [showNCRModal, setShowNCRModal] = useState(false);
+  const [incidentReportModalOpen, setIncidentReportModalOpen] = useState(false);
+  const [selectedTripForIncident, setSelectedTripForIncident] = useState<any>(null);
+  const selectedAlertDisplayTs =
+    selectedAlert?.screenshot_timestamps?.[0] ||
+    selectedAlert?.media?.screenshots?.[0]?.timestamp ||
+    selectedAlert?.timestamp ||
+    null;
+  const selectedAlertSeverity = String(selectedAlert?.priority || selectedAlert?.severity || "info").toLowerCase();
+  const selectedAlertType = String(selectedAlert?.alert_type || selectedAlert?.type || "alert").toLowerCase();
+  const selectedAlertTitle =
+    selectedAlertType.includes("smok") ? "Smoking Violation" :
+    selectedAlertType.includes("speed") ? "Speeding Violation" :
+    String(selectedAlert?.type || selectedAlert?.alert_type || "Alert")
+      .replace(/_/g, " ")
+      .replace(/\b\w/g, (c: string) => c.toUpperCase());
+
+  const openAlertDetailRealtime = useCallback(async (alertSeed: any, trip?: any) => {
+    const isValidDisplayUrl = (url?: string) =>
+      !!url && /^https?:\/\//i.test(url) && url !== "upload-failed" && url !== "local-only";
+
+    const baseAlert = {
+      ...alertSeed,
+      vehicle_registration:
+        alertSeed?.vehicle_registration ||
+        trip?.vehicleassignments?.[0]?.vehicle?.name ||
+        alertSeed?.vehicleId,
+      fleet_number:
+        alertSeed?.fleet_number ||
+        trip?.vehicleassignments?.[0]?.vehicle?.fleet_number ||
+        undefined,
+    };
+
+    setSelectedAlert(baseAlert);
+    setAlertDetailModalOpen(true);
+    setAlertRealtimeLoading(true);
+
+    try {
+      const alertId = String(baseAlert?.id || "").trim();
+      if (!alertId) return;
+
+      const detailRes = await fetch(`/api/video-server/alerts/${alertId}`);
+
+      const detailJson = detailRes.ok ? await detailRes.json() : null;
+
+      const detailAlert = detailJson?.alert || {};
+      const screenshots = Array.isArray(detailAlert?.screenshots) ? detailAlert.screenshots : [];
+      const screenshotTimestamps = screenshots
+        .map((s: any) => s?.timestamp)
+        .filter(Boolean)
+        .sort((a: string, b: string) => new Date(b).getTime() - new Date(a).getTime());
+      const normalizedScreenshots = screenshots
+        .filter((s: any) => isValidDisplayUrl(s?.storage_url))
+        .map((s: any) => ({
+          id: s?.id,
+          url: s?.storage_url,
+          timestamp: s?.timestamp || detailAlert?.timestamp || baseAlert?.timestamp,
+          channel: s?.channel,
+          file_path: s?.file_path,
+        }));
+
+      setSelectedAlert((prev: any) => {
+        const merged = {
+          ...prev,
+          ...baseAlert,
+          ...detailAlert,
+          severity:
+            detailAlert?.severity ||
+            detailAlert?.priority ||
+            baseAlert?.severity ||
+            baseAlert?.priority ||
+            "info",
+          alert_type:
+            detailAlert?.alert_type ||
+            (detailAlert?.type ? String(detailAlert.type).toLowerCase().replace(/\s+/g, "_") : undefined) ||
+            baseAlert?.alert_type,
+          media: {
+            screenshots: normalizedScreenshots,
+            videos: [],
+          },
+          screenshot_timestamps: screenshotTimestamps,
+          videos: {},
+        };
+
+        if (!merged?.location?.latitude && merged?.metadata?.latitude && merged?.metadata?.longitude) {
+          merged.location = {
+            latitude: merged.metadata.latitude,
+            longitude: merged.metadata.longitude,
+          };
+        }
+
+        return merged;
+      });
+    } catch (err) {
+      console.error("Failed to refresh alert details:", err);
+    } finally {
+      setAlertRealtimeLoading(false);
+    }
+  }, []);
   useEffect(() => {
     const getCookie = (name: string) => {
       const value = `; ${document.cookie}`;
@@ -2284,6 +2502,12 @@ export default function Dashboard() {
                 Video Alerts
               </TabsTrigger>
               <TabsTrigger
+                value="screenshots"
+                className="px-6 py-2 text-sm font-medium rounded-md data-[state=active]:bg-white data-[state=active]:shadow-sm"
+              >
+                Screenshots
+              </TabsTrigger>
+              <TabsTrigger
                 value="routing"
                 className="px-6 py-2 text-sm font-medium rounded-md data-[state=active]:bg-white data-[state=active]:shadow-sm"
               >
@@ -2341,14 +2565,19 @@ export default function Dashboard() {
               setEditTripOpen={setEditTripOpen}
               setCurrentTripForApproval={setCurrentTripForApproval}
               setApprovalModalOpen={setApprovalModalOpen}
-              setSelectedAlert={setSelectedAlert}
-              setAlertDetailModalOpen={setAlertDetailModalOpen}
+              onOpenAlertDetail={openAlertDetailRealtime}
+              setIncidentReportModalOpen={setIncidentReportModalOpen}
+              setSelectedTripForIncident={setSelectedTripForIncident}
             />
           </div>
         )}
 
         {activeTab === "video-alerts" && (
           <VideoAlertsDashboardTab />
+        )}
+
+        {activeTab === "screenshots" && (
+          <ScreenshotsDashboardTab />
         )}
 
         {activeTab === "reports" && (
@@ -2841,7 +3070,7 @@ export default function Dashboard() {
                             // Prioritize vehicle marker for immediate visibility
                             if (!mapData.showRouteOnly && !mapData.showBasicRoute && mapData.longitude && mapData.latitude) {
                               const vehicleEl = document.createElement('div')
-                              vehicleEl.innerHTML = '🚛'
+                              vehicleEl.innerHTML = 'ðŸš›'
                               vehicleEl.style.cssText = `
                                 font-size: 24px; width: 32px; height: 32px;
                                 display: flex; align-items: center; justify-content: center;
@@ -2987,7 +3216,7 @@ export default function Dashboard() {
                                   
                                   // Add center marker
                                   const stopEl = document.createElement('div');
-                                  stopEl.innerHTML = '🛑';
+                                  stopEl.innerHTML = 'ðŸ›‘';
                                   stopEl.style.fontSize = '20px';
                                   
                                   const marker = new window.mapboxgl.Marker(stopEl)
@@ -3574,18 +3803,7 @@ export default function Dashboard() {
                             : "bg-white border-gray-200 hover:border-red-300"
                         )}
                         onClick={() => {
-                          // Fetch alert media and open detail view
-                          fetch(`/api/alerts/${alert.id}/media`)
-                            .then(res => res.json())
-                            .then(data => {
-                              setSelectedAlert({ ...alert, media: data });
-                              setAlertDetailModalOpen(true);
-                            })
-                            .catch(err => {
-                              console.error('Failed to fetch alert media:', err);
-                              setSelectedAlert(alert);
-                              setAlertDetailModalOpen(true);
-                            });
+                          openAlertDetailRealtime(alert);
                         }}
                       >
                         {/* Icon */}
@@ -3909,39 +4127,43 @@ export default function Dashboard() {
 
       {/* Alert Detail Modal */}
       {alertDetailModalOpen && selectedAlert && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <div className="bg-gradient-to-br from-slate-50 to-slate-100 rounded-lg shadow-2xl w-full max-w-[95vw] h-[90vh] overflow-hidden flex flex-col">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-3 md:p-6">
+          <div className="w-full max-w-[1200px] h-[92vh] overflow-hidden rounded-2xl border border-slate-300 bg-slate-50 shadow-2xl flex flex-col">
             {/* Header */}
-            <div className="bg-white border-b border-slate-200 shadow-sm px-6 py-4 flex-shrink-0">
+            <div className="border-b border-slate-200 bg-gradient-to-r from-slate-950 via-slate-900 to-red-950 px-4 md:px-6 py-4 flex-shrink-0">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-4">
-                  <Button variant="ghost" size="sm" onClick={() => {
+                  <Button variant="outline" size="sm" className="border-white/20 bg-white/10 text-white hover:bg-white/20 hover:text-white" onClick={() => {
                     setAlertDetailModalOpen(false);
+                    setAlertRealtimeLoading(false);
                     setSelectedAlert(null);
                   }}>
                     <ArrowLeft className="w-4 h-4 mr-2" />
                     Back
                   </Button>
-                  <div className="h-6 w-px bg-slate-300" />
+                  <div className="h-6 w-px bg-white/20" />
                   <div>
                     <div className="flex items-center gap-2 mb-1">
-                      <h1 className="text-xl font-bold text-slate-900">
-                        {selectedAlert.alert_type === 'smoking' ? 'Smoking Violation' : 'Speeding Violation'}
+                      <h1 className="text-xl font-bold text-white">
+                        {selectedAlertTitle}
                       </h1>
                       <Badge variant="outline" className={cn(
                         "flex items-center gap-1",
-                        selectedAlert.severity === 'critical' ? 'bg-red-100 text-red-800 border-red-300' :
-                        selectedAlert.severity === 'high' ? 'bg-orange-100 text-orange-800 border-orange-300' :
-                        selectedAlert.severity === 'medium' ? 'bg-yellow-100 text-yellow-800 border-yellow-300' :
+                        selectedAlertSeverity === 'critical' ? 'bg-red-100 text-red-800 border-red-300' :
+                        selectedAlertSeverity === 'high' ? 'bg-orange-100 text-orange-800 border-orange-300' :
+                        selectedAlertSeverity === 'medium' ? 'bg-yellow-100 text-yellow-800 border-yellow-300' :
                         'bg-blue-100 text-blue-800 border-blue-300'
                       )}>
                         <AlertTriangle className="w-3 h-3" />
-                        {selectedAlert.severity?.toUpperCase() || 'INFO'}
+                        {selectedAlertSeverity.toUpperCase()}
                       </Badge>
                     </div>
-                    <p className="text-sm text-slate-600">
-                      Alert ID: {selectedAlert.id} • {new Date(selectedAlert.timestamp).toLocaleString()}
+                    <p className="text-sm text-slate-300">
+                      Alert ID: {selectedAlert.id} • {selectedAlertDisplayTs ? new Date(selectedAlertDisplayTs).toLocaleString() : 'N/A'}
                     </p>
+                    {alertRealtimeLoading && (
+                      <p className="text-xs text-amber-300 mt-1">Refreshing latest alert details...</p>
+                    )}
                   </div>
                 </div>
 
@@ -3951,10 +4173,11 @@ export default function Dashboard() {
                     <>
                       <Button 
                         variant="outline" 
-                        className="border-red-300 text-red-700 hover:bg-red-50"
+                        className="border-red-300/70 bg-white text-red-700 hover:bg-red-50"
                         onClick={() => {
                           if (confirm('Mark this alert as a false alarm?')) {
                             setAlertDetailModalOpen(false);
+                            setAlertRealtimeLoading(false);
                             setSelectedAlert(null);
                           }
                         }}
@@ -3975,12 +4198,12 @@ export default function Dashboard() {
               </div>
             </div>
 
-            <div className="flex-1 overflow-y-auto px-6 py-6">
-              <div className="grid grid-cols-12 gap-6">
+            <div className="flex-1 overflow-y-auto px-4 md:px-6 py-6">
+              <div className="grid grid-cols-1 xl:grid-cols-12 gap-6">
                 {/* Main Content */}
-                <div className="col-span-8">
+                <div className="xl:col-span-8">
                   <Tabs defaultValue="screenshots" className="w-full">
-                    <TabsList className="w-full justify-start">
+                    <TabsList className="w-full justify-start bg-slate-200/70 p-1 rounded-lg">
                       <TabsTrigger value="screenshots">Screenshots</TabsTrigger>
                       <TabsTrigger value="videos">Event Video</TabsTrigger>
                       <TabsTrigger value="timeline">Timeline</TabsTrigger>
@@ -3988,7 +4211,7 @@ export default function Dashboard() {
 
                     {/* Screenshots Tab */}
                     <TabsContent value="screenshots" className="mt-4">
-                      <Card className="p-4">
+                      <Card className="p-4 border-slate-200 bg-white shadow-sm">
                         <div className="flex items-center justify-between mb-4">
                           <h3 className="text-lg font-semibold text-slate-900">
                             Camera Screenshots
@@ -3997,7 +4220,7 @@ export default function Dashboard() {
                         <div className="grid grid-cols-2 gap-4">
                           {selectedAlert.media?.screenshots?.length > 0 ? (
                             selectedAlert.media.screenshots.map((screenshot, idx) => (
-                              <Card key={idx} className="overflow-hidden">
+                              <Card key={idx} className="overflow-hidden border-slate-200 shadow-sm hover:shadow-md transition-shadow">
                                 <div className="relative aspect-video bg-slate-900">
                                   <img
                                     src={screenshot.url}
@@ -4020,7 +4243,7 @@ export default function Dashboard() {
                               </Card>
                             ))
                           ) : selectedAlert.video_url ? (
-                            <Card className="overflow-hidden">
+                            <Card className="overflow-hidden border-slate-200 shadow-sm">
                               <div className="relative aspect-video bg-slate-900">
                                 <img
                                   src={selectedAlert.video_url}
@@ -4052,14 +4275,14 @@ export default function Dashboard() {
 
                     {/* Video Clips Tab */}
                     <TabsContent value="videos" className="mt-4">
-                      <Card className="p-4">
+                      <Card className="p-4 border-slate-200 bg-white shadow-sm">
                         <h3 className="text-lg font-semibold text-slate-900 mb-4">
                           Event Video (SD Card)
                         </h3>
                         <div className="space-y-4">
                           {selectedAlert.media?.videos?.length > 0 ? (
                             selectedAlert.media.videos.map((video, idx) => (
-                              <Card key={idx} className="p-4">
+                              <Card key={idx} className="p-4 border-slate-200 shadow-sm">
                                 <video controls className="w-full rounded mb-3">
                                   <source src={video.url} type="video/mp4" />
                                   Your browser does not support video playback.
@@ -4080,7 +4303,7 @@ export default function Dashboard() {
                               </Card>
                             ))
                           ) : selectedAlert.video_url ? (
-                            <Card className="p-4">
+                            <Card className="p-4 border-slate-200 shadow-sm">
                               <video controls className="w-full rounded mb-3">
                                 <source src={selectedAlert.video_url} type="video/mp4" />
                                 Your browser does not support video playback.
@@ -4110,7 +4333,7 @@ export default function Dashboard() {
 
                     {/* Timeline Tab */}
                     <TabsContent value="timeline" className="mt-4">
-                      <Card className="p-4">
+                      <Card className="p-4 border-slate-200 bg-white shadow-sm">
                         <h3 className="text-lg font-semibold text-slate-900 mb-4">Alert History</h3>
                         <div className="space-y-4">
                           <div className="text-center py-12 text-slate-500">
@@ -4123,9 +4346,9 @@ export default function Dashboard() {
                 </div>
 
                 {/* Sidebar */}
-                <div className="col-span-4 space-y-4">
+                <div className="xl:col-span-4 space-y-4">
                   {/* Alert Details */}
-                  <Card className="p-4">
+                  <Card className="p-4 border-slate-200 bg-white shadow-sm">
                     <h3 className="font-semibold text-slate-900 mb-4">Alert Details</h3>
                     <div className="space-y-3 text-sm">
                       <div className="flex items-start gap-2">
@@ -4185,7 +4408,7 @@ export default function Dashboard() {
                             {selectedAlert.metadata.direction !== undefined && (
                               <div className="flex justify-between text-xs">
                                 <span className="text-slate-600">Direction:</span>
-                                <span className="font-medium">{selectedAlert.metadata.direction}°</span>
+                                <span className="font-medium">{selectedAlert.metadata.direction}Â°</span>
                               </div>
                             )}
                             {selectedAlert.metadata.altitude !== undefined && (
@@ -4200,22 +4423,25 @@ export default function Dashboard() {
                     </div>
                   </Card>
 
-                  {/* Notes Section */}
-                  <Card className="p-4">
-                    <h3 className="font-semibold text-slate-900 mb-4">Notes</h3>
-                    
-                    {/* Mini Map */}
-                    {(selectedAlert.location?.latitude || selectedAlert.metadata?.latitude) && (
-                      <div 
-                        className="w-full h-48 rounded border bg-slate-100 mb-4"
+                  {/* Map Section */}
+                  <Card className="p-4 border-slate-200 bg-white shadow-sm">
+                    <h3 className="font-semibold text-slate-900 mb-4">Map</h3>
+                    {(selectedAlert.location?.latitude || selectedAlert.metadata?.latitude) ? (
+                      <div
+                        className="w-full h-56 rounded border bg-slate-100"
                         ref={(el) => {
                           if (el && !el.dataset.mapInitialized) {
                             el.dataset.mapInitialized = 'true';
                             const lat = selectedAlert.location?.latitude || selectedAlert.metadata?.latitude;
                             const lng = selectedAlert.location?.longitude || selectedAlert.metadata?.longitude;
-                            
+                            const mapboxToken = process.env.NEXT_PUBLIC_MAPBOX_TOKEN;
+                            if (!mapboxToken) {
+                              el.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#64748b;font-size:14px;">Map token missing</div>';
+                              return;
+                            }
+
                             el.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#64748b;font-size:14px;">Loading map...</div>';
-                            
+
                             const script = document.createElement('script');
                             script.src = 'https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.js';
                             script.async = true;
@@ -4224,11 +4450,11 @@ export default function Dashboard() {
                               link.href = 'https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.css';
                               link.rel = 'stylesheet';
                               document.head.appendChild(link);
-                              
+
                               el.innerHTML = '';
-                              
+
                               if (window.mapboxgl) {
-                                window.mapboxgl.accessToken = 'pk.eyJ1Ijoic29sZm8tYWRtaW4iLCJhIjoiY21nbmt0amY5MHZieTJsc2FjNTdwcDR1MCJ9.ksls0mQkEYmskyI_851Zxw';
+                                window.mapboxgl.accessToken = mapboxToken;
                                 const map = new window.mapboxgl.Map({
                                   container: el,
                                   style: 'mapbox://styles/mapbox/streets-v12',
@@ -4236,13 +4462,13 @@ export default function Dashboard() {
                                   zoom: 13,
                                   attributionControl: false
                                 });
-                                
+
                                 new window.mapboxgl.Marker({ color: '#ef4444' })
                                   .setLngLat([lng, lat])
                                   .addTo(map);
                               }
                             };
-                            
+
                             if (!document.querySelector('script[src*="mapbox-gl.js"]')) {
                               document.head.appendChild(script);
                             } else if (window.mapboxgl) {
@@ -4251,9 +4477,19 @@ export default function Dashboard() {
                           }
                         }}
                       />
+                    ) : (
+                      <div className="rounded-md border border-dashed border-slate-300 bg-slate-50 p-4 text-center">
+                        <p className="text-sm text-slate-500">No map coordinates available</p>
+                      </div>
                     )}
-                    
-                    <p className="text-sm text-slate-500 text-center py-4">No notes yet</p>
+                  </Card>
+
+                  {/* Notes Section */}
+                  <Card className="p-4 border-slate-200 bg-white shadow-sm">
+                    <h3 className="font-semibold text-slate-900 mb-4">Notes</h3>
+                    <div className="rounded-md border border-dashed border-slate-300 bg-slate-50 p-4 text-center">
+                      <p className="text-sm text-slate-500">No notes yet</p>
+                    </div>
                   </Card>
                 </div>
               </div>
@@ -4277,9 +4513,29 @@ export default function Dashboard() {
         />
       )}
 
+      {incidentReportModalOpen && selectedAlert && (
+        <IncidentReportTemplateModal
+          isOpen={incidentReportModalOpen}
+          onClose={() => {
+            setIncidentReportModalOpen(false);
+            setSelectedTripForIncident(null);
+          }}
+          alert={selectedAlert}
+          trip={selectedTripForIncident}
+          onResolved={() => {
+            setIncidentReportModalOpen(false);
+            setSelectedTripForIncident(null);
+            setSelectedAlert(null);
+            setRefreshTrigger((prev) => prev + 1);
+          }}
+        />
+      )}
+
 
 
 
     </>
   );
 }
+
+

@@ -1,11 +1,11 @@
-const MAPBOX_ACCESS_TOKEN =
-  'pk.eyJ1IjoicmVuZGFuaS1kZXYiLCJhIjoiY21kM2c3OXQ4MDJ6MjJqczlqbzNwcDZvaCJ9.6skTnPcXqD7h24o9mfuQnw'
+const MAPBOX_ACCESS_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_TOKEN || ''
 
 /**
  * Geocode an address to get coordinates using Mapbox Geocoding API
  */
 export async function geocodeAddress(address) {
   try {
+    if (!MAPBOX_ACCESS_TOKEN) return null
     const encodedAddress = encodeURIComponent(address)
     const response = await fetch(
       `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodedAddress}.json?access_token=${MAPBOX_ACCESS_TOKEN}&limit=1`
@@ -55,6 +55,7 @@ export async function geocodeFromFormData(formData) {
  */
 export async function reverseGeocode(lat, lng) {
   try {
+    if (!MAPBOX_ACCESS_TOKEN) return null
     const response = await fetch(
       `https://api.mapbox.com/geocoding/v5/mapbox.places/${lng},${lat}.json?access_token=${MAPBOX_ACCESS_TOKEN}&types=address`
     )
@@ -105,6 +106,7 @@ export async function reverseGeocode(lat, lng) {
  */
 export async function searchPlaces(query, limit = 5) {
   try {
+    if (!MAPBOX_ACCESS_TOKEN) return []
     if (!query || query.length < 3) {
       return []
     }

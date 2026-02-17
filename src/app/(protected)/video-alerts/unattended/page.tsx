@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { AlertTriangle, Clock, RefreshCw, Eye } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import AlertsSubnav from '@/components/video-alerts/alerts-subnav'
 
 export default function UnattendedAlertsPage() {
   const router = useRouter()
@@ -47,8 +48,8 @@ export default function UnattendedAlertsPage() {
     <div className="p-6 space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold">Unattended Alerts</h1>
-          <p className="text-gray-600">Alerts not actioned within {threshold} minutes</p>
+          <h1 className="text-3xl font-bold text-slate-900">Unattended Alerts</h1>
+          <p className="text-slate-600">Alerts not actioned within {threshold} minutes</p>
         </div>
         <div className="flex gap-2">
           <select 
@@ -67,8 +68,10 @@ export default function UnattendedAlertsPage() {
         </div>
       </div>
 
+      <AlertsSubnav />
+
       {alerts.length === 0 ? (
-        <Card className="p-12 text-center">
+        <Card className="p-12 text-center bg-white shadow-sm border-slate-200">
           <Clock className="w-16 h-16 mx-auto text-green-500 mb-4" />
           <h2 className="text-xl font-bold mb-2">All Caught Up!</h2>
           <p className="text-gray-600">No unattended alerts at this time</p>
@@ -76,7 +79,7 @@ export default function UnattendedAlertsPage() {
       ) : (
         <div className="grid gap-4">
           {alerts.map(alert => (
-            <Card key={alert.id} className="p-4 hover:shadow-lg transition-shadow">
+            <Card key={alert.id} className="p-4 hover:shadow-lg transition-shadow border-slate-200 bg-white shadow-sm">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-4">
                   <div className={cn('w-3 h-3 rounded-full', priorityColor(alert.priority))} />

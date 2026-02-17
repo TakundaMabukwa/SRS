@@ -56,7 +56,7 @@ export default function AlertDetailPage({ params }) {
     if (alertId && alerts.length > 0) {
       const alert = alerts.find(a => a.id === alertId);
       if (alert) {
-        fetchAlert(alert);
+        fetchAlert(alertId);
       }
     }
   }, [alertId, alerts]);

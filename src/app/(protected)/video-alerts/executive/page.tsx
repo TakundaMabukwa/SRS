@@ -5,6 +5,7 @@ import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { RefreshCw, TrendingUp, AlertTriangle, CheckCircle, Clock } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import AlertsSubnav from '@/components/video-alerts/alerts-subnav'
 
 export default function ExecutiveDashboardPage() {
   const [data, setData] = useState(null)
@@ -43,8 +44,8 @@ export default function ExecutiveDashboardPage() {
     <div className="p-6 space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold">Executive Dashboard</h1>
-          <p className="text-gray-600">Last {days} days analytics</p>
+          <h1 className="text-3xl font-bold text-slate-900">Executive Dashboard</h1>
+          <p className="text-slate-600">Management analytics for the last {days} days</p>
         </div>
         <div className="flex gap-2">
           <select 
@@ -63,8 +64,10 @@ export default function ExecutiveDashboardPage() {
         </div>
       </div>
 
-      <div className="grid grid-cols-4 gap-4">
-        <Card className="p-6">
+      <AlertsSubnav />
+
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <Card className="p-6 bg-white shadow-sm border-slate-200">
           <div className="flex items-center gap-3">
             <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center">
               <TrendingUp className="w-6 h-6 text-blue-600" />
@@ -76,7 +79,7 @@ export default function ExecutiveDashboardPage() {
           </div>
         </Card>
 
-        <Card className="p-6">
+        <Card className="p-6 bg-white shadow-sm border-slate-200">
           <div className="flex items-center gap-3">
             <div className="w-12 h-12 bg-red-100 rounded-lg flex items-center justify-center">
               <AlertTriangle className="w-6 h-6 text-red-600" />
@@ -88,7 +91,7 @@ export default function ExecutiveDashboardPage() {
           </div>
         </Card>
 
-        <Card className="p-6">
+        <Card className="p-6 bg-white shadow-sm border-slate-200">
           <div className="flex items-center gap-3">
             <div className="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center">
               <CheckCircle className="w-6 h-6 text-green-600" />
@@ -100,7 +103,7 @@ export default function ExecutiveDashboardPage() {
           </div>
         </Card>
 
-        <Card className="p-6">
+        <Card className="p-6 bg-white shadow-sm border-slate-200">
           <div className="flex items-center gap-3">
             <div className="w-12 h-12 bg-orange-100 rounded-lg flex items-center justify-center">
               <Clock className="w-6 h-6 text-orange-600" />
@@ -115,8 +118,8 @@ export default function ExecutiveDashboardPage() {
         </Card>
       </div>
 
-      <div className="grid grid-cols-2 gap-6">
-        <Card className="p-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <Card className="p-6 bg-white shadow-sm border-slate-200">
           <h2 className="text-xl font-bold mb-4">Alerts by Priority</h2>
           <div className="space-y-3">
             {data.alertsByPriority?.map(item => (
@@ -136,7 +139,7 @@ export default function ExecutiveDashboardPage() {
           </div>
         </Card>
 
-        <Card className="p-6">
+        <Card className="p-6 bg-white shadow-sm border-slate-200">
           <h2 className="text-xl font-bold mb-4">Alerts by Type</h2>
           <div className="space-y-3">
             {data.alertsByType?.slice(0, 5).map(item => (

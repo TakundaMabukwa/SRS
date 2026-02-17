@@ -5,8 +5,10 @@ import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { RefreshCw, Download, Camera } from 'lucide-react'
 import { useVideoWebSocket } from '@/hooks/use-video-websocket'
+import AlertsSubnav from '@/components/video-alerts/alerts-subnav'
 
 export default function ScreenshotsPage() {
+  const videoBaseUrl = process.env.NEXT_PUBLIC_VIDEO_BASE_URL || 'configured video server'
   const [screenshots, setScreenshots] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [apiError, setApiError] = useState(false)
@@ -51,7 +53,7 @@ export default function ScreenshotsPage() {
         <Card className="p-8 max-w-md text-center">
           <Camera className="w-16 h-16 mx-auto text-red-500 mb-4" />
           <h2 className="text-2xl font-bold mb-2">Video Server Unavailable</h2>
-          <p className="text-gray-600 mb-6">Unable to connect to the video server at 164.90.182.2:3000</p>
+          <p className="text-gray-600 mb-6">Unable to connect to the video server at {videoBaseUrl}</p>
           <Button onClick={fetchScreenshots}>
             <RefreshCw className="w-4 h-4 mr-2" />
             Retry Connection
@@ -65,8 +67,8 @@ export default function ScreenshotsPage() {
     <div className="p-6 space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold">Screenshot Gallery</h1>
-          <p className="text-gray-600">
+          <h1 className="text-3xl font-bold text-slate-900">Screenshot Gallery</h1>
+          <p className="text-slate-600">
             Auto-refreshes every 30 seconds • Last refresh: {lastRefresh.toLocaleTimeString()}
           </p>
         </div>
@@ -76,15 +78,17 @@ export default function ScreenshotsPage() {
         </Button>
       </div>
 
+      <AlertsSubnav />
+
       {screenshots.length === 0 ? (
-        <Card className="p-12 text-center">
+        <Card className="p-12 text-center bg-white shadow-sm border-slate-200">
           <Camera className="w-16 h-16 mx-auto text-gray-300 mb-4" />
           <p className="text-gray-500">No screenshots available</p>
         </Card>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
           {screenshots.map((screenshot) => (
-            <Card key={screenshot.id} className="overflow-hidden group">
+            <Card key={screenshot.id} className="overflow-hidden group border-slate-200 shadow-sm hover:shadow-md transition-shadow">
               <div className="relative aspect-video bg-gray-900">
                 <img
                   src={screenshot.storage_url}

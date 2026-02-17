@@ -7,11 +7,25 @@ import { Badge } from '@/components/ui/badge'
 import { Card } from '@/components/ui/card'
 import { Textarea } from '@/components/ui/textarea'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { AlertTriangle, Clock, CheckCircle, RefreshCw, Eye, ArrowUpCircle, Camera, MapPin, User, Car } from 'lucide-react'
+import AlertsSubnav from '@/components/video-alerts/alerts-subnav'
+import {
+  AlertTriangle,
+  Clock,
+  CheckCircle,
+  RefreshCw,
+  Eye,
+  ArrowUpCircle,
+  Camera,
+  MapPin,
+  User,
+  Car,
+  ShieldAlert
+} from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 export default function VideoAlertsPage() {
   const router = useRouter()
+  const videoBaseUrl = process.env.NEXT_PUBLIC_VIDEO_BASE_URL || 'configured video server'
   const [alerts, setAlerts] = useState({ critical: [], high: [], medium: [], low: [] })
   const [screenshots, setScreenshots] = useState([])
   const [selectedAlert, setSelectedAlert] = useState(null)
@@ -92,7 +106,7 @@ export default function VideoAlertsPage() {
         <Card className="p-8 max-w-md text-center">
           <AlertTriangle className="w-16 h-16 mx-auto mb-4 text-red-500" />
           <h2 className="text-2xl font-bold mb-2">Video Server Unavailable</h2>
-          <p className="text-gray-600 mb-6">Unable to connect to the video alert server at 164.90.182.2:3000</p>
+          <p className="text-gray-600 mb-6">Unable to connect to the video alert server at {videoBaseUrl}</p>
           <Button onClick={() => window.location.reload()}>
             <RefreshCw className="w-4 h-4 mr-2" />
             Retry Connection
@@ -139,6 +153,13 @@ export default function VideoAlertsPage() {
   }
 
   const allAlerts = [...alerts.critical, ...alerts.high, ...alerts.medium, ...alerts.low]
+  const escalatedCount = allAlerts.filter((a) => a.status === 'escalated' || a.escalated).length
+  const unattendedCount = allAlerts.filter((a) => {
+    if (['closed', 'resolved'].includes(a.status)) return false
+    const ageMs = Date.now() - new Date(a.timestamp).getTime()
+    return ageMs >= 30 * 60 * 1000
+  }).length
+
   const priorityColor = (p) => ({
     critical: 'bg-red-500',
     high: 'bg-orange-500',
@@ -150,8 +171,8 @@ export default function VideoAlertsPage() {
     <div className="h-screen flex flex-col bg-gray-50">
       <div className="bg-white border-b px-6 py-4 flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold">Alert Management</h1>
-          <p className="text-sm text-gray-600">Monitor and respond to all alerts</p>
+          <h1 className="text-2xl font-bold">Alert Control Center</h1>
+          <p className="text-sm text-gray-600">Monitor, investigate, escalate, and close alerts from one workspace</p>
         </div>
         <Button onClick={() => { fetchAlerts(); fetchScreenshots() }} disabled={loading}>
           <RefreshCw className={cn('w-4 h-4 mr-2', loading && 'animate-spin')} />
@@ -159,7 +180,11 @@ export default function VideoAlertsPage() {
         </Button>
       </div>
 
-      <div className="bg-white border-b px-6 py-3 grid grid-cols-4 gap-4">
+      <div className="px-6 pt-3">
+        <AlertsSubnav />
+      </div>
+
+      <div className="bg-white border-b px-6 py-3 grid grid-cols-2 md:grid-cols-6 gap-4">
         <div className="flex items-center gap-3">
           <div className="w-12 h-12 bg-red-100 rounded-lg flex items-center justify-center">
             <AlertTriangle className="w-6 h-6 text-red-600" />
@@ -194,6 +219,24 @@ export default function VideoAlertsPage() {
           <div>
             <p className="text-2xl font-bold">{alerts.low?.length || 0}</p>
             <p className="text-xs text-gray-600">Low</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-3">
+          <div className="w-12 h-12 bg-amber-100 rounded-lg flex items-center justify-center">
+            <Clock className="w-6 h-6 text-amber-600" />
+          </div>
+          <div>
+            <p className="text-2xl font-bold">{unattendedCount}</p>
+            <p className="text-xs text-gray-600">Unattended 30m+</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-3">
+          <div className="w-12 h-12 bg-purple-100 rounded-lg flex items-center justify-center">
+            <ShieldAlert className="w-6 h-6 text-purple-600" />
+          </div>
+          <div>
+            <p className="text-2xl font-bold">{escalatedCount}</p>
+            <p className="text-xs text-gray-600">Escalated</p>
           </div>
         </div>
       </div>

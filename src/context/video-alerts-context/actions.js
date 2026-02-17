@@ -31,37 +31,37 @@ export const clearFilters = () => ({
 // Acknowledge an alert (user has seen it)
 export const acknowledgeAlert = (alertId, userId) => ({
   type: types.ACKNOWLEDGE_ALERT,
-  payload: { alertId, userId },
+  payload: { alertId, acknowledgedData: userId },
 });
 
 // Update alert status
 export const updateAlertStatus = (alertId, newStatus, userId) => ({
   type: types.UPDATE_ALERT_STATUS,
-  payload: { alertId, newStatus, userId },
+  payload: { alertId, newStatus, updatedData: userId },
 });
 
 // Add note to alert
 export const addNote = (alertId, noteData) => ({
   type: types.ADD_NOTE,
-  payload: { alertId, ...noteData },
+  payload: { alertId, note: noteData },
 });
 
 // Escalate alert to management
 export const escalateAlert = (alertId, escalationData) => ({
   type: types.ESCALATE_ALERT,
-  payload: { alertId, ...escalationData },
+  payload: { alertId, escalationData },
 });
 
 // Close alert (requires notes)
 export const closeAlert = (alertId, closingData) => ({
   type: types.CLOSE_ALERT,
-  payload: { alertId, ...closingData },
+  payload: { alertId, closedData: closingData },
 });
 
 // Refresh screenshots (every 30 seconds for active alerts)
-export const refreshScreenshots = (alertId) => ({
+export const refreshScreenshots = (alertId, screenshots) => ({
   type: types.REFRESH_SCREENSHOTS,
-  payload: alertId,
+  payload: { alertId, screenshots },
 });
 
 // Set statistics
