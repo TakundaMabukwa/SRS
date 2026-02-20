@@ -85,10 +85,22 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContaine
 import { EditTripModal } from "@/components/ui/edit-trip-modal";
 import VideoAlertsPage from '@/app/(protected)/video-alerts/page';
 import { NCRTemplate } from '@/components/reports/ncr-template';
-import NCRFormModal from '@/components/video-alerts/ncr-form-modal';
+import NRCCameraCoveredModal from '@/components/video-alerts/nrc-camera-covered-modal';
+import NCRSafetyViolationModal from '@/components/video-alerts/ncr-safety-violation-modal';
+import NCRSpeedingModal from '@/components/video-alerts/ncr-speeding-modal';
+import IncidentReportModal from '@/components/video-alerts/incident-report-modal';
+import CriminalReportModal from '@/components/video-alerts/criminal-report-modal';
 import IncidentReportTemplateModal from '@/components/video-alerts/incident-report-template-modal';
 
-function UniversalVideoPlayer({ url, className = "w-full rounded mb-3" }: { url: string; className?: string }) {
+function UniversalVideoPlayer({
+  url,
+  className = "w-full rounded mb-3",
+  onPlayableChange,
+}: {
+  url: string;
+  className?: string;
+  onPlayableChange?: (playable: boolean) => void;
+}) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const [playbackError, setPlaybackError] = useState("");
 
@@ -139,7 +151,11 @@ function UniversalVideoPlayer({ url, className = "w-full rounded mb-3" }: { url:
         preload="metadata"
         playsInline
         className={className}
-        onError={() => setPlaybackError("Browser could not decode this format. Use Open/Download for this clip.")}
+        onCanPlay={() => onPlayableChange?.(true)}
+        onError={() => {
+          setPlaybackError("Browser could not decode this format. Use Open/Download for this clip.");
+          onPlayableChange?.(false);
+        }}
       >
         Your browser does not support video playback.
       </video>
@@ -1052,11 +1068,14 @@ function RoutingSection({ userRole, handleViewMap, setCurrentTripForNote, setNot
   const [loading, setLoading] = useState(true)
   const [groupedAlerts, setGroupedAlerts] = useState<any[]>([])
   const [alertTimelinePageByTrip, setAlertTimelinePageByTrip] = useState<Record<string, number>>({})
+  const [costCenterFilter, setCostCenterFilter] = useState<string>('all')
   const ALERTS_PER_PAGE = 10
   const videoBaseUrl = (process.env.NEXT_PUBLIC_VIDEO_BASE_URL || "").replace(/\/$/, "")
+  const videoWsUrl = (process.env.NEXT_PUBLIC_VIDEO_WS_URL || "").replace(/\/$/, "")
   const videoProxyBase = "/api/video-server"
   const lastRefreshAtRef = useRef(0)
   const refreshingRef = useRef(false)
+  const initialTripsLoadedRef = useRef(false)
   const normalizeId = (value: unknown) => (value === null || value === undefined ? "" : String(value).trim())
   const extractVehicleKey = (alert: any) =>
     normalizeId(
@@ -1083,7 +1102,10 @@ function RoutingSection({ userRole, handleViewMap, setCurrentTripForNote, setNot
     try {
       const fetchJsonSafe = async (url: string) => {
         try {
-          const res = await fetch(url, { cache: "no-store" });
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), 8000);
+          const res = await fetch(url, { cache: "no-store", signal: controller.signal });
+          clearTimeout(timeout);
           if (!res.ok) return null;
           return await res.json();
         } catch {
@@ -1097,7 +1119,7 @@ function RoutingSection({ userRole, handleViewMap, setCurrentTripForNote, setNot
         return [];
       };
       const normalizeAlertTimestamp = (alert: any) =>
-        alert?.timestamp || alert?.created_at || alert?.alert_timestamp || null;
+        alert?.timestamp || alert?.created_at || alert?.alert_timestamp || alert?.event_time || null;
       const buildGroupedAlerts = (activeList: any[], shotsByAlertId: Map<string, any[]>) => {
         const grouped = activeList.map((activeAlert: any) => {
           const keyAlert = { ...activeAlert }
@@ -1146,17 +1168,28 @@ function RoutingSection({ userRole, handleViewMap, setCurrentTripForNote, setNot
         return Array.from(deduped.values());
       };
 
-      const [newestJson, activeJson, unresolvedJson, fallbackJsonAll] = await Promise.all([
-        fetchJsonSafe(`${videoProxyBase}/alerts?status=new&limit=500`),
-        fetchJsonSafe(`${videoProxyBase}/alerts/active?limit=500`),
-        fetchJsonSafe(`${videoProxyBase}/alerts/unresolved?limit=500`),
-        fetchJsonSafe(`${videoProxyBase}/alerts?limit=500`)
+      const [newestJson, activeJson, fallbackJsonAll] = await Promise.all([
+        fetchJsonSafe(`${videoProxyBase}/alerts?status=new&limit=50&minutes=720`),
+        fetchJsonSafe(`${videoProxyBase}/alerts/active?limit=50&minutes=720`),
+        fetchJsonSafe(`${videoProxyBase}/alerts?limit=50&minutes=720`)
       ]);
 
       const mergedById = new Map<string, any>();
       const ingest = (items: any[]) => {
-        items.forEach((item) => {
-          const id = normalizeId(item?.id) || `${normalizeId(item?.device_id || item?.vehicleId)}-${normalizeId(item?.timestamp || item?.created_at)}`;
+        items.forEach((item, idx) => {
+          const ts = normalizeId(normalizeAlertTimestamp(item));
+          const vehicleKey = normalizeId(
+            item?.device_id ||
+            item?.deviceId ||
+            item?.vehicleId ||
+            item?.vehicle_id ||
+            item?.phone
+          );
+          const id =
+            normalizeId(item?.id) ||
+            normalizeId(item?.alert_id) ||
+            normalizeId(item?.alertId) ||
+            `${vehicleKey || 'unknown'}-${ts || normalizeId(item?.alert_type || item?.type) || idx}`;
           if (!id) return;
           if (!mergedById.has(id)) {
             mergedById.set(id, item);
@@ -1166,7 +1199,6 @@ function RoutingSection({ userRole, handleViewMap, setCurrentTripForNote, setNot
 
       ingest(extractAlertList(newestJson));
       ingest(extractAlertList(activeJson));
-      ingest(extractAlertList(unresolvedJson));
 
       // Hard fallback if the active feeds are empty/unavailable.
       if (!mergedById.size) {
@@ -1174,10 +1206,12 @@ function RoutingSection({ userRole, handleViewMap, setCurrentTripForNote, setNot
       }
 
       let activeList = Array.from(mergedById.values());
-      activeList = activeList.filter((a: any) => {
+      const unresolvedOnly = activeList.filter((a: any) => {
         const status = String(a?.status || '').toLowerCase();
         return !(a?.resolved === true || status === 'resolved' || status === 'closed');
       });
+      // Prefer unresolved for routing, but never render empty when backend status fields are inconsistent.
+      activeList = unresolvedOnly.length ? unresolvedOnly : activeList;
 
       // Render alerts immediately; do not block UI on heavy screenshot query.
       setGroupedAlerts(buildGroupedAlerts(activeList, new Map<string, any[]>()));
@@ -1218,66 +1252,243 @@ function RoutingSection({ userRole, handleViewMap, setCurrentTripForNote, setNot
 
   useEffect(() => {
     fetchGroupedAlerts();
-  }, [fetchGroupedAlerts, refreshTrigger]);
+  }, [fetchGroupedAlerts]);
 
   useEffect(() => {
-    const resolveWsBase = () => {
+    const resolveWsCandidates = () => {
+      const candidates: string[] = [];
+      const seen = new Set<string>();
+      const isHttpsPage = typeof window !== "undefined" && window.location.protocol === "https:";
+
+      const pushCandidate = (value: string) => {
+        const v = (value || "").trim().replace(/\/+$/, "");
+        if (!v || seen.has(v)) return;
+        seen.add(v);
+        candidates.push(v);
+      };
+
+      // 1) Explicit websocket URL always wins.
+      const rawWs = (videoWsUrl || "").trim();
+      if (rawWs) {
+        try {
+          const parsed = new URL(rawWs.replace(/^ws:\/\//i, "http://").replace(/^wss:\/\//i, "https://"));
+          pushCandidate(`${rawWs.startsWith("wss://") ? "wss" : "ws"}://${parsed.host}`);
+        } catch {
+          pushCandidate(rawWs.replace(/^https?:\/\//i, isHttpsPage ? "wss://" : "ws://"));
+        }
+      }
+
+      // 2) Video API base host fallback (remote backend host).
       const rawBase = (videoBaseUrl || "").trim();
       if (rawBase) {
-        const protocol = rawBase.startsWith("https://") ? "wss://" : "ws://";
-        return rawBase.replace(/^https?:\/\//i, protocol);
+        let cleaned = rawBase
+          .replace(/\/api\/video-server\/?$/i, "")
+          .replace(/\/api\/?$/i, "")
+          .replace(/\/+$/, "");
+        try {
+          const parsed = new URL(cleaned);
+          const hostOnly = parsed.host;
+          if (hostOnly) {
+            if (isHttpsPage) {
+              pushCandidate(`wss://${hostOnly}`);
+            }
+            pushCandidate(`${parsed.protocol === "https:" ? "wss" : "ws"}://${hostOnly}`);
+            if (!isHttpsPage) {
+              pushCandidate(`ws://${hostOnly}`);
+            }
+          }
+        } catch {
+          if (isHttpsPage) {
+            pushCandidate(cleaned.replace(/^https?:\/\//i, "wss://"));
+          }
+          if (!isHttpsPage) {
+            pushCandidate(cleaned.replace(/^https?:\/\//i, "ws://"));
+          }
+        }
       }
-      if (typeof window !== "undefined") {
-        const protocol = window.location.protocol === "https:" ? "wss://" : "ws://";
-        return `${protocol}${window.location.host}`;
+
+      // 3) Current host only when not local dev and no explicit video host config.
+      if (typeof window !== "undefined" && !rawWs && !rawBase) {
+        const hostname = window.location.hostname;
+        const isLocal = hostname === "localhost" || hostname === "127.0.0.1";
+        if (!isLocal) {
+          const currentHostBase = `${isHttpsPage ? "wss" : "ws"}://${window.location.host}`;
+          pushCandidate(currentHostBase);
+        }
       }
-      return "";
+
+      return candidates;
     };
 
     let ws: WebSocket | null = null;
-    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-    let reconnectDelayMs = 1000;
+    let connectAttemptTimer: ReturnType<typeof setTimeout> | null = null;
+    let backgroundSyncTimer: ReturnType<typeof setTimeout> | null = null;
     let stopped = false;
 
-    const connect = () => {
-      const wsBase = resolveWsBase();
-      if (!wsBase || stopped) return;
+      const normalizeIncomingAlert = (raw: any) => {
+      if (!raw) return null;
+      const timestamp = raw?.timestamp || raw?.created_at || raw?.alert_timestamp || raw?.event_time || null;
+      const vehicleId = extractVehicleKey(raw);
+      const alertType = raw?.alert_type || String(raw?.type || "alert").toLowerCase().replace(/\s+/g, "_");
+      const incomingId = normalizeId(raw?.id || raw?.alert_id || raw?.alertId);
+      const fallbackId = vehicleId && timestamp ? `${vehicleId}-${timestamp}` : "";
+      const stableId = incomingId || fallbackId;
+      if (!stableId || !timestamp) return null;
+      return {
+        ...raw,
+        id: stableId,
+        timestamp,
+        vehicleId,
+        alert_type: alertType,
+        severity: raw?.severity || raw?.priority || "high",
+        media: raw?.media || { screenshots: [], videos: [] },
+        screenshot_timestamps: Array.isArray(raw?.screenshot_timestamps) ? raw.screenshot_timestamps : [],
+        videos: raw?.videos || {},
+      };
+    };
 
-      try {
-        ws = new WebSocket(`${wsBase}/ws/alerts`);
-        ws.onopen = () => {
-          reconnectDelayMs = 1000;
-          fetchGroupedAlerts();
-        };
-        ws.onmessage = () => {
-          fetchGroupedAlerts();
-        };
-        ws.onerror = () => {
-          // Allow close handler to drive reconnect loop.
-        };
-        ws.onclose = () => {
-          ws = null;
-          if (stopped) return;
-          reconnectTimer = setTimeout(() => connect(), reconnectDelayMs);
-          reconnectDelayMs = Math.min(reconnectDelayMs * 2, 10000);
-        };
-      } catch {
-        reconnectTimer = setTimeout(() => connect(), reconnectDelayMs);
-        reconnectDelayMs = Math.min(reconnectDelayMs * 2, 10000);
+    const queueBackgroundSync = () => {
+      if (backgroundSyncTimer) clearTimeout(backgroundSyncTimer);
+      backgroundSyncTimer = setTimeout(() => {
+        fetchGroupedAlerts();
+      }, 1200);
+    };
+
+    const applyWsPayload = (payload: any) => {
+      const normalizeType = (v: unknown) => String(v || "").toLowerCase().replace(/-/g, "_");
+      const messageType = normalizeType(payload?.type);
+      const nestedType = normalizeType(payload?.data?.type || payload?.alert?.type);
+      const effectiveType = messageType === "notification" && nestedType ? nestedType : messageType;
+      const data = payload?.data?.alert || payload?.alert || payload?.data;
+
+      if (effectiveType === "active_alerts_snapshot" && Array.isArray(data)) {
+        const normalized = data.map(normalizeIncomingAlert).filter(Boolean);
+        if (!normalized.length) return;
+        setGroupedAlerts((prev) => {
+          const byId = new Map<string, any>();
+          prev.forEach((a: any) => {
+            const key = normalizeId(a?.id);
+            if (key) byId.set(key, a);
+          });
+          normalized.forEach((a: any) => {
+            const key = normalizeId(a?.id);
+            if (key) byId.set(key, a);
+          });
+          return Array.from(byId.values()).sort(
+            (a: any, b: any) => new Date(b?.timestamp || 0).getTime() - new Date(a?.timestamp || 0).getTime()
+          );
+        });
+        queueBackgroundSync();
+        return;
+      }
+
+      if (["new_alert", "alert", "alert_acknowledged", "alert_escalated", "alert_resolved", "newalert"].includes(effectiveType)) {
+        const normalized = normalizeIncomingAlert(data);
+        if (!normalized) {
+          queueBackgroundSync();
+          return;
+        }
+        const isResolved =
+          effectiveType === "alert_resolved" ||
+          normalized?.resolved === true ||
+          String(normalized?.status || "").toLowerCase() === "resolved" ||
+          String(normalized?.status || "").toLowerCase() === "closed";
+
+        setGroupedAlerts((prev) => {
+          const key = normalizeId(normalized?.id);
+          const next = prev.filter((a: any) => normalizeId(a?.id) !== key);
+          if (isResolved) {
+            return next;
+          }
+          next.unshift(normalized);
+          return next.sort(
+            (a: any, b: any) => new Date(b?.timestamp || 0).getTime() - new Date(a?.timestamp || 0).getTime()
+          );
+        });
+        queueBackgroundSync();
       }
     };
 
-    connect();
+    const connectWithCandidate = (candidateIndex: number, list: string[]) => {
+      if (stopped) return;
+      if (candidateIndex >= list.length) {
+        return;
+      }
 
-    // Polling fallback when WS is temporarily unavailable.
-    const poller = setInterval(() => {
-      fetchGroupedAlerts();
-    }, 10000);
+      const wsUrl = `${list[candidateIndex]}/ws/alerts`;
+      let opened = false;
+
+      try {
+        ws = new WebSocket(wsUrl);
+      } catch {
+        connectWithCandidate(candidateIndex + 1, list);
+        return;
+      }
+
+      connectAttemptTimer = setTimeout(() => {
+        if (!opened && ws) {
+          try { ws.close(); } catch {}
+        }
+      }, 4000);
+
+      ws.onopen = () => {
+        opened = true;
+        if (connectAttemptTimer) {
+          clearTimeout(connectAttemptTimer);
+          connectAttemptTimer = null;
+        }
+        fetchGroupedAlerts();
+      };
+      ws.onmessage = (event) => {
+        try {
+          const payload = JSON.parse(event.data);
+          applyWsPayload(payload);
+        } catch {
+          fetchGroupedAlerts();
+        }
+      };
+      ws.onerror = () => {
+        // close handler manages retries/fallback candidates
+      };
+      ws.onclose = () => {
+        if (connectAttemptTimer) {
+          clearTimeout(connectAttemptTimer);
+          connectAttemptTimer = null;
+        }
+        ws = null;
+        if (stopped) return;
+        if (!opened) {
+          connectWithCandidate(candidateIndex + 1, list);
+          return;
+        }
+      };
+    };
+
+    const connect = () => {
+      const candidates = resolveWsCandidates();
+      if (!candidates.length || stopped) return;
+      connectWithCandidate(0, candidates);
+    };
+
+    // Ensure initial REST load finishes before attempting websocket connection.
+    let bootstrapped = false;
+    void (async () => {
+      try {
+        await fetchGroupedAlerts();
+      } finally {
+        if (!stopped) {
+          bootstrapped = true;
+          setTimeout(() => {
+            if (!stopped && bootstrapped) connect();
+          }, 250);
+        }
+      }
+    })();
 
     return () => {
       stopped = true;
-      clearInterval(poller);
-      if (reconnectTimer) clearTimeout(reconnectTimer);
+      if (connectAttemptTimer) clearTimeout(connectAttemptTimer);
+      if (backgroundSyncTimer) clearTimeout(backgroundSyncTimer);
       if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
         ws.close();
       }
@@ -1286,7 +1497,9 @@ function RoutingSection({ userRole, handleViewMap, setCurrentTripForNote, setNot
 
   useEffect(() => {
     async function fetchTrips() {
-      setLoading(true)
+      if (!initialTripsLoadedRef.current) {
+        setLoading(true)
+      }
       try {
         const supabase = createClient()
         
@@ -1356,6 +1569,7 @@ function RoutingSection({ userRole, handleViewMap, setCurrentTripForNote, setNot
         })
         
         setTrips(transformedTrips)
+        initialTripsLoadedRef.current = true
       } catch (err) {
         console.error('Error creating trips from alerts:', err)
         setTrips([])
@@ -1365,7 +1579,7 @@ function RoutingSection({ userRole, handleViewMap, setCurrentTripForNote, setNot
     }
     
     fetchTrips()
-  }, [refreshTrigger, groupedAlerts])
+  }, [groupedAlerts])
 
   // Sort trips to put faulty inspections at the top
   const tripsList = trips
@@ -1377,6 +1591,50 @@ function RoutingSection({ userRole, handleViewMap, setCurrentTripForNote, setNot
       // Then by date (newest first)
       return new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime()
     })
+
+  const getTripCostCenter = (trip: any) => {
+    const direct =
+      trip?.cost_center ||
+      trip?.costCenter ||
+      trip?.cost_centres ||
+      trip?.cost_centers ||
+      trip?.clientdetails?.cost_center ||
+      trip?.vehicleassignments?.[0]?.vehicle?.cost_center ||
+      trip?.vehicleassignments?.[0]?.vehicle?.costCenter
+    if (direct && String(direct).trim()) return String(direct).trim()
+
+    const firstAlert = Array.isArray(trip?.alert_data) ? trip.alert_data[0] : null
+    const fromAlert =
+      firstAlert?.cost_center ||
+      firstAlert?.costCenter ||
+      firstAlert?.metadata?.cost_center ||
+      firstAlert?.metadata?.costCenter
+    if (fromAlert && String(fromAlert).trim()) return String(fromAlert).trim()
+
+    return 'Unassigned'
+  }
+
+  const costCenterOptions = [
+    'TT Express',
+    'TT Linehaul',
+    'TT FMCG',
+    'TT On Time',
+    'Epilite',
+    'Rapid',
+    'VT Logistics',
+    'Remco',
+  ]
+
+  const normalizeCostCenter = (value: string) =>
+    String(value || '')
+      .toLowerCase()
+      .replace(/\s+/g, ' ')
+      .trim()
+
+  const filteredTripsList = tripsList.filter((trip) => {
+    if (costCenterFilter === 'all') return true
+    return normalizeCostCenter(getTripCostCenter(trip)) === normalizeCostCenter(costCenterFilter)
+  })
 
   const STATUS_OPTIONS = [
     { label: "Pending", value: "pending" },
@@ -1492,11 +1750,23 @@ function RoutingSection({ userRole, handleViewMap, setCurrentTripForNote, setNot
     )
   }
 
-  if (tripsList.length === 0) {
+  if (filteredTripsList.length === 0) {
     return (
       <div className="space-y-4">
+        <div className="flex justify-end">
+          <select
+            className="h-9 min-w-[220px] rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-700 outline-none focus:border-slate-500"
+            value={costCenterFilter}
+            onChange={(e) => setCostCenterFilter(e.target.value)}
+          >
+            <option value="all">All Cost Centers</option>
+            {costCenterOptions.map((cc) => (
+              <option key={cc} value={cc}>{cc}</option>
+            ))}
+          </select>
+        </div>
         <div className="text-center py-8 text-muted-foreground">
-          No active alert trips found
+          No active alert trips found for selected cost center
           <div className="mt-2 text-xs text-slate-500">
             Active alerts fetched: {groupedAlerts.length}
           </div>
@@ -1507,7 +1777,19 @@ function RoutingSection({ userRole, handleViewMap, setCurrentTripForNote, setNot
 
   return (
     <div className="space-y-6">
-      {tripsList.map((trip: any) => {
+      <div className="flex justify-end">
+        <select
+          className="h-9 min-w-[220px] rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-700 outline-none focus:border-slate-500"
+          value={costCenterFilter}
+          onChange={(e) => setCostCenterFilter(e.target.value)}
+        >
+          <option value="all">All Cost Centers</option>
+          {costCenterOptions.map((cc) => (
+            <option key={cc} value={cc}>{cc}</option>
+          ))}
+        </select>
+      </div>
+      {filteredTripsList.map((trip: any) => {
         const tripAlerts = getTripAlerts(trip)
         const pendingAlerts = tripAlerts.filter((a: any) => !(a?.resolved || a?.status === "resolved" || a?.status === "closed"))
         const resolvedAlerts = tripAlerts.length - pendingAlerts.length
@@ -2290,10 +2572,14 @@ export default function Dashboard() {
   const [alertDetailModalOpen, setAlertDetailModalOpen] = useState(false);
   const [alertRealtimeLoading, setAlertRealtimeLoading] = useState(false);
   const [videoPreview, setVideoPreview] = useState<{ url: string; label: string } | null>(null);
+  const [videoPlaybackFailures, setVideoPlaybackFailures] = useState<Record<string, boolean>>({});
   const [alertReason, setAlertReason] = useState("");
   const videoBaseUrl = (process.env.NEXT_PUBLIC_VIDEO_BASE_URL || "").replace(/\/$/, "");
   const videoProxyBase = "/api/video-server";
   const [showNCRModal, setShowNCRModal] = useState(false);
+  const [selectedNcrForm, setSelectedNcrForm] = useState<'' | 'nrc-camera-covered' | 'ncr-safety-violation' | 'ncr-speeding'>('');
+  const [showReportModal, setShowReportModal] = useState(false);
+  const [selectedReportForm, setSelectedReportForm] = useState<'' | 'incident-report' | 'criminal-report'>('');
   const [incidentReportModalOpen, setIncidentReportModalOpen] = useState(false);
   const [selectedTripForIncident, setSelectedTripForIncident] = useState<any>(null);
   const alertReasonOptions = [
@@ -2342,6 +2628,14 @@ export default function Dashboard() {
     selectedAlert?.media?.screenshots?.[0]?.timestamp ||
     selectedAlert?.timestamp ||
     null;
+  const selectedAlertLocationText =
+    selectedAlert?.location?.latitude && selectedAlert?.location?.longitude
+      ? `${selectedAlert.location.longitude.toFixed(6)}, ${selectedAlert.location.latitude.toFixed(6)}`
+      : selectedAlert?.metadata?.latitude && selectedAlert?.metadata?.longitude
+      ? `${selectedAlert.metadata.longitude.toFixed(6)}, ${selectedAlert.metadata.latitude.toFixed(6)}`
+      : typeof selectedAlert?.location === 'string'
+      ? selectedAlert.location
+      : 'Location from alert';
   const selectedAlertSeverity = String(selectedAlert?.priority || selectedAlert?.severity || "info").toLowerCase();
   const selectedAlertType = String(selectedAlert?.alert_type || selectedAlert?.type || "alert").toLowerCase();
   const selectedAlertTitle =
@@ -2383,6 +2677,22 @@ export default function Dashboard() {
   })();
   const preEventVideo = selectedAlertVideoList.find((v) => String(v.key || "").includes("pre_event"));
   const postEventVideo = selectedAlertVideoList.find((v) => String(v.key || "").includes("post_event"));
+  const cameraSdVideo = selectedAlertVideoList.find(
+    (v) =>
+      String(v.key || "").includes("camera_sd") ||
+      String(v.label || "").toLowerCase().includes("sd")
+  );
+  const prePostVideos = [preEventVideo, postEventVideo].filter(Boolean) as Array<{ key: string; label: string; url: string }>;
+  const shouldShowOnlySdCard =
+    !!cameraSdVideo &&
+    prePostVideos.length > 0 &&
+    prePostVideos.every((video) => videoPlaybackFailures[video.url] === true);
+
+  useEffect(() => {
+    if (alertDetailModalOpen) {
+      setVideoPlaybackFailures({});
+    }
+  }, [alertDetailModalOpen, selectedAlert?.id]);
 
   const openAlertDetailRealtime = useCallback(async (alertSeed: any, trip?: any) => {
     const isValidDisplayUrl = (url?: string) =>
@@ -4435,6 +4745,10 @@ export default function Dashboard() {
                     setAlertDetailModalOpen(false);
                     setAlertRealtimeLoading(false);
                     setAlertReason("");
+                    setSelectedNcrForm('');
+                    setSelectedReportForm('');
+                    setShowNCRModal(false);
+                    setShowReportModal(false);
                     setSelectedAlert(null);
                   }}>
                     <ArrowLeft className="w-4 h-4 mr-2" />
@@ -4490,6 +4804,10 @@ export default function Dashboard() {
                             setAlertDetailModalOpen(false);
                             setAlertRealtimeLoading(false);
                             setAlertReason("");
+                            setSelectedNcrForm('');
+                            setSelectedReportForm('');
+                            setShowNCRModal(false);
+                            setShowReportModal(false);
                             setSelectedAlert(null);
                           }
                         }}
@@ -4497,13 +4815,33 @@ export default function Dashboard() {
                         <XCircle className="w-4 h-4 mr-2" />
                         False Alert
                       </Button>
-                      <Button 
-                        className="bg-green-600 hover:bg-green-700"
-                        onClick={() => setShowNCRModal(true)}
+                      <select
+                        className="h-9 min-w-[220px] rounded-md border border-white/20 bg-white/10 px-3 text-sm text-white outline-none focus:border-white/40"
+                        value={selectedNcrForm}
+                        onChange={(e) => {
+                          const formType = (e.target.value || '') as '' | 'nrc-camera-covered' | 'ncr-safety-violation' | 'ncr-speeding';
+                          setSelectedNcrForm(formType);
+                          if (formType) setShowNCRModal(true);
+                        }}
                       >
-                        <CheckCircle className="w-4 h-4 mr-2" />
-                        Fill NCR Form
-                      </Button>
+                        <option value="" className="text-slate-900">Select NCR form</option>
+                        <option value="nrc-camera-covered" className="text-slate-900">nrc-camera-covered</option>
+                        <option value="ncr-safety-violation" className="text-slate-900">ncr-safety-violation</option>
+                        <option value="ncr-speeding" className="text-slate-900">ncr-speeding</option>
+                      </select>
+                      <select
+                        className="h-9 min-w-[190px] rounded-md border border-white/20 bg-white/10 px-3 text-sm text-white outline-none focus:border-white/40"
+                        value={selectedReportForm}
+                        onChange={(e) => {
+                          const formType = (e.target.value || '') as '' | 'incident-report' | 'criminal-report';
+                          setSelectedReportForm(formType);
+                          if (formType) setShowReportModal(true);
+                        }}
+                      >
+                        <option value="" className="text-slate-900">Reports</option>
+                        <option value="incident-report" className="text-slate-900">incident-report</option>
+                        <option value="criminal-report" className="text-slate-900">criminal-report</option>
+                      </select>
                     </>
                   )}
                 </div>
@@ -4592,11 +4930,52 @@ export default function Dashboard() {
                           Event Video (Pre and Post Incident)
                         </h3>
                         <div className="space-y-4">
-                          {(preEventVideo || postEventVideo) ? (
+                          {shouldShowOnlySdCard && cameraSdVideo ? (
+                            <div className="grid grid-cols-1 gap-4">
+                              <Card className="p-4 border-slate-200 shadow-sm bg-slate-950 text-slate-100">
+                                <UniversalVideoPlayer
+                                  url={cameraSdVideo.url}
+                                  className="w-full rounded mb-3 border border-slate-700"
+                                />
+                                <div className="flex items-center justify-between">
+                                  <div className="flex items-center gap-3">
+                                    <Video className="w-5 h-5 text-cyan-300" />
+                                    <div>
+                                      <p className="font-medium text-white">{cameraSdVideo.label || "Camera SD Clip"}</p>
+                                      <p className="text-sm text-slate-300">SD card video (fallback)</p>
+                                    </div>
+                                  </div>
+                                  <div className="flex items-center gap-2">
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      className="border-cyan-400/40 bg-slate-900 text-cyan-200 hover:bg-slate-800"
+                                      onClick={() => setVideoPreview({ url: cameraSdVideo.url, label: cameraSdVideo.label || "Camera SD Clip" })}
+                                    >
+                                      Preview
+                                    </Button>
+                                    <Button variant="outline" size="sm" onClick={() => window.open(cameraSdVideo.url, '_blank')}>
+                                      <Download className="w-4 h-4 mr-2" />
+                                      Download
+                                    </Button>
+                                  </div>
+                                </div>
+                              </Card>
+                            </div>
+                          ) : (preEventVideo || postEventVideo) ? (
                             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                               {[preEventVideo, postEventVideo].filter(Boolean).map((video: any, idx: number) => (
-                                <Card key={idx} className="p-4 border-slate-200 shadow-sm bg-slate-950 text-slate-100">
-                                  <UniversalVideoPlayer url={video.url} className="w-full rounded mb-3 border border-slate-700" />
+                                <Card key={video.url || idx} className="p-4 border-slate-200 shadow-sm bg-slate-950 text-slate-100">
+                                  <UniversalVideoPlayer
+                                    url={video.url}
+                                    className="w-full rounded mb-3 border border-slate-700"
+                                    onPlayableChange={(playable) => {
+                                      setVideoPlaybackFailures((prev) => ({
+                                        ...prev,
+                                        [video.url]: !playable,
+                                      }));
+                                    }}
+                                  />
                                   <div className="flex items-center justify-between">
                                     <div className="flex items-center gap-3">
                                       <Video className="w-5 h-5 text-cyan-300" />
@@ -4810,8 +5189,8 @@ export default function Dashboard() {
       )}
 
       {/* Close Alert Modal */}
-      {showNCRModal && selectedAlert && (
-        <NCRFormModal
+      {showNCRModal && selectedAlert && selectedNcrForm === 'nrc-camera-covered' && (
+        <NRCCameraCoveredModal
           isOpen={showNCRModal}
           onClose={() => setShowNCRModal(false)}
           driverInfo={{
@@ -4819,7 +5198,7 @@ export default function Dashboard() {
             fleetNumber: selectedAlert.vehicle_registration || selectedAlert.device_id,
             department: 'Fleet Operations',
             timestamp: selectedAlert.timestamp,
-            location: selectedAlert.location || 'Location from alert'
+            location: selectedAlertLocationText
           }}
           alertDetails={{
             id: selectedAlert.id,
@@ -4827,7 +5206,96 @@ export default function Dashboard() {
             severity: selectedAlert.priority || selectedAlert.severity,
             timestamp: selectedAlertDisplayTs || selectedAlert.timestamp,
             location: selectedAlert.location || selectedAlert.metadata,
-            screenshots: selectedAlert.media?.screenshots || []
+            screenshots: selectedAlert.media?.screenshots || [],
+            videos: selectedAlertVideoList || []
+          }}
+        />
+      )}
+      {showNCRModal && selectedAlert && selectedNcrForm === 'ncr-safety-violation' && (
+        <NCRSafetyViolationModal
+          isOpen={showNCRModal}
+          onClose={() => setShowNCRModal(false)}
+          driverInfo={{
+            name: selectedAlert.driver_name || 'Unknown Driver',
+            fleetNumber: selectedAlert.vehicle_registration || selectedAlert.device_id,
+            department: 'Fleet Operations',
+            timestamp: selectedAlert.timestamp,
+            location: selectedAlertLocationText
+          }}
+          alertDetails={{
+            id: selectedAlert.id,
+            type: selectedAlert.type || selectedAlert.alert_type,
+            severity: selectedAlert.priority || selectedAlert.severity,
+            timestamp: selectedAlertDisplayTs || selectedAlert.timestamp,
+            location: selectedAlert.location || selectedAlert.metadata,
+            screenshots: selectedAlert.media?.screenshots || [],
+            videos: selectedAlertVideoList || []
+          }}
+        />
+      )}
+      {showNCRModal && selectedAlert && selectedNcrForm === 'ncr-speeding' && (
+        <NCRSpeedingModal
+          isOpen={showNCRModal}
+          onClose={() => setShowNCRModal(false)}
+          driverInfo={{
+            name: selectedAlert.driver_name || 'Unknown Driver',
+            fleetNumber: selectedAlert.vehicle_registration || selectedAlert.device_id,
+            department: 'Fleet Operations',
+            timestamp: selectedAlert.timestamp,
+            location: selectedAlertLocationText
+          }}
+          alertDetails={{
+            id: selectedAlert.id,
+            type: selectedAlert.type || selectedAlert.alert_type,
+            severity: selectedAlert.priority || selectedAlert.severity,
+            timestamp: selectedAlertDisplayTs || selectedAlert.timestamp,
+            location: selectedAlert.location || selectedAlert.metadata,
+            screenshots: selectedAlert.media?.screenshots || [],
+            videos: selectedAlertVideoList || []
+          }}
+        />
+      )}
+      {showReportModal && selectedAlert && selectedReportForm === 'incident-report' && (
+        <IncidentReportModal
+          isOpen={showReportModal}
+          onClose={() => setShowReportModal(false)}
+          driverInfo={{
+            name: selectedAlert.driver_name || 'Unknown Driver',
+            fleetNumber: selectedAlert.vehicle_registration || selectedAlert.device_id,
+            department: 'Fleet Operations',
+            timestamp: selectedAlert.timestamp,
+            location: selectedAlertLocationText
+          }}
+          alertDetails={{
+            id: selectedAlert.id,
+            type: selectedAlert.type || selectedAlert.alert_type,
+            severity: selectedAlert.priority || selectedAlert.severity,
+            timestamp: selectedAlertDisplayTs || selectedAlert.timestamp,
+            location: selectedAlert.location || selectedAlert.metadata,
+            screenshots: selectedAlert.media?.screenshots || [],
+            videos: selectedAlertVideoList || []
+          }}
+        />
+      )}
+      {showReportModal && selectedAlert && selectedReportForm === 'criminal-report' && (
+        <CriminalReportModal
+          isOpen={showReportModal}
+          onClose={() => setShowReportModal(false)}
+          driverInfo={{
+            name: selectedAlert.driver_name || 'Unknown Driver',
+            fleetNumber: selectedAlert.vehicle_registration || selectedAlert.device_id,
+            department: 'Fleet Operations',
+            timestamp: selectedAlert.timestamp,
+            location: selectedAlertLocationText
+          }}
+          alertDetails={{
+            id: selectedAlert.id,
+            type: selectedAlert.type || selectedAlert.alert_type,
+            severity: selectedAlert.priority || selectedAlert.severity,
+            timestamp: selectedAlertDisplayTs || selectedAlert.timestamp,
+            location: selectedAlert.location || selectedAlert.metadata,
+            screenshots: selectedAlert.media?.screenshots || [],
+            videos: selectedAlertVideoList || []
           }}
         />
       )}

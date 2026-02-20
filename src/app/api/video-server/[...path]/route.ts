@@ -1,9 +1,15 @@
 import { NextRequest } from 'next/server'
 
-const VIDEO_SERVER_URL =
+const RAW_VIDEO_SERVER_URL =
   process.env.VIDEO_BASE_URL ||
   process.env.NEXT_PUBLIC_VIDEO_BASE_URL ||
   'http://localhost:3000'
+
+const VIDEO_SERVER_URL = (() => {
+  const trimmed = RAW_VIDEO_SERVER_URL.trim().replace(/\/+$/, '')
+  // Allow env values with or without /api suffix.
+  return trimmed.replace(/\/api$/i, '')
+})()
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
 

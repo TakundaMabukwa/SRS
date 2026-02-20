@@ -9,25 +9,85 @@ interface WebSocketMessage {
 }
 
 const VIDEO_BASE_URL = process.env.NEXT_PUBLIC_VIDEO_BASE_URL
-const WS_URL = VIDEO_BASE_URL
-  ? `ws://${VIDEO_BASE_URL.replace(/^https?:\/\//, '').replace(/\/$/, '')}/ws/alerts`
-  : null
+const VIDEO_WS_URL = process.env.NEXT_PUBLIC_VIDEO_WS_URL
+
+function getWsCandidates() {
+  const out: string[] = []
+  const seen = new Set<string>()
+  const isHttpsPage = typeof window !== 'undefined' && window.location.protocol === 'https:'
+
+  const push = (base: string) => {
+    const v = (base || '').trim().replace(/\/+$/, '')
+    if (!v || seen.has(v)) return
+    seen.add(v)
+    out.push(v)
+  }
+
+  const rawWs = (VIDEO_WS_URL || '').trim()
+  if (rawWs) {
+    try {
+      const parsed = new URL(rawWs.replace(/^ws:\/\//i, 'http://').replace(/^wss:\/\//i, 'https://'))
+      push(`${rawWs.startsWith('wss://') ? 'wss' : 'ws'}://${parsed.host}`)
+    } catch {
+      push(rawWs.replace(/^https?:\/\//i, isHttpsPage ? 'wss://' : 'ws://'))
+    }
+  }
+
+  if (VIDEO_BASE_URL) {
+    const cleaned = VIDEO_BASE_URL
+      .replace(/\/api\/video-server\/?$/i, '')
+      .replace(/\/api\/?$/i, '')
+      .replace(/\/+$/, '')
+    try {
+      const parsed = new URL(cleaned)
+      const hostOnly = parsed.host
+      if (hostOnly) {
+        if (isHttpsPage) push(`wss://${hostOnly}`)
+        push(`${parsed.protocol === 'https:' ? 'wss' : 'ws'}://${hostOnly}`)
+        if (!isHttpsPage) push(`ws://${hostOnly}`)
+      }
+    } catch {
+      if (isHttpsPage) push(cleaned.replace(/^https?:\/\//i, 'wss://'))
+      if (!isHttpsPage) push(cleaned.replace(/^https?:\/\//i, 'ws://'))
+    }
+  }
+
+  if (typeof window !== 'undefined' && !rawWs && !VIDEO_BASE_URL) {
+    const hostname = window.location.hostname
+    const isLocal = hostname === 'localhost' || hostname === '127.0.0.1'
+    if (!isLocal) {
+      push(`${isHttpsPage ? 'wss' : 'ws'}://${window.location.host}`)
+    }
+  }
+
+  return out.map((base) => `${base}/ws/alerts`)
+}
 
 export function useVideoWebSocket(onMessage?: (data: WebSocketMessage) => void) {
   const ws = useRef<WebSocket | null>(null)
   const [connected, setConnected] = useState(false)
   const [lastMessage, setLastMessage] = useState<WebSocketMessage | null>(null)
-  const reconnectTimeout = useRef<NodeJS.Timeout>()
 
   useEffect(() => {
-    if (!WS_URL) {
+    const urls = getWsCandidates()
+    if (!urls.length) {
       console.error('NEXT_PUBLIC_VIDEO_BASE_URL is not set. WebSocket disabled.')
       return
     }
 
     const connect = () => {
-      try {
-        ws.current = new WebSocket(WS_URL)
+      let idx = 0
+      const tryNext = () => {
+        const nextUrl = urls[idx++]
+        if (!nextUrl) {
+          return
+        }
+        try {
+          ws.current = new WebSocket(nextUrl)
+        } catch {
+          tryNext()
+          return
+        }
 
         ws.current.onopen = () => {
           setConnected(true)
@@ -50,19 +110,23 @@ export function useVideoWebSocket(onMessage?: (data: WebSocketMessage) => void) 
 
         ws.current.onclose = () => {
           setConnected(false)
-          console.log('WebSocket disconnected, reconnecting in 5s...')
-          reconnectTimeout.current = setTimeout(connect, 5000)
+          if (idx < urls.length) {
+            tryNext()
+            return
+          }
         }
+      }
+
+      try {
+        tryNext()
       } catch (err) {
         console.error('WebSocket connection error:', err)
-        reconnectTimeout.current = setTimeout(connect, 5000)
       }
     }
 
     connect()
 
     return () => {
-      if (reconnectTimeout.current) clearTimeout(reconnectTimeout.current)
       if (ws.current) {
         ws.current.close()
         ws.current = null

@@ -21,6 +21,18 @@ export default function HLSPlayer({ vehicleId, channel, vehicleName, onStop }: H
   useEffect(() => {
     let mounted = true;
     let hls: Hls | null = null;
+    let manifestRetries = 0;
+    const maxManifestRetries = 8;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    let hlsUrlBase = '';
+
+    const loadManifest = () => {
+      if (!hls) return;
+      const withCacheBuster = `${hlsUrlBase}${hlsUrlBase.includes('?') ? '&' : '?'}_ts=${Date.now()}`;
+      console.log('[HLS Player] Loading manifest:', withCacheBuster);
+      hls.loadSource(withCacheBuster);
+      hls.startLoad(-1);
+    };
 
     const startAndPlayStream = async () => {
       try {
@@ -53,8 +65,8 @@ export default function HLSPlayer({ vehicleId, channel, vehicleName, onStop }: H
           return;
         }
 
-        const hlsUrl = `/api/hls-proxy/${vehicleId}/${channel}/playlist.m3u8`;
-        console.log('[HLS Player] Loading:', hlsUrl);
+        hlsUrlBase = `/api/hls-proxy/${vehicleId}/${channel}/playlist.m3u8`;
+        console.log('[HLS Player] Base URL:', hlsUrlBase);
 
         if (Hls.isSupported()) {
           hls = new Hls({
@@ -83,13 +95,14 @@ export default function HLSPlayer({ vehicleId, channel, vehicleName, onStop }: H
             startPosition: -1,
           });
 
-          hls.loadSource(hlsUrl);
           hls.attachMedia(video);
+          loadManifest();
           hlsRef.current = hls;
 
           hls.on(Hls.Events.MANIFEST_PARSED, () => {
             console.log('[HLS Player] Manifest parsed successfully');
             if (!mounted) return;
+            manifestRetries = 0;
             setStatus('Streaming');
             setError(false);
             video.play().catch(e => console.warn('Autoplay blocked:', e));
@@ -99,6 +112,30 @@ export default function HLSPlayer({ vehicleId, channel, vehicleName, onStop }: H
             if (data.fatal) {
               console.error('[HLS Player] FATAL Error:', data.type, data.details);
               if (mounted) {
+                const detailsText = String(data.details || '').toLowerCase();
+                const isManifestIssue =
+                  detailsText.includes('manifestparsingerror') ||
+                  detailsText.includes('manifestloaderror') ||
+                  detailsText.includes('manifestloadtimeout');
+
+                if (isManifestIssue && manifestRetries < maxManifestRetries) {
+                  manifestRetries += 1;
+                  setStatus(`Waiting for stream... (${manifestRetries}/${maxManifestRetries})`);
+                  setError(false);
+                  if (retryTimer) clearTimeout(retryTimer);
+                  retryTimer = setTimeout(() => {
+                    if (!mounted) return;
+                    console.log('[HLS Player] Retrying manifest load...');
+                    loadManifest();
+                  }, 1200);
+                  return;
+                }
+                if (isManifestIssue && manifestRetries >= maxManifestRetries) {
+                  setStatus('Stream Unavailable');
+                  setError(true);
+                  return;
+                }
+
                 if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
                   console.log('[HLS Player] Fatal network error, attempting recovery...');
                   hls.startLoad();
@@ -117,7 +154,7 @@ export default function HLSPlayer({ vehicleId, channel, vehicleName, onStop }: H
 
           hlsRef.current = hls;
         } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-          video.src = hlsUrl;
+          video.src = `${hlsUrlBase}?_ts=${Date.now()}`;
           video.addEventListener('loadedmetadata', () => {
             if (mounted) {
               setStatus('Streaming');
@@ -155,6 +192,7 @@ export default function HLSPlayer({ vehicleId, channel, vehicleName, onStop }: H
     return () => {
       console.log(`[HLS Player] Cleanup ${vehicleId} ch${channel}`);
       mounted = false;
+      if (retryTimer) clearTimeout(retryTimer);
       if (hls) {
         hls.destroy();
       }

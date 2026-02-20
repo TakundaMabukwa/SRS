@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import Image from 'next/image'
 import { Button } from '@/components/ui/button'
 import { Printer, X } from 'lucide-react'
 
@@ -172,7 +173,7 @@ export default function NCRFormModal({ isOpen, onClose, driverInfo, alertDetails
             {/* HEADER */}
             <div className="flex border-b-2 border-black">
               <div className="w-1/4 border-r border-black p-2 flex items-center justify-center">
-                <h1 className="text-3xl font-black" style={{color: '#dc2626'}}>SRS</h1>
+                <Image src="/image001.png" alt="SRS" width={150} height={96} className="h-auto w-full max-w-[150px] object-contain" />
               </div>
               <div className="w-1/2 border-r border-black">
                 <div className="border-b border-black p-1 text-center font-bold text-lg" style={{backgroundColor: '#e2e8f0'}}>SRS LOGISTICS SOLUTIONS</div>
