@@ -1,8 +1,17 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Printer, X } from 'lucide-react'
+
+interface AlertDetails {
+  id?: string
+  type?: string
+  severity?: string
+  timestamp?: string
+  location?: { latitude?: number; longitude?: number; address?: string } | string
+  screenshots?: Array<{ url: string; timestamp?: string }>
+}
 
 interface NCRFormModalProps {
   isOpen: boolean
@@ -14,11 +23,19 @@ interface NCRFormModalProps {
     timestamp: string
     location?: string
   }
+  alertDetails?: AlertDetails
 }
 
-export default function NCRFormModal({ isOpen, onClose, driverInfo }: NCRFormModalProps) {
+export default function NCRFormModal({ isOpen, onClose, driverInfo, alertDetails }: NCRFormModalProps) {
+  const locationText =
+    typeof alertDetails?.location === 'string'
+      ? alertDetails.location
+      : alertDetails?.location?.latitude && alertDetails?.location?.longitude
+      ? `${alertDetails.location.latitude}, ${alertDetails.location.longitude}`
+      : driverInfo.location || 'Unknown location'
+
   const [formData, setFormData] = useState({
-    description: `Alert generated for driver ${driverInfo.name} on fleet ${driverInfo.fleetNumber} at ${new Date(driverInfo.timestamp).toLocaleString()}. Further investigation required.`,
+    description: `Alert ${alertDetails?.id || ''} generated for driver ${driverInfo.name} on fleet ${driverInfo.fleetNumber} at ${new Date(driverInfo.timestamp).toLocaleString()} (${locationText}). Further investigation required.`,
     correctiveAction: 'Immediate disciplinary hearing scheduled. Counseling on speed limits.',
     correctiveResponsibility: 'Divan/Manie',
     correctiveTargetDate: '04/01/2025',
@@ -31,6 +48,14 @@ export default function NCRFormModal({ isOpen, onClose, driverInfo }: NCRFormMod
     actionEffective: ''
   })
   const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    if (!isOpen) return
+    setFormData((prev) => ({
+      ...prev,
+      description: `Alert ${alertDetails?.id || ''} generated for driver ${driverInfo.name} on fleet ${driverInfo.fleetNumber} at ${new Date(driverInfo.timestamp).toLocaleString()} (${locationText}). Further investigation required.`
+    }))
+  }, [isOpen, alertDetails?.id, driverInfo.name, driverInfo.fleetNumber, driverInfo.timestamp, locationText])
 
   const handleSave = async () => {
     setSaving(true)
@@ -55,7 +80,7 @@ export default function NCRFormModal({ isOpen, onClose, driverInfo }: NCRFormMod
           const clonedElement = clonedDoc.getElementById('ncr-form-content')
           if (clonedElement) {
             const allElements = clonedElement.querySelectorAll('*')
-            allElements.forEach((el: any) => {
+            allElements.forEach((el: Element) => {
               const computed = window.getComputedStyle(el)
               if (computed.borderColor && computed.borderColor.includes('oklch')) {
                 el.style.borderColor = '#000'
@@ -190,6 +215,45 @@ export default function NCRFormModal({ isOpen, onClose, driverInfo }: NCRFormMod
                 </tbody>
               </table>
             </div>
+
+            {/* Alert Evidence - READ ONLY */}
+            {alertDetails && (
+              <div className="border-b-2 border-black">
+                <div className="font-bold px-2 py-1 text-xs border-b border-black" style={{backgroundColor: '#cbd5e1'}}>Alert Evidence Attached</div>
+                <table className="w-full text-xs">
+                  <tbody>
+                    <tr className="border-b border-black">
+                      <td className="w-[15%] p-1 border-r border-black font-semibold" style={{backgroundColor: '#f1f5f9'}}>Alert ID</td>
+                      <td className="w-[35%] p-1 border-r border-black">{alertDetails.id || 'N/A'}</td>
+                      <td className="w-[15%] p-1 border-r border-black font-semibold" style={{backgroundColor: '#f1f5f9'}}>Type</td>
+                      <td className="w-[35%] p-1">{alertDetails.type || 'N/A'}</td>
+                    </tr>
+                    <tr className="border-b border-black">
+                      <td className="p-1 border-r border-black font-semibold" style={{backgroundColor: '#f1f5f9'}}>Severity</td>
+                      <td className="p-1 border-r border-black">{alertDetails.severity || 'N/A'}</td>
+                      <td className="p-1 border-r border-black font-semibold" style={{backgroundColor: '#f1f5f9'}}>Timestamp</td>
+                      <td className="p-1">{alertDetails.timestamp ? new Date(alertDetails.timestamp).toLocaleString('en-GB') : 'N/A'}</td>
+                    </tr>
+                    <tr>
+                      <td className="p-1 border-r border-black font-semibold" style={{backgroundColor: '#f1f5f9'}}>Location</td>
+                      <td className="p-1 border-r border-black" colSpan={3}>{locationText}</td>
+                    </tr>
+                  </tbody>
+                </table>
+                {Array.isArray(alertDetails.screenshots) && alertDetails.screenshots.length > 0 && (
+                  <div className="grid grid-cols-3 gap-2 p-2 border-t border-black">
+                    {alertDetails.screenshots.slice(0, 3).map((shot, idx) => (
+                      <div key={`${shot.url}-${idx}`} className="border border-black p-1">
+                        <img src={shot.url} alt={`Evidence ${idx + 1}`} style={{width: '100%', height: '80px', objectFit: 'cover'}} />
+                        <div className="text-[10px] mt-1">
+                          {shot.timestamp ? new Date(shot.timestamp).toLocaleTimeString('en-GB') : `Image ${idx + 1}`}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Description - EDITABLE */}
             <div className="border-b-2 border-black">
