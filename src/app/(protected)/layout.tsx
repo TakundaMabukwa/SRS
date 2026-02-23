@@ -248,6 +248,7 @@ export default function ProtectedLayout({ children }: ProtectedLayoutProps) {
               src="https://srsgroup.co.za/wp-content/uploads/2023/12/SRS-WEB-LOGO-WHITE-3.png"
               alt="SRS Logo"
               className={`object-contain ${sidebarExpanded ? "h-10 w-32" : "h-10 w-10"}`}
+              style={{ filter: "brightness(0) saturate(100%) invert(26%) sepia(79%) saturate(1619%) hue-rotate(207deg) brightness(96%) contrast(95%)" }}
             />
             {/* Toggle is duplicated here visually hidden on small but kept for layout */}
             <div className="hidden"></div>
@@ -333,7 +334,7 @@ export default function ProtectedLayout({ children }: ProtectedLayoutProps) {
             <Button
               size="icon"
               onClick={() => setSidebarExpanded(!sidebarExpanded)}
-              className="text-white bg-[#7a1515] hover:bg-[#5f1010]"
+              className="text-white bg-[#1A245E] hover:bg-[#24327D]"
               aria-label="Toggle sidebar"
             >
               {sidebarExpanded ? (

@@ -91,6 +91,7 @@ import NCRSpeedingModal from '@/components/video-alerts/ncr-speeding-modal';
 import IncidentReportModal from '@/components/video-alerts/incident-report-modal';
 import CriminalReportModal from '@/components/video-alerts/criminal-report-modal';
 import IncidentReportTemplateModal from '@/components/video-alerts/incident-report-template-modal';
+import { useVideoWebSocket } from "@/hooks/use-video-websocket";
 
 function UniversalVideoPlayer({
   url,
@@ -103,43 +104,44 @@ function UniversalVideoPlayer({
 }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const [playbackError, setPlaybackError] = useState("");
+  const isHlsUrl = /\.m3u8(?:$|\?)/i.test(url);
+
+  useEffect(() => {
+    setPlaybackError("");
+  }, [url]);
 
   useEffect(() => {
     const videoEl = videoRef.current;
-    if (!videoEl || !url) return;
+    if (!videoEl || !url || !isHlsUrl) return;
 
     let hls: Hls | null = null;
-    setPlaybackError("");
     videoEl.removeAttribute("src");
     videoEl.load();
 
-    const isHlsUrl = /\.m3u8(?:$|\?)/i.test(url);
-    if (isHlsUrl) {
-      if (videoEl.canPlayType("application/vnd.apple.mpegurl")) {
-        videoEl.src = url;
-      } else if (Hls.isSupported()) {
-        hls = new Hls({
-          enableWorker: true,
-          lowLatencyMode: true,
-        });
-        hls.loadSource(url);
-        hls.attachMedia(videoEl);
-        hls.on(Hls.Events.ERROR, (_, data) => {
-          if (data?.fatal) {
-            setPlaybackError("HLS playback failed. Use Open/Download for this clip.");
-          }
-        });
-      } else {
-        setPlaybackError("HLS is not supported in this browser.");
-      }
-    } else {
+    if (videoEl.canPlayType("application/vnd.apple.mpegurl")) {
       videoEl.src = url;
+    } else if (Hls.isSupported()) {
+      hls = new Hls({
+        enableWorker: true,
+        lowLatencyMode: true,
+      });
+      hls.loadSource(url);
+      hls.attachMedia(videoEl);
+      hls.on(Hls.Events.ERROR, (_, data) => {
+        if (data?.fatal) {
+          setPlaybackError("HLS playback failed. Use Open/Download for this clip.");
+          onPlayableChange?.(false);
+        }
+      });
+    } else {
+      setPlaybackError("HLS is not supported in this browser.");
+      onPlayableChange?.(false);
     }
 
     return () => {
       if (hls) hls.destroy();
     };
-  }, [url]);
+  }, [isHlsUrl, onPlayableChange, url]);
 
   const looksLikeRawH264 = /\.h264(?:$|\?)/i.test(url);
 
@@ -151,6 +153,7 @@ function UniversalVideoPlayer({
         preload="metadata"
         playsInline
         className={className}
+        src={isHlsUrl ? undefined : url}
         onCanPlay={() => onPlayableChange?.(true)}
         onError={() => {
           setPlaybackError("Browser could not decode this format. Use Open/Download for this clip.");
@@ -1064,21 +1067,24 @@ function DriverCard({ trip, userRole, handleViewMap, setCurrentTripForNote, setN
 
 // Enhanced routing components with proper waypoints
 function RoutingSection({ userRole, handleViewMap, setCurrentTripForNote, setNoteText, setNoteOpen, setAvailableDrivers, setCurrentTripForChange, setChangeDriverOpen, refreshTrigger, setRefreshTrigger, setPickupTimeOpen, setDropoffTimeOpen, setCurrentTripForTime, setTimeType, setSelectedTime, currentUnauthorizedTrip, setCurrentUnauthorizedTrip, setUnauthorizedStopModalOpen, loadingPhotos, setLoadingPhotos, setCurrentTripPhotos, setPhotosModalOpen, setCurrentTripAlerts, setAlertsModalOpen, setCurrentTripForClose, setCloseReason, setCloseTripOpen, setCurrentTripForEdit, setEditTripOpen, setCurrentTripForApproval, setApprovalModalOpen, onOpenAlertDetail, setIncidentReportModalOpen, setSelectedTripForIncident, isVisible = true }: any) {
+  const EVENT_VIDEO_READY_MIN_SECONDS = 25
   const [trips, setTrips] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [groupedAlerts, setGroupedAlerts] = useState<any[]>([])
   const [alertTimelinePageByTrip, setAlertTimelinePageByTrip] = useState<Record<string, number>>({})
   const [costCenterFilter, setCostCenterFilter] = useState<string>('all')
   const ALERTS_PER_PAGE = 10
-  const videoBaseUrl = (process.env.NEXT_PUBLIC_VIDEO_BASE_URL || "").replace(/\/$/, "")
-  const videoWsUrl = (process.env.NEXT_PUBLIC_VIDEO_WS_URL || "").replace(/\/$/, "")
   const videoProxyBase = "/api/video-server"
-  const lastRefreshAtRef = useRef(0)
-  const refreshingRef = useRef(false)
+  const directVideoApiBase = (process.env.NEXT_PUBLIC_VIDEO_BASE_URL || "").replace(/\/$/, "")
   const initialTripsLoadedRef = useRef(false)
-  const normalizeId = (value: unknown) => (value === null || value === undefined ? "" : String(value).trim())
-  const extractVehicleKey = (alert: any) =>
-    normalizeId(
+  const groupedAlertsRef = useRef<any[]>([])
+  const autoVideoRequestStateRef = useRef<Record<string, { autoRequested?: boolean; autoRequesting?: boolean; requestStartedAt?: number; error?: string }>>({})
+  const autoVideoRequestsInFlightRef = useRef(0)
+  const normalizeId = useCallback((value: unknown) => {
+    return value === null || value === undefined ? "" : String(value).trim()
+  }, [])
+  const extractVehicleKey = useCallback((alert: any) => {
+    return normalizeId(
       alert?.vehicleId ||
       alert?.vehicle_id ||
       alert?.device_id ||
@@ -1087,413 +1093,385 @@ function RoutingSection({ userRole, handleViewMap, setCurrentTripForNote, setNot
       alert?.vehicle_registration ||
       alert?.fleet_number
     )
-  const getAlertGroupKey = (alert: any) =>
-    extractVehicleKey(alert) ||
-    normalizeId(alert?.id) ||
-    normalizeId(alert?.alert_id) ||
-    'unknown'
+  }, [normalizeId])
+  const getAlertGroupKey = useCallback((alert: any) => {
+    return (
+      extractVehicleKey(alert) ||
+      normalizeId(alert?.id) ||
+      normalizeId(alert?.alert_id) ||
+      'unknown'
+    )
+  }, [extractVehicleKey, normalizeId])
+
+  const isValidDisplayUrl = useCallback((url?: string) => {
+    return !!url && /^https?:\/\//i.test(url) && url !== "upload-failed" && url !== "local-only";
+  }, [])
+
+  const buildTripAlertVideoUrl = useCallback((alertId: string, type: "pre" | "post" | "camera") => {
+    const encodedId = encodeURIComponent(alertId)
+    if (directVideoApiBase) return `${directVideoApiBase}/api/alerts/${encodedId}/video/${type}`
+    return `${videoProxyBase}/alerts/${encodedId}/video/${type}`
+  }, [directVideoApiBase, videoProxyBase])
+
+  const getEventDurationSec = useCallback((videosJson: any, detailAlert: any, key: "pre_event" | "post_event") => {
+    const metadataClips = detailAlert?.metadata?.videoClips || {}
+    const fallbackDuration = key === "pre_event" ? metadataClips?.preDuration : metadataClips?.postDuration
+    const duration = Number(videosJson?.videos?.[key]?.duration ?? fallbackDuration ?? 0)
+    return Number.isFinite(duration) && duration > 0 ? duration : 0
+  }, [])
+
+  const mapAlertVideoState = useCallback((alertId: string, videosJson: any, detailAlert?: any) => {
+    const videosPayload = videosJson?.videos || {}
+    const preDuration = getEventDurationSec(videosJson, detailAlert, "pre_event")
+    const postDuration = getEventDurationSec(videosJson, detailAlert, "post_event")
+    const hasPrePath = !!(videosPayload?.pre_event?.path || videosJson?.has_pre_event)
+    const hasPostPath = !!(videosPayload?.post_event?.path || videosJson?.has_post_event)
+    const hasPreEvent = preDuration >= EVENT_VIDEO_READY_MIN_SECONDS || (hasPrePath && preDuration <= 0)
+    const hasPostEvent = postDuration >= EVENT_VIDEO_READY_MIN_SECONDS || (hasPostPath && postDuration <= 0)
+    const hasCameraVideo = !!(videosPayload?.camera_sd?.path || videosJson?.has_camera_video)
+
+    const preEventUrl = hasPreEvent ? buildTripAlertVideoUrl(alertId, "pre") : ""
+    const postEventUrl = hasPostEvent ? buildTripAlertVideoUrl(alertId, "post") : ""
+    const cameraUrl = hasCameraVideo ? buildTripAlertVideoUrl(alertId, "camera") : ""
+
+    const normalizedVideos = [
+      { key: "pre_event", label: "Pre-Incident (30s before)", url: preEventUrl, duration: preDuration },
+      { key: "post_event", label: "Post-Incident (30s after)", url: postEventUrl, duration: postDuration },
+      { key: "camera_sd", label: "Camera SD Clip", url: cameraUrl },
+    ].filter((video) => !!video.url)
+
+    return {
+      videos: {
+        pre_event: preEventUrl,
+        post_event: postEventUrl,
+        camera_sd: cameraUrl,
+      },
+      mediaVideos: normalizedVideos,
+      hasPreEvent,
+      hasPostEvent,
+      hasCameraVideo,
+      preDuration,
+      postDuration,
+    }
+  }, [EVENT_VIDEO_READY_MIN_SECONDS, buildTripAlertVideoUrl, getEventDurationSec])
+
+  const fetchAlertMediaById = useCallback(async (alertId: string) => {
+    const [detailRes, videosRes] = await Promise.all([
+      fetch(`${videoProxyBase}/alerts/${alertId}`),
+      fetch(`${videoProxyBase}/alerts/${alertId}/videos`),
+    ])
+    const detailJson = detailRes.ok ? await detailRes.json() : null
+    const videosJson = videosRes.ok ? await videosRes.json() : null
+    const detailAlert = detailJson?.alert || {}
+    const screenshots = Array.isArray(detailAlert?.screenshots) ? detailAlert.screenshots : []
+    return { detailAlert, screenshots, videosJson }
+  }, [videoProxyBase])
+
+  const toAlertTimestamp = useCallback((alert: any) => {
+    return (
+      alert?.timestamp ||
+      alert?.created_at ||
+      alert?.alert_timestamp ||
+      alert?.screenshot_timestamps?.[0] ||
+      alert?.media?.screenshots?.[0]?.timestamp ||
+      0
+    );
+  }, []);
+
+  const dedupeAndSortAlerts = useCallback((alerts: any[]) => {
+    const byKey = new Map<string, any>();
+    for (const alert of alerts) {
+      const key =
+        normalizeId(alert?.id) ||
+        `${normalizeId(alert?.vehicleId || extractVehicleKey(alert))}-${normalizeId(toAlertTimestamp(alert))}`;
+      if (!byKey.has(key)) {
+        byKey.set(key, alert);
+      }
+    }
+    return Array.from(byKey.values()).sort(
+      (a: any, b: any) =>
+        new Date(toAlertTimestamp(b) || 0).getTime() - new Date(toAlertTimestamp(a) || 0).getTime()
+    );
+  }, [extractVehicleKey, normalizeId, toAlertTimestamp]);
+
+  const buildDashboardAlert = useCallback(async (activeAlert: any) => {
+    try {
+      const alertId = normalizeId(activeAlert?.id);
+      const { detailAlert, screenshots, videosJson } = alertId
+        ? await fetchAlertMediaById(alertId)
+        : { detailAlert: {}, screenshots: [], videosJson: null };
+      const mergedAlert = { ...activeAlert, ...detailAlert };
+      const screenshotTimestamps = screenshots
+        .map((s: any) => s?.timestamp)
+        .filter(Boolean)
+        .sort((a: string, b: string) => new Date(b).getTime() - new Date(a).getTime());
+
+      const normalizedScreenshots = screenshots
+        .filter((s: any) => isValidDisplayUrl(s?.storage_url))
+        .map((s: any) => ({
+          id: s?.id,
+          url: s?.storage_url,
+          timestamp: s?.timestamp || mergedAlert?.timestamp,
+          channel: s?.channel,
+          file_path: s?.file_path,
+        }));
+
+      const mappedVideoState = alertId
+        ? mapAlertVideoState(alertId, videosJson, mergedAlert)
+        : {
+          videos: {},
+          mediaVideos: [],
+          hasPreEvent: false,
+          hasPostEvent: false,
+          hasCameraVideo: false,
+          preDuration: 0,
+          postDuration: 0,
+        };
+
+      return {
+        ...mergedAlert,
+        vehicleId: extractVehicleKey(mergedAlert),
+        alert_type: mergedAlert?.alert_type || String(mergedAlert?.type || "alert").toLowerCase().replace(/\s+/g, "_"),
+        severity: mergedAlert?.severity || mergedAlert?.priority || "high",
+        media: {
+          screenshots: normalizedScreenshots,
+          videos: mappedVideoState.mediaVideos,
+        },
+        screenshot_timestamps: screenshotTimestamps,
+        videos: mappedVideoState.videos,
+        has_pre_event: mappedVideoState.hasPreEvent,
+        has_post_event: mappedVideoState.hasPostEvent,
+        has_camera_video: mappedVideoState.hasCameraVideo,
+        pre_event_duration_sec: mappedVideoState.preDuration,
+        post_event_duration_sec: mappedVideoState.postDuration,
+        preIncidentReady: !!(mappedVideoState.hasPreEvent || mergedAlert?.preIncidentReady),
+        postIncidentReady: !!(mappedVideoState.hasPostEvent || mergedAlert?.postIncidentReady),
+        cameraVideoReady: !!(mappedVideoState.hasCameraVideo || mergedAlert?.cameraVideoUrl),
+      };
+    } catch {
+      return {
+        ...activeAlert,
+        vehicleId: extractVehicleKey(activeAlert),
+        alert_type: activeAlert?.alert_type || String(activeAlert?.type || "alert").toLowerCase().replace(/\s+/g, "_"),
+        severity: activeAlert?.severity || activeAlert?.priority || "high",
+        media: { screenshots: [], videos: [] },
+        screenshot_timestamps: [],
+        videos: {},
+        has_pre_event: false,
+        has_post_event: false,
+        has_camera_video: false,
+        preIncidentReady: false,
+        postIncidentReady: false,
+        cameraVideoReady: false,
+      };
+    }
+  }, [extractVehicleKey, fetchAlertMediaById, isValidDisplayUrl, mapAlertVideoState, normalizeId]);
 
   const fetchGroupedAlerts = useCallback(async () => {
-    if (refreshingRef.current) return
-    const now = Date.now()
-    if (now - lastRefreshAtRef.current < 2000) return
-    refreshingRef.current = true
-    lastRefreshAtRef.current = now
     try {
-      const fetchJsonSafe = async (url: string) => {
-        try {
-          const controller = new AbortController();
-          const timeout = setTimeout(() => controller.abort(), 8000);
-          const res = await fetch(url, { cache: "no-store", signal: controller.signal });
-          clearTimeout(timeout);
-          if (!res.ok) return null;
-          return await res.json();
-        } catch {
-          return null;
-        }
-      };
-      const extractAlertList = (payload: any): any[] => {
-        if (Array.isArray(payload?.alerts)) return payload.alerts;
-        if (Array.isArray(payload?.data?.alerts)) return payload.data.alerts;
-        if (Array.isArray(payload?.data)) return payload.data;
-        return [];
-      };
-      const normalizeAlertTimestamp = (alert: any) =>
-        alert?.timestamp || alert?.created_at || alert?.alert_timestamp || alert?.event_time || null;
-      const buildGroupedAlerts = (activeList: any[], shotsByAlertId: Map<string, any[]>) => {
-        const grouped = activeList.map((activeAlert: any) => {
-          const keyAlert = { ...activeAlert }
-          const alertId = normalizeId(keyAlert?.id);
-          const matchedShots = shotsByAlertId.get(alertId) || [];
-          const normalizedScreenshots = matchedShots
-            .filter((s: any) => {
-              const url = s?.storage_url
-              return !!url && /^https?:\/\//i.test(url) && url !== "upload-failed" && url !== "local-only"
-            })
-            .map((s: any) => ({
-              id: s?.id,
-              url: s?.storage_url,
-              timestamp: s?.timestamp || keyAlert?.timestamp,
-              channel: s?.channel,
-              file_path: s?.file_path,
-            }));
-          const screenshotTimestamps = matchedShots
-            .map((s: any) => s?.timestamp)
-            .filter(Boolean)
-            .sort((a: string, b: string) => new Date(b).getTime() - new Date(a).getTime());
-
-          return {
-            ...keyAlert,
-            timestamp: normalizeAlertTimestamp(keyAlert),
-            vehicleId: extractVehicleKey(keyAlert),
-            alert_type: keyAlert?.alert_type || String(keyAlert?.type || "alert").toLowerCase().replace(/\s+/g, "_"),
-            severity: keyAlert?.severity || keyAlert?.priority || "high",
-            media: { screenshots: normalizedScreenshots, videos: [] },
-            screenshot_timestamps: screenshotTimestamps,
-            videos: {},
-          };
-        });
-
-        const deduped = new Map<string, any>();
-        grouped
-          .sort((a: any, b: any) => {
-            const aTs = a?.timestamp || a?.screenshot_timestamps?.[0] || 0;
-            const bTs = b?.timestamp || b?.screenshot_timestamps?.[0] || 0;
-            return new Date(bTs).getTime() - new Date(aTs).getTime();
-          })
-          .forEach((alert: any) => {
-            const key = normalizeId(alert?.id) || `${normalizeId(alert?.vehicleId)}-${normalizeId(alert?.timestamp)}`;
-            if (!deduped.has(key)) deduped.set(key, alert);
-          });
-        return Array.from(deduped.values());
-      };
-
-      const [newestJson, activeJson, fallbackJsonAll] = await Promise.all([
-        fetchJsonSafe(`${videoProxyBase}/alerts?status=new&limit=50&minutes=720`),
-        fetchJsonSafe(`${videoProxyBase}/alerts/active?limit=50&minutes=720`),
-        fetchJsonSafe(`${videoProxyBase}/alerts?limit=50&minutes=720`)
-      ]);
-
-      const mergedById = new Map<string, any>();
-      const ingest = (items: any[]) => {
-        items.forEach((item, idx) => {
-          const ts = normalizeId(normalizeAlertTimestamp(item));
-          const vehicleKey = normalizeId(
-            item?.device_id ||
-            item?.deviceId ||
-            item?.vehicleId ||
-            item?.vehicle_id ||
-            item?.phone
-          );
-          const id =
-            normalizeId(item?.id) ||
-            normalizeId(item?.alert_id) ||
-            normalizeId(item?.alertId) ||
-            `${vehicleKey || 'unknown'}-${ts || normalizeId(item?.alert_type || item?.type) || idx}`;
-          if (!id) return;
-          if (!mergedById.has(id)) {
-            mergedById.set(id, item);
-          }
-        });
-      };
-
-      ingest(extractAlertList(newestJson));
-      ingest(extractAlertList(activeJson));
-
-      // Hard fallback if the active feeds are empty/unavailable.
-      if (!mergedById.size) {
-        ingest(extractAlertList(fallbackJsonAll));
+      const activeRes = await fetch(`${videoProxyBase}/alerts/active`);
+      if (!activeRes.ok) {
+        console.warn("Failed to fetch active alerts:", activeRes.status);
+        return;
       }
+      const activeJson = await activeRes.json();
+      const activeList = Array.isArray(activeJson?.alerts)
+        ? activeJson.alerts
+        : Array.isArray(activeJson?.data?.alerts)
+          ? activeJson.data.alerts
+          : Array.isArray(activeJson?.data)
+            ? activeJson.data
+            : [];
 
-      let activeList = Array.from(mergedById.values());
-      const unresolvedOnly = activeList.filter((a: any) => {
-        const status = String(a?.status || '').toLowerCase();
-        return !(a?.resolved === true || status === 'resolved' || status === 'closed');
-      });
-      // Prefer unresolved for routing, but never render empty when backend status fields are inconsistent.
-      activeList = unresolvedOnly.length ? unresolvedOnly : activeList;
-
-      // Render alerts immediately; do not block UI on heavy screenshot query.
-      setGroupedAlerts(buildGroupedAlerts(activeList, new Map<string, any[]>()));
-
-      // Hydrate screenshots in background with a smaller window for responsiveness.
-      void (async () => {
-        try {
-          const screenshotsRes = await fetch(`${videoProxyBase}/screenshots/recent?limit=240&minutes=60`, { cache: "no-store" });
-          const screenshotsJson = screenshotsRes.ok ? await screenshotsRes.json() : null;
-          const recentShots = Array.isArray(screenshotsJson?.screenshots)
-            ? screenshotsJson.screenshots
-            : Array.isArray(screenshotsJson?.data?.screenshots)
-              ? screenshotsJson.data.screenshots
-              : [];
-          const shotsByAlertId = new Map<string, any[]>();
-          recentShots.forEach((shot: any) => {
-            const key = normalizeId(shot?.alert_id || shot?.alertId);
-            if (!key) return;
-            if (!shotsByAlertId.has(key)) shotsByAlertId.set(key, []);
-            shotsByAlertId.get(key)!.push(shot);
-          });
-          shotsByAlertId.forEach((list) => {
-            list.sort((a: any, b: any) => new Date(b?.timestamp || 0).getTime() - new Date(a?.timestamp || 0).getTime());
-          });
-          if (lastRefreshAtRef.current !== now) return;
-          setGroupedAlerts(buildGroupedAlerts(activeList, shotsByAlertId));
-        } catch (innerErr) {
-          console.warn("Background screenshot hydrate failed:", innerErr);
-        }
-      })();
+      const grouped = await Promise.all(activeList.map((activeAlert: any) => buildDashboardAlert(activeAlert)));
+      setGroupedAlerts(dedupeAndSortAlerts(grouped));
     } catch (err) {
       console.error("Failed to fetch grouped alerts:", err);
-      setGroupedAlerts([]);
-    } finally {
-      refreshingRef.current = false
     }
-  }, [videoBaseUrl, videoProxyBase]);
+  }, [buildDashboardAlert, dedupeAndSortAlerts, videoProxyBase]);
 
   useEffect(() => {
     fetchGroupedAlerts();
-  }, [fetchGroupedAlerts]);
+  }, [fetchGroupedAlerts, refreshTrigger]);
+
+  const handleTripRoutingWsMessage = useCallback(async (data: any) => {
+    const type = String(data?.type || "").toLowerCase();
+    const payloadAlert = data?.alert;
+
+    if ((type === "new-alert" || type === "alert-created") && payloadAlert) {
+      const normalized = await buildDashboardAlert(payloadAlert);
+      setGroupedAlerts((prev) => dedupeAndSortAlerts([normalized, ...prev]));
+      return;
+    }
+    if (type === "new-alert" || type === "alert-created") {
+      await fetchGroupedAlerts();
+      return;
+    }
+
+    if (
+      type === "alert-status-changed" ||
+      type === "alert-resolved" ||
+      type === "alert-updated" ||
+      type === "alert-escalated" ||
+      type === "video-clip-ready"
+    ) {
+      if (payloadAlert) {
+        const normalized = await buildDashboardAlert(payloadAlert);
+        setGroupedAlerts((prev) => dedupeAndSortAlerts([normalized, ...prev]));
+        return;
+      }
+      await fetchGroupedAlerts();
+    }
+    if (!type && payloadAlert) {
+      const normalized = await buildDashboardAlert(payloadAlert);
+      setGroupedAlerts((prev) => dedupeAndSortAlerts([normalized, ...prev]));
+    }
+  }, [buildDashboardAlert, dedupeAndSortAlerts, fetchGroupedAlerts]);
+
+  useVideoWebSocket(handleTripRoutingWsMessage);
 
   useEffect(() => {
-    const resolveWsCandidates = () => {
-      const candidates: string[] = [];
-      const seen = new Set<string>();
-      const isHttpsPage = typeof window !== "undefined" && window.location.protocol === "https:";
+    groupedAlertsRef.current = groupedAlerts;
+  }, [groupedAlerts]);
 
-      const pushCandidate = (value: string) => {
-        const v = (value || "").trim().replace(/\/+$/, "");
-        if (!v || seen.has(v)) return;
-        seen.add(v);
-        candidates.push(v);
-      };
-
-      // 1) Explicit websocket URL always wins.
-      const rawWs = (videoWsUrl || "").trim();
-      if (rawWs) {
-        try {
-          const parsed = new URL(rawWs.replace(/^ws:\/\//i, "http://").replace(/^wss:\/\//i, "https://"));
-          pushCandidate(`${rawWs.startsWith("wss://") ? "wss" : "ws"}://${parsed.host}`);
-        } catch {
-          pushCandidate(rawWs.replace(/^https?:\/\//i, isHttpsPage ? "wss://" : "ws://"));
+  const mergeTripAlertVideoState = useCallback((alertId: string, videosJson: any) => {
+    const mapped = mapAlertVideoState(alertId, videosJson)
+    setGroupedAlerts((prev) =>
+      prev.map((alert) => {
+        if (normalizeId(alert?.id) !== alertId) return alert
+        return {
+          ...alert,
+          media: {
+            ...(alert?.media || {}),
+            screenshots: Array.isArray(alert?.media?.screenshots) ? alert.media.screenshots : [],
+            videos: mapped.mediaVideos,
+          },
+          videos: mapped.videos,
+          has_pre_event: mapped.hasPreEvent,
+          has_post_event: mapped.hasPostEvent,
+          has_camera_video: mapped.hasCameraVideo,
+          pre_event_duration_sec: mapped.preDuration,
+          post_event_duration_sec: mapped.postDuration,
+          preIncidentReady: !!mapped.hasPreEvent,
+          postIncidentReady: !!mapped.hasPostEvent,
+          cameraVideoReady: !!mapped.hasCameraVideo,
         }
-      }
+      })
+    )
+  }, [mapAlertVideoState, normalizeId])
 
-      // 2) Video API base host fallback (remote backend host).
-      const rawBase = (videoBaseUrl || "").trim();
-      if (rawBase) {
-        let cleaned = rawBase
-          .replace(/\/api\/video-server\/?$/i, "")
-          .replace(/\/api\/?$/i, "")
-          .replace(/\/+$/, "");
-        try {
-          const parsed = new URL(cleaned);
-          const hostOnly = parsed.host;
-          if (hostOnly) {
-            if (isHttpsPage) {
-              pushCandidate(`wss://${hostOnly}`);
-            }
-            pushCandidate(`${parsed.protocol === "https:" ? "wss" : "ws"}://${hostOnly}`);
-            if (!isHttpsPage) {
-              pushCandidate(`ws://${hostOnly}`);
-            }
-          }
-        } catch {
-          if (isHttpsPage) {
-            pushCandidate(cleaned.replace(/^https?:\/\//i, "wss://"));
-          }
-          if (!isHttpsPage) {
-            pushCandidate(cleaned.replace(/^https?:\/\//i, "ws://"));
-          }
-        }
-      }
+  const ensureTripAlertVideoRequested = useCallback(async (alertId: string, hasPreEvent: boolean, hasPostEvent: boolean) => {
+    if (!alertId || (hasPreEvent && hasPostEvent)) return false;
 
-      // 3) Current host only when not local dev and no explicit video host config.
-      if (typeof window !== "undefined" && !rawWs && !rawBase) {
-        const hostname = window.location.hostname;
-        const isLocal = hostname === "localhost" || hostname === "127.0.0.1";
-        if (!isLocal) {
-          const currentHostBase = `${isHttpsPage ? "wss" : "ws"}://${window.location.host}`;
-          pushCandidate(currentHostBase);
-        }
-      }
+    const existing = autoVideoRequestStateRef.current[alertId] || {};
+    const now = Date.now();
+    const cooldownMs = 2 * 60 * 1000;
+    if (existing.autoRequesting) return false;
+    if (existing.autoRequested && !existing.error && existing.requestStartedAt && (now - existing.requestStartedAt) < cooldownMs) {
+      return false;
+    }
+    if (existing.autoRequested && existing.error && existing.requestStartedAt && (now - existing.requestStartedAt) < cooldownMs) {
+      return false;
+    }
 
-      return candidates;
+    autoVideoRequestStateRef.current[alertId] = {
+      ...existing,
+      autoRequested: true,
+      autoRequesting: true,
+      requestStartedAt: now,
+      error: "",
     };
+    autoVideoRequestsInFlightRef.current += 1;
 
-    let ws: WebSocket | null = null;
-    let connectAttemptTimer: ReturnType<typeof setTimeout> | null = null;
-    let backgroundSyncTimer: ReturnType<typeof setTimeout> | null = null;
+    try {
+      const res = await fetch(`${videoProxyBase}/alerts/${encodeURIComponent(alertId)}/request-report-video`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          lookbackSeconds: 30,
+          forwardSeconds: 30,
+          queryResources: true,
+          requestDownload: true,
+        }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok || !body?.success) {
+        throw new Error(body?.message || `HTTP ${res.status}`);
+      }
+
+      autoVideoRequestStateRef.current[alertId] = {
+        ...existing,
+        autoRequested: true,
+        autoRequesting: false,
+        requestStartedAt: Date.now(),
+        error: "",
+      };
+      return true;
+    } catch (err: any) {
+      autoVideoRequestStateRef.current[alertId] = {
+        ...existing,
+        autoRequested: true,
+        autoRequesting: false,
+        requestStartedAt: Date.now(),
+        error: err?.message || String(err),
+      };
+      return false;
+    } finally {
+      autoVideoRequestsInFlightRef.current = Math.max(0, autoVideoRequestsInFlightRef.current - 1);
+    }
+  }, [videoProxyBase]);
+
+  useEffect(() => {
     let stopped = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
 
-      const normalizeIncomingAlert = (raw: any) => {
-      if (!raw) return null;
-      const timestamp = raw?.timestamp || raw?.created_at || raw?.alert_timestamp || raw?.event_time || null;
-      const vehicleId = extractVehicleKey(raw);
-      const alertType = raw?.alert_type || String(raw?.type || "alert").toLowerCase().replace(/\s+/g, "_");
-      const incomingId = normalizeId(raw?.id || raw?.alert_id || raw?.alertId);
-      const fallbackId = vehicleId && timestamp ? `${vehicleId}-${timestamp}` : "";
-      const stableId = incomingId || fallbackId;
-      if (!stableId || !timestamp) return null;
-      return {
-        ...raw,
-        id: stableId,
-        timestamp,
-        vehicleId,
-        alert_type: alertType,
-        severity: raw?.severity || raw?.priority || "high",
-        media: raw?.media || { screenshots: [], videos: [] },
-        screenshot_timestamps: Array.isArray(raw?.screenshot_timestamps) ? raw.screenshot_timestamps : [],
-        videos: raw?.videos || {},
-      };
-    };
-
-    const queueBackgroundSync = () => {
-      if (backgroundSyncTimer) clearTimeout(backgroundSyncTimer);
-      backgroundSyncTimer = setTimeout(() => {
-        fetchGroupedAlerts();
-      }, 1200);
-    };
-
-    const applyWsPayload = (payload: any) => {
-      const normalizeType = (v: unknown) => String(v || "").toLowerCase().replace(/-/g, "_");
-      const messageType = normalizeType(payload?.type);
-      const nestedType = normalizeType(payload?.data?.type || payload?.alert?.type);
-      const effectiveType = messageType === "notification" && nestedType ? nestedType : messageType;
-      const data = payload?.data?.alert || payload?.alert || payload?.data;
-
-      if (effectiveType === "active_alerts_snapshot" && Array.isArray(data)) {
-        const normalized = data.map(normalizeIncomingAlert).filter(Boolean);
-        if (!normalized.length) return;
-        setGroupedAlerts((prev) => {
-          const byId = new Map<string, any>();
-          prev.forEach((a: any) => {
-            const key = normalizeId(a?.id);
-            if (key) byId.set(key, a);
-          });
-          normalized.forEach((a: any) => {
-            const key = normalizeId(a?.id);
-            if (key) byId.set(key, a);
-          });
-          return Array.from(byId.values()).sort(
-            (a: any, b: any) => new Date(b?.timestamp || 0).getTime() - new Date(a?.timestamp || 0).getTime()
-          );
-        });
-        queueBackgroundSync();
-        return;
-      }
-
-      if (["new_alert", "alert", "alert_acknowledged", "alert_escalated", "alert_resolved", "newalert"].includes(effectiveType)) {
-        const normalized = normalizeIncomingAlert(data);
-        if (!normalized) {
-          queueBackgroundSync();
-          return;
-        }
-        const isResolved =
-          effectiveType === "alert_resolved" ||
-          normalized?.resolved === true ||
-          String(normalized?.status || "").toLowerCase() === "resolved" ||
-          String(normalized?.status || "").toLowerCase() === "closed";
-
-        setGroupedAlerts((prev) => {
-          const key = normalizeId(normalized?.id);
-          const next = prev.filter((a: any) => normalizeId(a?.id) !== key);
-          if (isResolved) {
-            return next;
-          }
-          next.unshift(normalized);
-          return next.sort(
-            (a: any, b: any) => new Date(b?.timestamp || 0).getTime() - new Date(a?.timestamp || 0).getTime()
-          );
-        });
-        queueBackgroundSync();
-      }
-    };
-
-    const connectWithCandidate = (candidateIndex: number, list: string[]) => {
+    const tick = async () => {
       if (stopped) return;
-      if (candidateIndex >= list.length) {
-        return;
-      }
+      let hasMissingVideos = false;
+      let requestsStarted = 0;
 
-      const wsUrl = `${list[candidateIndex]}/ws/alerts`;
-      let opened = false;
-
-      try {
-        ws = new WebSocket(wsUrl);
-      } catch {
-        connectWithCandidate(candidateIndex + 1, list);
-        return;
-      }
-
-      connectAttemptTimer = setTimeout(() => {
-        if (!opened && ws) {
-          try { ws.close(); } catch {}
-        }
-      }, 4000);
-
-      ws.onopen = () => {
-        opened = true;
-        if (connectAttemptTimer) {
-          clearTimeout(connectAttemptTimer);
-          connectAttemptTimer = null;
-        }
-        fetchGroupedAlerts();
-      };
-      ws.onmessage = (event) => {
-        try {
-          const payload = JSON.parse(event.data);
-          applyWsPayload(payload);
-        } catch {
-          fetchGroupedAlerts();
-        }
-      };
-      ws.onerror = () => {
-        // close handler manages retries/fallback candidates
-      };
-      ws.onclose = () => {
-        if (connectAttemptTimer) {
-          clearTimeout(connectAttemptTimer);
-          connectAttemptTimer = null;
-        }
-        ws = null;
+      const alerts = groupedAlertsRef.current || [];
+      for (const alert of alerts) {
         if (stopped) return;
-        if (!opened) {
-          connectWithCandidate(candidateIndex + 1, list);
-          return;
-        }
-      };
-    };
+        if (requestsStarted >= 2) break;
+        if (autoVideoRequestsInFlightRef.current >= 2) break;
 
-    const connect = () => {
-      const candidates = resolveWsCandidates();
-      if (!candidates.length || stopped) return;
-      connectWithCandidate(0, candidates);
-    };
+        const alertId = normalizeId(alert?.id);
+        if (!alertId) continue;
 
-    // Ensure initial REST load finishes before attempting websocket connection.
-    let bootstrapped = false;
-    void (async () => {
-      try {
-        await fetchGroupedAlerts();
-      } finally {
-        if (!stopped) {
-          bootstrapped = true;
-          setTimeout(() => {
-            if (!stopped && bootstrapped) connect();
-          }, 250);
+        try {
+          const videosRes = await fetch(`${videoProxyBase}/alerts/${encodeURIComponent(alertId)}/videos`, {
+            cache: "no-store",
+          });
+          const videosJson = videosRes.ok ? await videosRes.json() : null;
+          const mapped = mapAlertVideoState(alertId, videosJson);
+          mergeTripAlertVideoState(alertId, videosJson);
+          const hasPreEvent = !!mapped?.hasPreEvent;
+          const hasPostEvent = !!mapped?.hasPostEvent;
+          if (!hasPreEvent || !hasPostEvent) {
+            hasMissingVideos = true;
+            const requested = await ensureTripAlertVideoRequested(alertId, hasPreEvent, hasPostEvent);
+            if (requested) requestsStarted += 1;
+          }
+        } catch {
+          // keep loop resilient; next cycle retries
         }
       }
-    })();
 
+      if (requestsStarted > 0) {
+        await fetchGroupedAlerts();
+      }
+
+      const nextDelay = hasMissingVideos ? 4000 : 15000;
+      timer = setTimeout(tick, nextDelay);
+    };
+
+    timer = setTimeout(tick, 1200);
     return () => {
       stopped = true;
-      if (connectAttemptTimer) clearTimeout(connectAttemptTimer);
-      if (backgroundSyncTimer) clearTimeout(backgroundSyncTimer);
-      if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
-        ws.close();
-      }
+      if (timer) clearTimeout(timer);
     };
-  }, [fetchGroupedAlerts, videoBaseUrl]);
+  }, [ensureTripAlertVideoRequested, fetchGroupedAlerts, mapAlertVideoState, mergeTripAlertVideoState, normalizeId, videoProxyBase]);
 
   useEffect(() => {
     async function fetchTrips() {
@@ -1579,7 +1557,7 @@ function RoutingSection({ userRole, handleViewMap, setCurrentTripForNote, setNot
     }
     
     fetchTrips()
-  }, [groupedAlerts])
+  }, [groupedAlerts, getAlertGroupKey, extractVehicleKey, normalizeId])
 
   // Sort trips to put faulty inspections at the top
   const tripsList = trips
@@ -2573,9 +2551,26 @@ export default function Dashboard() {
   const [alertRealtimeLoading, setAlertRealtimeLoading] = useState(false);
   const [videoPreview, setVideoPreview] = useState<{ url: string; label: string } | null>(null);
   const [videoPlaybackFailures, setVideoPlaybackFailures] = useState<Record<string, boolean>>({});
+  const alertVideoRequestStateRef = useRef<
+    Record<
+      string,
+      {
+        autoRequested?: boolean;
+        autoRequesting?: boolean;
+        requestStartedAt?: number;
+        querySent?: boolean;
+        requestSent?: boolean;
+        downloadRequestSent?: boolean;
+        jobId?: string | null;
+        jobStatus?: string;
+        error?: string;
+      }
+    >
+  >({});
   const [alertReason, setAlertReason] = useState("");
   const videoBaseUrl = (process.env.NEXT_PUBLIC_VIDEO_BASE_URL || "").replace(/\/$/, "");
   const videoProxyBase = "/api/video-server";
+  const EVENT_VIDEO_READY_MIN_SECONDS = 25;
   const [showNCRModal, setShowNCRModal] = useState(false);
   const [selectedNcrForm, setSelectedNcrForm] = useState<'' | 'nrc-camera-covered' | 'ncr-safety-violation' | 'ncr-speeding'>('');
   const [showReportModal, setShowReportModal] = useState(false);
@@ -2650,6 +2645,11 @@ export default function Dashboard() {
     if (raw.startsWith("/")) return videoBaseUrl ? `${videoBaseUrl}${raw}` : raw;
     return videoBaseUrl ? `${videoBaseUrl}/${raw}` : raw;
   };
+  const buildAlertVideoUrl = useCallback((alertId: string, type: "pre" | "post" | "camera") => {
+    const encodedId = encodeURIComponent(String(alertId || "").trim());
+    if (videoBaseUrl) return `${videoBaseUrl}/api/alerts/${encodedId}/video/${type}`;
+    return `${videoProxyBase}/alerts/${encodedId}/video/${type}`;
+  }, [videoBaseUrl, videoProxyBase]);
   const selectedAlertVideoList = (() => {
     const entries: Array<{ key: string; label: string; url: string }> = [];
     const pushIf = (key: string, label: string, url?: string) => {
@@ -2670,8 +2670,8 @@ export default function Dashboard() {
     const preReady = !!(selectedAlert?.preIncidentReady || selectedAlert?.has_pre_event);
     const postReady = !!(selectedAlert?.postIncidentReady || selectedAlert?.has_post_event);
     if (entries.length === 0 && fallbackAlertId) {
-      if (preReady) pushIf("pre_event_fallback", "Pre-Incident (30s before)", `${videoProxyBase}/alerts/${fallbackAlertId}/video/pre`);
-      if (postReady) pushIf("post_event_fallback", "Post-Incident (30s after)", `${videoProxyBase}/alerts/${fallbackAlertId}/video/post`);
+      if (preReady) pushIf("pre_event_fallback", "Pre-Incident (30s before)", buildAlertVideoUrl(fallbackAlertId, "pre"));
+      if (postReady) pushIf("post_event_fallback", "Post-Incident (30s after)", buildAlertVideoUrl(fallbackAlertId, "post"));
     }
     return entries;
   })();
@@ -2694,18 +2694,82 @@ export default function Dashboard() {
     }
   }, [alertDetailModalOpen, selectedAlert?.id]);
 
-  const openAlertDetailRealtime = useCallback(async (alertSeed: any, trip?: any) => {
+  const ensureAlertVideoRequested = useCallback(async (alertId: string, hasPreEvent: boolean, hasPostEvent: boolean) => {
+    if (!alertId || (hasPreEvent && hasPostEvent)) return null;
+
+    const now = Date.now();
+    const existing = alertVideoRequestStateRef.current[alertId] || {};
+    const cooldownMs = 2 * 60 * 1000;
+
+    if (existing.autoRequesting) return existing;
+    if (existing.autoRequested && !existing.error && existing.requestStartedAt && (now - existing.requestStartedAt) < cooldownMs) {
+      return existing;
+    }
+    if (existing.autoRequested && existing.error && existing.requestStartedAt && (now - existing.requestStartedAt) < cooldownMs) {
+      return existing;
+    }
+
+    alertVideoRequestStateRef.current[alertId] = {
+      ...existing,
+      autoRequested: true,
+      autoRequesting: true,
+      requestStartedAt: now,
+      error: "",
+    };
+
+    try {
+      const res = await fetch(`${videoProxyBase}/alerts/${encodeURIComponent(alertId)}/request-report-video`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          lookbackSeconds: 30,
+          forwardSeconds: 30,
+          queryResources: true,
+          requestDownload: true,
+        }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok || !body?.success) {
+        throw new Error(body?.message || `HTTP ${res.status}`);
+      }
+
+      const d = body?.data || {};
+      const next = {
+        ...existing,
+        autoRequested: true,
+        autoRequesting: false,
+        requestStartedAt: Date.now(),
+        querySent: !!d.querySent,
+        requestSent: !!d.requestSent,
+        downloadRequestSent: !!d.downloadRequestSent,
+        jobId: d.playbackJobId || null,
+        jobStatus: d.playbackJobId ? "queued" : "none",
+        error: "",
+      };
+      alertVideoRequestStateRef.current[alertId] = next;
+      return next;
+    } catch (err: any) {
+      const next = {
+        ...existing,
+        autoRequested: true,
+        autoRequesting: false,
+        requestStartedAt: Date.now(),
+        error: err?.message || String(err),
+      };
+      alertVideoRequestStateRef.current[alertId] = next;
+      return next;
+    }
+  }, [videoProxyBase]);
+
+  const openAlertDetailRealtime = useCallback(async (
+    alertSeed: any,
+    trip?: any,
+    opts?: { silent?: boolean; requestIfMissing?: boolean }
+  ) => {
+    const silent = !!opts?.silent;
+    const requestIfMissing = opts?.requestIfMissing !== false;
     const isValidDisplayUrl = (url?: string) =>
       !!url && /^https?:\/\//i.test(url) && url !== "upload-failed" && url !== "local-only";
-    const toAbsoluteUrl = (raw?: string) => {
-      if (!raw) return "";
-      if (/^https?:\/\//i.test(raw)) return raw;
-      if (raw.startsWith("/")) {
-        if (videoBaseUrl) return `${videoBaseUrl}${raw}`;
-        return raw;
-      }
-      return videoBaseUrl ? `${videoBaseUrl}/${raw}` : raw;
-    };
     const firstArray = (...values: any[]) => {
       for (const value of values) {
         if (Array.isArray(value)) return value;
@@ -2725,13 +2789,15 @@ export default function Dashboard() {
         undefined,
     };
 
-    setSelectedAlert(baseAlert);
-    setAlertDetailModalOpen(true);
-    setAlertRealtimeLoading(true);
+    if (!silent) {
+      setSelectedAlert(baseAlert);
+      setAlertDetailModalOpen(true);
+      setAlertRealtimeLoading(true);
+    }
 
     try {
       const alertId = String(baseAlert?.id || "").trim();
-      if (!alertId) return;
+      if (!alertId) return null;
 
       const [detailRes, videosRes, recentRes] = await Promise.all([
         fetch(`${videoProxyBase}/alerts/${alertId}`),
@@ -2759,24 +2825,29 @@ export default function Dashboard() {
           file_path: s?.file_path,
         }));
       const videosPayload = videosJson?.videos || {};
-      const hasPreEvent = !!(videosPayload?.pre_event?.path || videosJson?.has_pre_event);
-      const hasPostEvent = !!(videosPayload?.post_event?.path || videosJson?.has_post_event);
+      const metadataClips = detailAlert?.metadata?.videoClips || {};
+      const preDuration = Number(videosPayload?.pre_event?.duration ?? metadataClips?.preDuration ?? 0);
+      const postDuration = Number(videosPayload?.post_event?.duration ?? metadataClips?.postDuration ?? 0);
+      const hasPrePath = !!(videosPayload?.pre_event?.path || videosJson?.has_pre_event);
+      const hasPostPath = !!(videosPayload?.post_event?.path || videosJson?.has_post_event);
+      const hasPreEvent =
+        (Number.isFinite(preDuration) && preDuration >= EVENT_VIDEO_READY_MIN_SECONDS) ||
+        (hasPrePath && (!Number.isFinite(preDuration) || preDuration <= 0));
+      const hasPostEvent =
+        (Number.isFinite(postDuration) && postDuration >= EVENT_VIDEO_READY_MIN_SECONDS) ||
+        (hasPostPath && (!Number.isFinite(postDuration) || postDuration <= 0));
       const hasCameraVideo = !!(videosPayload?.camera_sd?.path || videosJson?.has_camera_video);
-      const preEventUrl =
-        toAbsoluteUrl(videosPayload?.pre_event?.url) ||
-        toAbsoluteUrl(detailAlert?.preIncidentVideoUrl) ||
-        (hasPreEvent ? `${videoProxyBase}/alerts/${alertId}/video/pre` : "");
-      const postEventUrl =
-        toAbsoluteUrl(videosPayload?.post_event?.url) ||
-        toAbsoluteUrl(detailAlert?.postIncidentVideoUrl) ||
-        (hasPostEvent ? `${videoProxyBase}/alerts/${alertId}/video/post` : "");
-      const cameraUrl =
-        toAbsoluteUrl(videosPayload?.camera_sd?.url) ||
-        toAbsoluteUrl(detailAlert?.cameraVideoUrl) ||
-        (hasCameraVideo ? `${videoProxyBase}/alerts/${alertId}/video/camera` : "");
+
+      if (requestIfMissing && (!hasPreEvent || !hasPostEvent)) {
+        await ensureAlertVideoRequested(alertId, hasPreEvent, hasPostEvent);
+      }
+
+      const preEventUrl = hasPreEvent ? buildAlertVideoUrl(alertId, "pre") : "";
+      const postEventUrl = hasPostEvent ? buildAlertVideoUrl(alertId, "post") : "";
+      const cameraUrl = hasCameraVideo ? buildAlertVideoUrl(alertId, "camera") : "";
       const normalizedVideos = [
-        { key: "pre_event", label: "Pre-Incident (30s before)", url: preEventUrl },
-        { key: "post_event", label: "Post-Incident (30s after)", url: postEventUrl },
+        { key: "pre_event", label: "Pre-Incident (30s before)", url: preEventUrl, duration: preDuration },
+        { key: "post_event", label: "Post-Incident (30s after)", url: postEventUrl, duration: postDuration },
         { key: "camera_sd", label: "Camera SD Clip", url: cameraUrl },
       ];
       const recentAlertsRaw = firstArray(
@@ -2795,55 +2866,87 @@ export default function Dashboard() {
           resolved: !!a?.resolved,
         }));
 
-      setSelectedAlert((prev: any) => {
-        const merged = {
-          ...prev,
-          ...baseAlert,
-          ...detailAlert,
-          severity:
-            detailAlert?.severity ||
-            detailAlert?.priority ||
-            baseAlert?.severity ||
-            baseAlert?.priority ||
-            "info",
-          alert_type:
-            detailAlert?.alert_type ||
-            (detailAlert?.type ? String(detailAlert.type).toLowerCase().replace(/\s+/g, "_") : undefined) ||
-            baseAlert?.alert_type,
-          media: {
-            screenshots: normalizedScreenshots,
-            videos: normalizedVideos.filter((v) => !!v.url),
-          },
-          screenshot_timestamps: screenshotTimestamps,
-          videos: {
-            pre_event: preEventUrl,
-            post_event: postEventUrl,
-            camera_sd: cameraUrl,
-          },
-          has_pre_event: hasPreEvent,
-          has_post_event: hasPostEvent,
-          has_camera_video: hasCameraVideo,
-          preIncidentReady: !!(hasPreEvent || detailAlert?.preIncidentReady),
-          postIncidentReady: !!(hasPostEvent || detailAlert?.postIncidentReady),
-          cameraVideoReady: !!(hasCameraVideo || detailAlert?.cameraVideoUrl),
-          recent_alerts: recentAlerts,
+      const requestState = alertVideoRequestStateRef.current[alertId] || {};
+      const merged: any = {
+        ...baseAlert,
+        ...detailAlert,
+        severity:
+          detailAlert?.severity ||
+          detailAlert?.priority ||
+          baseAlert?.severity ||
+          baseAlert?.priority ||
+          "info",
+        alert_type:
+          detailAlert?.alert_type ||
+          (detailAlert?.type ? String(detailAlert.type).toLowerCase().replace(/\s+/g, "_") : undefined) ||
+          baseAlert?.alert_type,
+        media: {
+          screenshots: normalizedScreenshots,
+          videos: normalizedVideos.filter((v) => !!v.url),
+        },
+        screenshot_timestamps: screenshotTimestamps,
+        videos: {
+          pre_event: preEventUrl,
+          post_event: postEventUrl,
+          camera_sd: cameraUrl,
+        },
+        has_pre_event: hasPreEvent,
+        has_post_event: hasPostEvent,
+        has_camera_video: hasCameraVideo,
+        pre_event_duration_sec: Number.isFinite(preDuration) ? preDuration : 0,
+        post_event_duration_sec: Number.isFinite(postDuration) ? postDuration : 0,
+        preIncidentReady: !!(hasPreEvent || detailAlert?.preIncidentReady),
+        postIncidentReady: !!(hasPostEvent || detailAlert?.postIncidentReady),
+        cameraVideoReady: !!(hasCameraVideo || detailAlert?.cameraVideoUrl),
+        recent_alerts: recentAlerts,
+        videoAutoRequest: requestState,
+      };
+
+      if (!merged?.location?.latitude && merged?.metadata?.latitude && merged?.metadata?.longitude) {
+        merged.location = {
+          latitude: merged.metadata.latitude,
+          longitude: merged.metadata.longitude,
         };
+      }
 
-        if (!merged?.location?.latitude && merged?.metadata?.latitude && merged?.metadata?.longitude) {
-          merged.location = {
-            latitude: merged.metadata.latitude,
-            longitude: merged.metadata.longitude,
-          };
-        }
-
-        return merged;
-      });
+      setSelectedAlert((prev: any) => ({ ...prev, ...merged }));
+      return merged;
     } catch (err) {
       console.error("Failed to refresh alert details:", err);
+      return null;
     } finally {
-      setAlertRealtimeLoading(false);
+      if (!silent) {
+        setAlertRealtimeLoading(false);
+      }
     }
-  }, [videoBaseUrl, videoProxyBase]);
+  }, [EVENT_VIDEO_READY_MIN_SECONDS, buildAlertVideoUrl, ensureAlertVideoRequested]);
+
+  useEffect(() => {
+    if (!alertDetailModalOpen || !selectedAlert?.id) return;
+
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const tick = async () => {
+      if (cancelled) return;
+      const refreshed = await openAlertDetailRealtime(selectedAlert, null, {
+        silent: true,
+        requestIfMissing: true,
+      });
+      if (cancelled) return;
+
+      const preReady = !!(refreshed?.preIncidentReady || refreshed?.has_pre_event || refreshed?.videos?.pre_event);
+      const postReady = !!(refreshed?.postIncidentReady || refreshed?.has_post_event || refreshed?.videos?.post_event);
+      const nextDelayMs = preReady && postReady ? 15000 : 3000;
+      timer = setTimeout(tick, nextDelayMs);
+    };
+
+    timer = setTimeout(tick, 1200);
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [alertDetailModalOpen, selectedAlert?.id, openAlertDetailRealtime]);
   useEffect(() => {
     const getCookie = (name: string) => {
       const value = `; ${document.cookie}`;
@@ -4738,10 +4841,10 @@ export default function Dashboard() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-3 md:p-6">
           <div className="w-full max-w-[1200px] h-[92vh] overflow-hidden rounded-2xl border border-slate-300 bg-slate-50 shadow-2xl flex flex-col">
             {/* Header */}
-            <div className="border-b border-slate-200 bg-gradient-to-r from-slate-950 via-slate-900 to-red-950 px-4 md:px-6 py-4 flex-shrink-0">
+            <div className="border-b border-slate-200 bg-gradient-to-r from-slate-950 via-slate-900 to-red-950 px-4 md:px-6 py-2.5 flex-shrink-0">
               <div className="flex items-center justify-between">
-                <div className="flex items-center gap-4">
-                  <Button variant="outline" size="sm" className="border-white/20 bg-white/10 text-white hover:bg-white/20 hover:text-white" onClick={() => {
+                <div className="flex items-center gap-3">
+                  <Button variant="outline" size="sm" className="h-8 border-white/20 bg-white/10 px-3 text-white hover:bg-white/20 hover:text-white" onClick={() => {
                     setAlertDetailModalOpen(false);
                     setAlertRealtimeLoading(false);
                     setAlertReason("");
@@ -4754,10 +4857,10 @@ export default function Dashboard() {
                     <ArrowLeft className="w-4 h-4 mr-2" />
                     Back
                   </Button>
-                  <div className="h-6 w-px bg-white/20" />
+                  <div className="h-5 w-px bg-white/20" />
                   <div>
-                    <div className="flex items-center gap-2 mb-1">
-                      <h1 className="text-xl font-bold text-white">
+                    <div className="flex items-center gap-2">
+                      <h1 className="text-lg font-bold leading-tight text-white">
                         {selectedAlertTitle}
                       </h1>
                       <Badge variant="outline" className={cn(
@@ -4771,7 +4874,7 @@ export default function Dashboard() {
                         {selectedAlertSeverity.toUpperCase()}
                       </Badge>
                     </div>
-                    <p className="text-sm text-slate-300">
+                    <p className="text-xs text-slate-300">
                       Alert ID: {selectedAlert.id} • {selectedAlertDisplayTs ? new Date(selectedAlertDisplayTs).toLocaleString() : 'N/A'}
                     </p>
                     {alertRealtimeLoading && (
@@ -4781,9 +4884,9 @@ export default function Dashboard() {
                 </div>
 
                 {/* Action Buttons */}
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1.5">
                   <select
-                    className="h-9 min-w-[180px] rounded-md border border-white/20 bg-white/10 px-3 text-sm text-white outline-none focus:border-white/40"
+                    className="h-8 min-w-[170px] rounded-md border border-white/20 bg-white/10 px-2.5 text-xs text-white outline-none focus:border-white/40"
                     value={alertReason}
                     onChange={(e) => setAlertReason(e.target.value)}
                   >
@@ -4798,7 +4901,7 @@ export default function Dashboard() {
                     <>
                       <Button 
                         variant="outline" 
-                        className="border-red-300/70 bg-white text-red-700 hover:bg-red-50"
+                        className="h-8 border-red-300/70 bg-white px-3 text-sm text-red-700 hover:bg-red-50"
                         onClick={() => {
                           if (confirm('Mark this alert as a false alarm?')) {
                             setAlertDetailModalOpen(false);
@@ -4816,7 +4919,7 @@ export default function Dashboard() {
                         False Alert
                       </Button>
                       <select
-                        className="h-9 min-w-[220px] rounded-md border border-white/20 bg-white/10 px-3 text-sm text-white outline-none focus:border-white/40"
+                        className="h-8 min-w-[200px] rounded-md border border-white/20 bg-white/10 px-2.5 text-xs text-white outline-none focus:border-white/40"
                         value={selectedNcrForm}
                         onChange={(e) => {
                           const formType = (e.target.value || '') as '' | 'nrc-camera-covered' | 'ncr-safety-violation' | 'ncr-speeding';
@@ -4830,7 +4933,7 @@ export default function Dashboard() {
                         <option value="ncr-speeding" className="text-slate-900">ncr-speeding</option>
                       </select>
                       <select
-                        className="h-9 min-w-[190px] rounded-md border border-white/20 bg-white/10 px-3 text-sm text-white outline-none focus:border-white/40"
+                        className="h-8 min-w-[170px] rounded-md border border-white/20 bg-white/10 px-2.5 text-xs text-white outline-none focus:border-white/40"
                         value={selectedReportForm}
                         onChange={(e) => {
                           const formType = (e.target.value || '') as '' | 'incident-report' | 'criminal-report';
@@ -4942,7 +5045,7 @@ export default function Dashboard() {
                                     <Video className="w-5 h-5 text-cyan-300" />
                                     <div>
                                       <p className="font-medium text-white">{cameraSdVideo.label || "Camera SD Clip"}</p>
-                                      <p className="text-sm text-slate-300">SD card video (fallback)</p>
+                                      <p className="text-xs text-slate-300">SD card video (fallback)</p>
                                     </div>
                                   </div>
                                   <div className="flex items-center gap-2">
@@ -4981,7 +5084,7 @@ export default function Dashboard() {
                                       <Video className="w-5 h-5 text-cyan-300" />
                                       <div>
                                         <p className="font-medium text-white">{video.label || `Video ${idx + 1}`}</p>
-                                        <p className="text-sm text-slate-300">Event video from vehicle camera</p>
+                                        <p className="text-xs text-slate-300">Event video from vehicle camera</p>
                                       </div>
                                     </div>
                                     <div className="flex items-center gap-2">
@@ -5354,6 +5457,7 @@ export default function Dashboard() {
     </>
   );
 }
+
 
 
 
