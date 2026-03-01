@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import Image from 'next/image'
 import { Button } from '@/components/ui/button'
 import { Printer, X } from 'lucide-react'
@@ -47,14 +47,86 @@ export default function NRCCameraCoveredModal({ isOpen, onClose, driverInfo, ale
   const [preventiveTargetDate, setPreventiveTargetDate] = useState('')
   const [investigator, setInvestigator] = useState('')
   const [manager, setManager] = useState('')
+  const [selectedRootCauses, setSelectedRootCauses] = useState<string[]>([])
+  const rootCauseStorageKey = useMemo(
+    () => `ncr-camera-root-causes:${alertDetails?.id || driverInfo.fleetNumber || 'unknown'}`,
+    [alertDetails?.id, driverInfo.fleetNumber]
+  )
+  const rootCauseDefaults = useMemo(
+    () => [
+      'improper_attitude_or_motivation',
+      'lack_of_knowledge_or_skill',
+      'ignoring_she_regulations',
+      'ignoring_road_traffic_act',
+    ],
+    []
+  )
 
   const locationText = useMemo(() => {
     if (typeof alertDetails?.location === 'string') return alertDetails.location
-    if (alertDetails?.location?.latitude && alertDetails?.location?.longitude) {
+    if (alertDetails?.location?.latitude !== undefined && alertDetails?.location?.longitude !== undefined) {
       return `${alertDetails.location.latitude}, ${alertDetails.location.longitude}`
     }
     return driverInfo.location || 'Unknown location'
   }, [alertDetails?.location, driverInfo.location])
+  useEffect(() => {
+    if (!isOpen) return
+    try {
+      const raw = localStorage.getItem(rootCauseStorageKey)
+      if (raw) {
+        const parsed = JSON.parse(raw)
+        if (Array.isArray(parsed)) {
+          setSelectedRootCauses(parsed.filter((v) => typeof v === 'string'))
+          return
+        }
+      }
+    } catch {}
+    setSelectedRootCauses(rootCauseDefaults)
+  }, [isOpen, rootCauseDefaults, rootCauseStorageKey])
+  useEffect(() => {
+    if (!isOpen) return
+    try {
+      localStorage.setItem(rootCauseStorageKey, JSON.stringify(selectedRootCauses))
+    } catch {}
+  }, [isOpen, rootCauseStorageKey, selectedRootCauses])
+  const toggleRootCause = (key: string) => {
+    setSelectedRootCauses((prev) =>
+      prev.includes(key) ? prev.filter((item) => item !== key) : [...prev, key]
+    )
+  }
+  const getRootCauseCellClass = (key: string, last: boolean = false) =>
+    [
+      `${last ? '' : 'border-r border-black'} p-2 transition-colors cursor-pointer select-none`,
+      selectedRootCauses.includes(key)
+        ? 'bg-green-200 text-green-900 font-semibold'
+        : 'hover:bg-slate-100',
+    ].join(' ')
+  const annexureScreenshots = useMemo(() => {
+    const input = Array.isArray(alertDetails?.screenshots) ? alertDetails.screenshots : []
+    const out: Array<{ url: string; timestamp?: string }> = []
+    const seen = new Set<string>()
+    for (const shot of input as any[]) {
+      const url = String(shot?.url || shot?.storage_url || shot?.signed_url || shot?.image_url || '').trim()
+      if (!url || (!/^https?:\/\//i.test(url) && !url.startsWith('/'))) continue
+      if (seen.has(url)) continue
+      seen.add(url)
+      out.push({ url, timestamp: shot?.timestamp })
+    }
+    return out
+  }, [alertDetails?.screenshots])
+  const annexureVideos = useMemo(() => {
+    const input = Array.isArray(alertDetails?.videos) ? alertDetails.videos : []
+    const out: Array<{ key?: string; label?: string; url?: string }> = []
+    const seen = new Set<string>()
+    for (const v of input as any[]) {
+      const url = String(v?.url || v?.src || v?.path || '').trim()
+      if (!url || (!/^https?:\/\//i.test(url) && !url.startsWith('/'))) continue
+      if (seen.has(url)) continue
+      seen.add(url)
+      out.push({ key: v?.key, label: v?.label, url })
+    }
+    return out
+  }, [alertDetails?.videos])
 
   const handlePrint = () => window.print()
 
@@ -205,25 +277,25 @@ export default function NRCCameraCoveredModal({ isOpen, onClose, driverInfo, ale
               <div className="col-span-11">
                 <div className="border-b border-black p-2 font-bold bg-slate-100">Root Cause Analysis (Unsafe Acts / Conditions / Personal Factors)</div>
                 <div className="grid grid-cols-5 border-b border-black text-sm">
-                  <div className="border-r border-black p-2">Unsafe Acts</div>
-                  <div className="border-r border-black p-2">Taking an unsafe position</div>
-                  <div className="border-r border-black p-2 bg-yellow-200">Improper attitude or motivation</div>
-                  <div className="border-r border-black p-2">Operating at unsafe speed</div>
-                  <div className="p-2">Physical/Mental incompatibility</div>
+                  <div className={getRootCauseCellClass('unsafe_acts')} onClick={() => toggleRootCause('unsafe_acts')}>Unsafe Acts</div>
+                  <div className={getRootCauseCellClass('taking_an_unsafe_position')} onClick={() => toggleRootCause('taking_an_unsafe_position')}>Taking an unsafe position</div>
+                  <div className={getRootCauseCellClass('improper_attitude_or_motivation')} onClick={() => toggleRootCause('improper_attitude_or_motivation')}>Improper attitude or motivation</div>
+                  <div className={getRootCauseCellClass('operating_at_unsafe_speed')} onClick={() => toggleRootCause('operating_at_unsafe_speed')}>Operating at unsafe speed</div>
+                  <div className={getRootCauseCellClass('physical_mental_incompatibility', true)} onClick={() => toggleRootCause('physical_mental_incompatibility')}>Physical/Mental incompatibility</div>
                 </div>
                 <div className="grid grid-cols-5 border-b border-black text-sm">
-                  <div className="border-r border-black p-2">Distracting, teasing, horseplay</div>
-                  <div className="border-r border-black p-2">Defective tools/equipment</div>
-                  <div className="border-r border-black p-2 bg-yellow-200">Lack of knowledge or skill</div>
-                  <div className="border-r border-black p-2">Using equipment unsafely</div>
-                  <div className="p-2">Failure to use PPE</div>
+                  <div className={getRootCauseCellClass('distracting_teasing_horseplay')} onClick={() => toggleRootCause('distracting_teasing_horseplay')}>Distracting, teasing, horseplay</div>
+                  <div className={getRootCauseCellClass('defective_tools_equipment')} onClick={() => toggleRootCause('defective_tools_equipment')}>Defective tools/equipment</div>
+                  <div className={getRootCauseCellClass('lack_of_knowledge_or_skill')} onClick={() => toggleRootCause('lack_of_knowledge_or_skill')}>Lack of knowledge or skill</div>
+                  <div className={getRootCauseCellClass('using_equipment_unsafely')} onClick={() => toggleRootCause('using_equipment_unsafely')}>Using equipment unsafely</div>
+                  <div className={getRootCauseCellClass('failure_to_use_ppe', true)} onClick={() => toggleRootCause('failure_to_use_ppe')}>Failure to use PPE</div>
                 </div>
                 <div className="grid grid-cols-5 border-b border-black text-sm">
-                  <div className="border-r border-black p-2">Hazardous arrangement</div>
-                  <div className="border-r border-black p-2">Using unsafe equipment</div>
-                  <div className="border-r border-black p-2 bg-yellow-200">Ignoring SHE regulations</div>
-                  <div className="border-r border-black p-2 bg-yellow-200">Ignoring Road Traffic Act</div>
-                  <div className="p-2">Poor Road/Environment Conditions</div>
+                  <div className={getRootCauseCellClass('hazardous_arrangement')} onClick={() => toggleRootCause('hazardous_arrangement')}>Hazardous arrangement</div>
+                  <div className={getRootCauseCellClass('using_unsafe_equipment')} onClick={() => toggleRootCause('using_unsafe_equipment')}>Using unsafe equipment</div>
+                  <div className={getRootCauseCellClass('ignoring_she_regulations')} onClick={() => toggleRootCause('ignoring_she_regulations')}>Ignoring SHE regulations</div>
+                  <div className={getRootCauseCellClass('ignoring_road_traffic_act')} onClick={() => toggleRootCause('ignoring_road_traffic_act')}>Ignoring Road Traffic Act</div>
+                  <div className={getRootCauseCellClass('poor_road_environment_conditions', true)} onClick={() => toggleRootCause('poor_road_environment_conditions')}>Poor Road/Environment Conditions</div>
                 </div>
                 <div className="grid grid-cols-12 border-b border-black text-sm">
                   <div className="col-span-6 border-r border-black p-2 font-bold">Risk Rating</div>
@@ -284,15 +356,21 @@ export default function NRCCameraCoveredModal({ isOpen, onClose, driverInfo, ale
 
             <div className="p-3 text-sm border-b border-black">
               <div className="font-bold text-lg mb-2">Annexure A (Picture/Video Evidence)</div>
+              <div className="mb-3 grid grid-cols-2 gap-2 border border-black p-2 text-xs">
+                <div><span className="font-semibold">Alert ID:</span> {alertDetails?.id || 'N/A'}</div>
+                <div><span className="font-semibold">Type:</span> {alertDetails?.type || 'N/A'}</div>
+                <div><span className="font-semibold">Severity:</span> {alertDetails?.severity || 'N/A'}</div>
+                <div><span className="font-semibold">Location:</span> {locationText}</div>
+              </div>
               <div className="grid grid-cols-2 gap-2">
-                {(alertDetails?.screenshots || []).slice(0, 4).map((shot, idx) => (
+                {annexureScreenshots.map((shot, idx) => (
                   <div key={`${shot.url}-${idx}`} className="border border-black p-2">
                     <div className="text-xs font-semibold mb-1">Screenshot {idx + 1}</div>
                     <img src={shot.url} alt={`Evidence ${idx + 1}`} className="w-full h-40 object-cover border border-black" />
                     <div className="text-[11px] mt-1">{shot.timestamp ? new Date(shot.timestamp).toLocaleString('en-GB') : ''}</div>
                   </div>
                 ))}
-                {(alertDetails?.videos || []).slice(0, 4).map((video, idx) => (
+                {annexureVideos.map((video, idx) => (
                   <div key={`${video.url}-${idx}`} className="border border-black p-2">
                     <div className="text-xs font-semibold mb-1">{video.label || `Video ${idx + 1}`}</div>
                     {video.url ? (
@@ -307,6 +385,11 @@ export default function NRCCameraCoveredModal({ isOpen, onClose, driverInfo, ale
                     )}
                   </div>
                 ))}
+                {annexureScreenshots.length === 0 && annexureVideos.length === 0 ? (
+                  <div className="col-span-2 border border-black p-4 text-center text-xs text-slate-600">
+                    No evidence media attached on this alert.
+                  </div>
+                ) : null}
               </div>
             </div>
 

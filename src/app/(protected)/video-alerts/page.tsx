@@ -16,10 +16,12 @@ import {
   Eye,
   ArrowUpCircle,
   Camera,
+  Video,
   MapPin,
   User,
   Car,
-  ShieldAlert
+  ShieldAlert,
+  ExternalLink
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -29,11 +31,138 @@ export default function VideoAlertsPage() {
   const [alerts, setAlerts] = useState({ critical: [], high: [], medium: [], low: [] })
   const [screenshots, setScreenshots] = useState([])
   const [selectedAlert, setSelectedAlert] = useState(null)
+  const [loadingAlertDetails, setLoadingAlertDetails] = useState(false)
   const [loading, setLoading] = useState(true)
   const [apiError, setApiError] = useState(false)
   const [notes, setNotes] = useState('')
   const [activeTab, setActiveTab] = useState('alerts')
   const [currentUser] = useState({ id: 'user-1', name: 'Controller' })
+
+  const toNum = (value) => {
+    const n = Number(value)
+    return Number.isFinite(n) ? n : null
+  }
+
+  const normalizeScreenshots = (alert, mediaPayload) => {
+    const out = []
+    const add = (url, timestamp, id) => {
+      const clean = String(url || '').trim()
+      if (!clean) return
+      if (out.some((x) => x.url === clean)) return
+      out.push({
+        id: id || `shot-${out.length + 1}`,
+        url: clean,
+        timestamp: timestamp || null
+      })
+    }
+
+    const fromAlert = Array.isArray(alert?.screenshots) ? alert.screenshots : []
+    fromAlert.forEach((s, idx) => add(s?.url || s?.storage_url, s?.timestamp, s?.id || `alert-${idx}`))
+
+    const fromMedia = Array.isArray(mediaPayload?.screenshots) ? mediaPayload.screenshots : []
+    fromMedia.forEach((s, idx) => add(s?.url || s?.storage_url, s?.timestamp, s?.id || `media-${idx}`))
+
+    const evidenceShots = Array.isArray(alert?.metadata?.evidence?.screenshots)
+      ? alert.metadata.evidence.screenshots
+      : []
+    evidenceShots.forEach((s, idx) => add(s?.storageUrl || s?.url, s?.capturedAt, s?.imageId || `evidence-${idx}`))
+
+    return out
+  }
+
+  const normalizeVideos = (alert, mediaPayload) => {
+    const out = []
+    const add = (label, url, key) => {
+      const clean = String(url || '').trim()
+      if (!clean) return
+      if (out.some((x) => x.url === clean)) return
+      out.push({
+        key: key || `video-${out.length + 1}`,
+        label,
+        url: clean
+      })
+    }
+
+    const clips = alert?.metadata?.videoClips || {}
+    add('Camera Video', clips.cameraVideo || clips.cameraVideoStorageUrl, 'camera')
+    add('Pre-Incident Video', clips.preStorageUrl || clips.pre, 'pre')
+    add('Post-Incident Video', clips.postStorageUrl || clips.post, 'post')
+    add('Camera Pre Video', clips.cameraPreVideo, 'camera_pre')
+    add('Camera Post Video', clips.cameraPostVideo, 'camera_post')
+
+    const fromMedia = Array.isArray(mediaPayload?.videos) ? mediaPayload.videos : []
+    fromMedia.forEach((v, idx) => {
+      add(
+        v?.video_type ? String(v.video_type).replace(/_/g, ' ').toUpperCase() : `Video ${idx + 1}`,
+        v?.storage_url || v?.url,
+        v?.id || `media-video-${idx}`
+      )
+    })
+
+    const evidenceVideos = Array.isArray(alert?.metadata?.evidence?.videos)
+      ? alert.metadata.evidence.videos
+      : []
+    evidenceVideos.forEach((v, idx) => add(v?.source || `Evidence Video ${idx + 1}`, v?.storageUrl || v?.url, v?.videoId || `evidence-video-${idx}`))
+
+    return out
+  }
+
+  const normalizeAlert = (raw, mediaPayload = null) => {
+    const metadata = raw?.metadata || {}
+    const lat = toNum(raw?.location?.latitude ?? raw?.latitude ?? metadata?.locationFix?.latitude)
+    const lon = toNum(raw?.location?.longitude ?? raw?.longitude ?? metadata?.locationFix?.longitude)
+    const location = {
+      latitude: lat,
+      longitude: lon,
+      address: raw?.location?.address || null
+    }
+
+    return {
+      ...raw,
+      id: raw?.id,
+      alert_type: raw?.alert_type || raw?.type || metadata?.primaryAlertType || 'Alert',
+      priority: raw?.priority || 'low',
+      status: raw?.status || 'new',
+      device_id: raw?.device_id || raw?.vehicleId || raw?.vehicle?.terminalPhone || raw?.vehicle?.vehicleId,
+      vehicleId: raw?.vehicleId || raw?.device_id || raw?.vehicle?.vehicleId,
+      vehicle_registration: raw?.vehicle_registration || raw?.vehicle?.plateNumber || null,
+      driver_name: raw?.driver_name || null,
+      location,
+      metadata,
+      screenshots: normalizeScreenshots(raw, mediaPayload),
+      videos: normalizeVideos(raw, mediaPayload)
+    }
+  }
+
+  const loadAlertDetails = async (alert) => {
+    if (!alert?.id) return
+    setLoadingAlertDetails(true)
+    try {
+      const [alertRes, mediaRes] = await Promise.all([
+        fetch(`/api/video-server/alerts/${alert.id}`),
+        fetch(`/api/video-server/alerts/${alert.id}/media`)
+      ])
+
+      let alertPayload = alert
+      let mediaPayload = null
+
+      if (alertRes.ok) {
+        const data = await alertRes.json()
+        alertPayload = data?.alert || data?.data || alert
+      }
+      if (mediaRes.ok) {
+        const data = await mediaRes.json()
+        mediaPayload = data?.data || null
+      }
+
+      setSelectedAlert(normalizeAlert(alertPayload, mediaPayload))
+    } catch (err) {
+      console.error('Failed to load alert details:', err)
+      setSelectedAlert(normalizeAlert(alert))
+    } finally {
+      setLoadingAlertDetails(false)
+    }
+  }
 
   const fetchAlerts = async () => {
     try {
@@ -42,7 +171,8 @@ export default function VideoAlertsPage() {
         const data = await res.json()
         if (data.success && data.alerts) {
           const grouped = { critical: [], high: [], medium: [], low: [] }
-          data.alerts.forEach(alert => {
+          data.alerts.forEach((rawAlert) => {
+            const alert = normalizeAlert(rawAlert)
             const priority = alert.priority || 'low'
             if (grouped[priority]) grouped[priority].push(alert)
           })
@@ -263,7 +393,7 @@ export default function VideoAlertsPage() {
                     {allAlerts.map(alert => (
                       <div
                         key={alert.id}
-                        onClick={() => setSelectedAlert(alert)}
+                        onClick={() => loadAlertDetails(alert)}
                         className={cn(
                           'p-4 cursor-pointer hover:bg-gray-50 transition-colors',
                           selectedAlert?.id === alert.id && 'bg-blue-50 border-l-4 border-l-blue-500'
@@ -278,6 +408,11 @@ export default function VideoAlertsPage() {
                         </div>
                         <div className="text-sm text-gray-600">
                           <p>Device: {alert.device_id || alert.vehicleId}</p>
+                          {Number.isFinite(alert.location?.latitude) && Number.isFinite(alert.location?.longitude) && (
+                            <p className="text-xs text-gray-500">
+                              {alert.location.latitude.toFixed(6)}, {alert.location.longitude.toFixed(6)}
+                            </p>
+                          )}
                           {alert.metadata?.drivingBehavior && (
                             <div className="flex gap-2 mt-1">
                               {alert.metadata.drivingBehavior.fatigue && (
@@ -309,6 +444,12 @@ export default function VideoAlertsPage() {
                   </div>
                 ) : (
                   <div className="p-6 space-y-4">
+                    {loadingAlertDetails && (
+                      <Card className="p-3 text-sm text-gray-600">
+                        <RefreshCw className="w-4 h-4 mr-2 inline animate-spin" />
+                        Loading alert media and details...
+                      </Card>
+                    )}
                     <div className="flex items-center gap-2">
                       <Badge className={cn('text-white', priorityColor(selectedAlert.priority))}>
                         {selectedAlert.priority.toUpperCase()}
@@ -324,7 +465,30 @@ export default function VideoAlertsPage() {
                         </h3>
                         <div className="grid grid-cols-2 gap-2">
                           {selectedAlert.screenshots.map((ss, i) => (
-                            <img key={i} src={ss.url} alt="" className="w-full rounded border" />
+                            <img key={ss.id || i} src={ss.url} alt="" className="w-full rounded border" />
+                          ))}
+                        </div>
+                      </Card>
+                    )}
+
+                    {selectedAlert.videos?.length > 0 && (
+                      <Card className="p-4">
+                        <h3 className="font-semibold mb-3 flex items-center gap-2">
+                          <Video className="w-4 h-4" />
+                          Videos
+                        </h3>
+                        <div className="space-y-3">
+                          {selectedAlert.videos.map((video, idx) => (
+                            <div key={video.key || idx} className="border rounded p-2 bg-white">
+                              <p className="text-xs font-semibold text-gray-600 mb-2">{video.label || `Video ${idx + 1}`}</p>
+                              <video controls className="w-full rounded border bg-black">
+                                <source src={video.url} />
+                              </video>
+                              <a href={video.url} target="_blank" rel="noreferrer" className="text-xs text-blue-600 inline-flex items-center gap-1 mt-1">
+                                Open video
+                                <ExternalLink className="w-3 h-3" />
+                              </a>
+                            </div>
                           ))}
                         </div>
                       </Card>
@@ -343,9 +507,36 @@ export default function VideoAlertsPage() {
                         </div>
                         <div className="flex items-center gap-2">
                           <MapPin className="w-4 h-4 text-gray-400" />
-                          <span>{selectedAlert.location?.address || `${selectedAlert.location?.latitude?.toFixed(4)}, ${selectedAlert.location?.longitude?.toFixed(4)}` || 'N/A'}</span>
+                          <span>
+                            {Number.isFinite(selectedAlert.location?.latitude) && Number.isFinite(selectedAlert.location?.longitude)
+                              ? `${selectedAlert.location.latitude.toFixed(6)}, ${selectedAlert.location.longitude.toFixed(6)}`
+                              : 'N/A'}
+                          </span>
                         </div>
                       </div>
+
+                      {Number.isFinite(selectedAlert.location?.latitude) && Number.isFinite(selectedAlert.location?.longitude) && (
+                        <div className="pt-3 border-t">
+                          <h4 className="font-semibold text-xs mb-2">Map</h4>
+                          <div className="rounded border overflow-hidden">
+                            <iframe
+                              title="alert-map"
+                              className="w-full h-48"
+                              loading="lazy"
+                              src={`https://www.openstreetmap.org/export/embed.html?bbox=${selectedAlert.location.longitude - 0.01}%2C${selectedAlert.location.latitude - 0.01}%2C${selectedAlert.location.longitude + 0.01}%2C${selectedAlert.location.latitude + 0.01}&layer=mapnik&marker=${selectedAlert.location.latitude}%2C${selectedAlert.location.longitude}`}
+                            />
+                          </div>
+                          <a
+                            href={`https://www.openstreetmap.org/?mlat=${selectedAlert.location.latitude}&mlon=${selectedAlert.location.longitude}#map=15/${selectedAlert.location.latitude}/${selectedAlert.location.longitude}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-xs text-blue-600 inline-flex items-center gap-1 mt-2"
+                          >
+                            Open in map
+                            <ExternalLink className="w-3 h-3" />
+                          </a>
+                        </div>
+                      )}
                       
                       {selectedAlert.metadata?.drivingBehavior && (
                         <div className="pt-3 border-t">

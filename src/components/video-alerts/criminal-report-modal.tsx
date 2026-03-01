@@ -50,11 +50,37 @@ export default function CriminalReportModal({ isOpen, onClose, driverInfo, alert
   const timestamp = alertDetails?.timestamp || driverInfo.timestamp
   const locationText = useMemo(() => {
     if (typeof alertDetails?.location === 'string') return alertDetails.location
-    if (alertDetails?.location?.latitude && alertDetails?.location?.longitude) {
+    if (alertDetails?.location?.latitude !== undefined && alertDetails?.location?.longitude !== undefined) {
       return `${alertDetails.location.latitude}, ${alertDetails.location.longitude}`
     }
     return driverInfo.location || 'Unknown location'
   }, [alertDetails?.location, driverInfo.location])
+  const annexureScreenshots = useMemo(() => {
+    const input = Array.isArray(alertDetails?.screenshots) ? alertDetails.screenshots : []
+    const out: Array<{ url: string; timestamp?: string }> = []
+    const seen = new Set<string>()
+    for (const shot of input as any[]) {
+      const url = String(shot?.url || shot?.storage_url || shot?.signed_url || shot?.image_url || '').trim()
+      if (!url || (!/^https?:\/\//i.test(url) && !url.startsWith('/'))) continue
+      if (seen.has(url)) continue
+      seen.add(url)
+      out.push({ url, timestamp: shot?.timestamp })
+    }
+    return out
+  }, [alertDetails?.screenshots])
+  const annexureVideos = useMemo(() => {
+    const input = Array.isArray(alertDetails?.videos) ? alertDetails.videos : []
+    const out: Array<{ key?: string; label?: string; url?: string }> = []
+    const seen = new Set<string>()
+    for (const v of input as any[]) {
+      const url = String(v?.url || v?.src || v?.path || '').trim()
+      if (!url || (!/^https?:\/\//i.test(url) && !url.startsWith('/'))) continue
+      if (seen.has(url)) continue
+      seen.add(url)
+      out.push({ key: v?.key, label: v?.label, url })
+    }
+    return out
+  }, [alertDetails?.videos])
 
   const handlePrint = () => window.print()
 
@@ -173,14 +199,20 @@ export default function CriminalReportModal({ isOpen, onClose, driverInfo, alert
 
             <div className="space-y-2 border border-slate-500 p-3">
               <p className="font-semibold text-slate-800">Annexure A (Picture/Video Evidence)</p>
+              <div className="grid grid-cols-2 gap-2 border border-slate-500 p-2 text-xs">
+                <div><span className="font-semibold">Alert ID:</span> {alertDetails?.id || 'N/A'}</div>
+                <div><span className="font-semibold">Type:</span> {alertDetails?.type || 'N/A'}</div>
+                <div><span className="font-semibold">Severity:</span> {alertDetails?.severity || 'N/A'}</div>
+                <div><span className="font-semibold">Location:</span> {locationText}</div>
+              </div>
               <div className="grid grid-cols-2 gap-2">
-                {(alertDetails?.screenshots || []).slice(0, 4).map((shot, idx) => (
+                {annexureScreenshots.map((shot, idx) => (
                   <div key={`${shot.url}-${idx}`} className="border border-slate-500 p-2">
                     <div className="text-xs font-semibold mb-1">Screenshot {idx + 1}</div>
                     <img src={shot.url} alt={`Screenshot ${idx + 1}`} className="w-full h-36 object-cover border border-slate-500" />
                   </div>
                 ))}
-                {(alertDetails?.videos || []).slice(0, 4).map((video, idx) => (
+                {annexureVideos.map((video, idx) => (
                   <div key={`${video.url}-${idx}`} className="border border-slate-500 p-2">
                     <div className="text-xs font-semibold mb-1">{video.label || `Video ${idx + 1}`}</div>
                     {video.url ? (
@@ -192,6 +224,11 @@ export default function CriminalReportModal({ isOpen, onClose, driverInfo, alert
                     )}
                   </div>
                 ))}
+                {annexureScreenshots.length === 0 && annexureVideos.length === 0 ? (
+                  <div className="col-span-2 border border-slate-500 p-4 text-center text-xs text-slate-600">
+                    No evidence media attached on this alert.
+                  </div>
+                ) : null}
               </div>
             </div>
           </div>
