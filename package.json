@@ -3,9 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "set NODE_OPTIONS=--max-old-space-size=1536 && next dev",
-    "build": "set NODE_OPTIONS=--max-old-space-size=1536 && set UV_THREADPOOL_SIZE=1 && next build",
-    "start": "set NODE_OPTIONS=--max-old-space-size=1536 && next start",
+    "dev": "set NODE_OPTIONS=--max-old-space-size=1024 && set UV_THREADPOOL_SIZE=1 && set NEXT_DISABLE_ESLINT=1 && next dev",
+    "build": "set NODE_OPTIONS=--max-old-space-size=1024 && set UV_THREADPOOL_SIZE=1 && set NEXT_DISABLE_ESLINT=1 && next build",
+    "start": "set NODE_OPTIONS=--max-old-space-size=1024 && set UV_THREADPOOL_SIZE=1 && next start",
     "lint": "next lint",
     "postbuild": "echo 'Build complete'",
     "database:pull": "npx supabase gen types --lang=typescript --project-id jbactgkcijnkjpyqqzxv > src/lib/supabase/database.types.ts"
