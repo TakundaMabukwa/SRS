@@ -1,3 +1,5 @@
+const path = require('path')
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   typescript: {
@@ -6,8 +8,11 @@ const nextConfig = {
   eslint: {
     ignoreDuringBuilds: true
   },
+  experimental: {
+    webpackBuildWorker: false
+  },
+  outputFileTracingRoot: path.resolve(__dirname),
   compress: true,
-  swcMinify: true,
   productionBrowserSourceMaps: false
 }
 
