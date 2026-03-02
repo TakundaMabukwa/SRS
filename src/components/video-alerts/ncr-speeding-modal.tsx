@@ -20,6 +20,7 @@ type VideoInput = { key?: string; label?: string; url?: string; src?: string; pa
 interface SpeedingModalProps {
   isOpen: boolean
   onClose: () => void
+  onSaved?: () => void | Promise<void>
   driverInfo: {
     name: string
     fleetNumber: string
@@ -30,7 +31,7 @@ interface SpeedingModalProps {
   alertDetails?: AlertDetails
 }
 
-export default function NCRSpeedingModal({ isOpen, onClose, driverInfo, alertDetails }: SpeedingModalProps) {
+export default function NCRSpeedingModal({ isOpen, onClose, onSaved, driverInfo, alertDetails }: SpeedingModalProps) {
   const [saving, setSaving] = useState(false)
   const [ncrNo, setNcrNo] = useState('/26')
   const [responsibleManager, setResponsibleManager] = useState('Fleet Manager')
@@ -160,6 +161,7 @@ export default function NCRSpeedingModal({ isOpen, onClose, driverInfo, alertDet
         document_url: publicUrl
       })
       if (dbError) throw dbError
+      if (onSaved) await onSaved()
       onClose()
     } catch (err) {
       console.error('Error saving NCR speeding report:', err)

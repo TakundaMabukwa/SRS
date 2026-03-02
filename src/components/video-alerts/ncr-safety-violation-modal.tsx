@@ -20,6 +20,7 @@ type VideoInput = { key?: string; label?: string; url?: string; src?: string; pa
 interface SafetyViolationModalProps {
   isOpen: boolean
   onClose: () => void
+  onSaved?: () => void | Promise<void>
   driverInfo: {
     name: string
     fleetNumber: string
@@ -30,7 +31,7 @@ interface SafetyViolationModalProps {
   alertDetails?: AlertDetails
 }
 
-export default function NCRSafetyViolationModal({ isOpen, onClose, driverInfo, alertDetails }: SafetyViolationModalProps) {
+export default function NCRSafetyViolationModal({ isOpen, onClose, onSaved, driverInfo, alertDetails }: SafetyViolationModalProps) {
   const [saving, setSaving] = useState(false)
   const [ncrNo, setNcrNo] = useState(`/26`)
   const [responsibleManager, setResponsibleManager] = useState('Fleet Manager')
@@ -154,6 +155,7 @@ export default function NCRSafetyViolationModal({ isOpen, onClose, driverInfo, a
       })
       if (dbError) throw dbError
 
+      if (onSaved) await onSaved()
       onClose()
     } catch (err) {
       console.error('Error saving NCR safety violation report:', err)

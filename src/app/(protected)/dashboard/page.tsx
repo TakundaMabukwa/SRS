@@ -6050,6 +6050,10 @@ export default function Dashboard() {
         <NRCCameraCoveredModal
           isOpen={showNCRModal}
           onClose={() => setShowNCRModal(false)}
+          onSaved={async () => {
+            setShowNCRModal(false)
+            await closeSelectedAlert("ncr")
+          }}
           driverInfo={{
             name: selectedAlert.driver_name || 'Unknown Driver',
             fleetNumber: selectedAlert.vehicle_registration || selectedAlert.device_id,
@@ -6072,6 +6076,10 @@ export default function Dashboard() {
         <NCRSafetyViolationModal
           isOpen={showNCRModal}
           onClose={() => setShowNCRModal(false)}
+          onSaved={async () => {
+            setShowNCRModal(false)
+            await closeSelectedAlert("ncr")
+          }}
           driverInfo={{
             name: selectedAlert.driver_name || 'Unknown Driver',
             fleetNumber: selectedAlert.vehicle_registration || selectedAlert.device_id,
@@ -6094,6 +6102,10 @@ export default function Dashboard() {
         <NCRSpeedingModal
           isOpen={showNCRModal}
           onClose={() => setShowNCRModal(false)}
+          onSaved={async () => {
+            setShowNCRModal(false)
+            await closeSelectedAlert("ncr")
+          }}
           driverInfo={{
             name: selectedAlert.driver_name || 'Unknown Driver',
             fleetNumber: selectedAlert.vehicle_registration || selectedAlert.device_id,
@@ -6116,6 +6128,10 @@ export default function Dashboard() {
         <IncidentReportModal
           isOpen={showReportModal}
           onClose={() => setShowReportModal(false)}
+          onSaved={async () => {
+            setShowReportModal(false)
+            await closeSelectedAlert("report")
+          }}
           driverInfo={{
             name: selectedAlert.driver_name || 'Unknown Driver',
             fleetNumber: selectedAlert.vehicle_registration || selectedAlert.device_id,
@@ -6138,6 +6154,10 @@ export default function Dashboard() {
         <CriminalReportModal
           isOpen={showReportModal}
           onClose={() => setShowReportModal(false)}
+          onSaved={async () => {
+            setShowReportModal(false)
+            await closeSelectedAlert("report")
+          }}
           driverInfo={{
             name: selectedAlert.driver_name || 'Unknown Driver',
             fleetNumber: selectedAlert.vehicle_registration || selectedAlert.device_id,

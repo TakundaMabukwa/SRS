@@ -14,10 +14,13 @@ interface AlertDetails {
   screenshots?: Array<{ url: string; timestamp?: string }>
   videos?: Array<{ key?: string; label?: string; url?: string }>
 }
+type ScreenshotInput = { url?: string; storage_url?: string; signed_url?: string; image_url?: string; timestamp?: string }
+type VideoInput = { key?: string; label?: string; url?: string; src?: string; path?: string }
 
 interface CameraCoveredModalProps {
   isOpen: boolean
   onClose: () => void
+  onSaved?: () => void | Promise<void>
   driverInfo: {
     name: string
     fleetNumber: string
@@ -28,7 +31,7 @@ interface CameraCoveredModalProps {
   alertDetails?: AlertDetails
 }
 
-export default function NRCCameraCoveredModal({ isOpen, onClose, driverInfo, alertDetails }: CameraCoveredModalProps) {
+export default function NRCCameraCoveredModal({ isOpen, onClose, onSaved, driverInfo, alertDetails }: CameraCoveredModalProps) {
   const [saving, setSaving] = useState(false)
   const [ncrNo, setNcrNo] = useState(`NCR-CAMERA-${Date.now()}`)
   const [section, setSection] = useState('Fleet Operations')
@@ -102,10 +105,10 @@ export default function NRCCameraCoveredModal({ isOpen, onClose, driverInfo, ale
         : 'hover:bg-slate-100',
     ].join(' ')
   const annexureScreenshots = useMemo(() => {
-    const input = Array.isArray(alertDetails?.screenshots) ? alertDetails.screenshots : []
+    const input = Array.isArray(alertDetails?.screenshots) ? (alertDetails.screenshots as ScreenshotInput[]) : []
     const out: Array<{ url: string; timestamp?: string }> = []
     const seen = new Set<string>()
-    for (const shot of input as any[]) {
+    for (const shot of input) {
       const url = String(shot?.url || shot?.storage_url || shot?.signed_url || shot?.image_url || '').trim()
       if (!url || (!/^https?:\/\//i.test(url) && !url.startsWith('/'))) continue
       if (seen.has(url)) continue
@@ -115,10 +118,10 @@ export default function NRCCameraCoveredModal({ isOpen, onClose, driverInfo, ale
     return out
   }, [alertDetails?.screenshots])
   const annexureVideos = useMemo(() => {
-    const input = Array.isArray(alertDetails?.videos) ? alertDetails.videos : []
+    const input = Array.isArray(alertDetails?.videos) ? (alertDetails.videos as VideoInput[]) : []
     const out: Array<{ key?: string; label?: string; url?: string }> = []
     const seen = new Set<string>()
-    for (const v of input as any[]) {
+    for (const v of input) {
       const url = String(v?.url || v?.src || v?.path || '').trim()
       if (!url || (!/^https?:\/\//i.test(url) && !url.startsWith('/'))) continue
       if (seen.has(url)) continue
@@ -173,6 +176,7 @@ export default function NRCCameraCoveredModal({ isOpen, onClose, driverInfo, ale
       })
       if (dbError) throw dbError
 
+      if (onSaved) await onSaved()
       onClose()
     } catch (err) {
       console.error('Error saving NRC camera covered report:', err)
