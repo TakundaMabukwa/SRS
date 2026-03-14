@@ -69,30 +69,53 @@ export default function LiveStreamTab() {
   const fetchConnectedVehicles = useCallback(async () => {
     setLoading(true);
     try {
-      const response = await fetch("/api/video-vehicles");
+      const response = await fetch("/api/video-server/vehicles/connected", { cache: "no-store" });
       if (response.ok) {
         const data = await response.json();
-        if (data.success && data.data) {
-          const vehiclesWithReg = await Promise.all(
-            data.data.map(async (vehicle: ConnectedVehicle) => {
-              const phoneNumber = vehicle.phone || vehicle.id;
-              const { data: vehicleData } = await supabase
-                .from("vehiclesc")
-                .select("registration_number, camera_sim_id")
-                .ilike("camera_sim_id", `%${phoneNumber}%`)
-                .single();
-
-              return {
-                ...vehicle,
-                registration: vehicleData?.registration_number || vehicle.id,
-              };
-            })
+        const connectedVehicles = Array.isArray(data)
+          ? data
+          : Array.isArray(data?.data)
+            ? data.data
+            : Array.isArray(data?.vehicles)
+              ? data.vehicles
+              : [];
+        if (connectedVehicles.length > 0) {
+          const cameraIds = Array.from(
+            new Set(
+              connectedVehicles
+                .map((vehicle: ConnectedVehicle) => String(vehicle.phone || vehicle.id || "").trim())
+                .filter(Boolean)
+            )
           );
+          const vehicleLookup = new Map<string, string>();
+          if (cameraIds.length > 0) {
+            const { data: vehicleRows } = await supabase
+              .from("vehiclesc")
+              .select("registration_number, camera_sim_id")
+              .in("camera_sim_id", cameraIds);
+            for (const row of vehicleRows || []) {
+              const key = String(row?.camera_sim_id || "").trim();
+              const registration = String(row?.registration_number || "").trim();
+              if (key && registration && !vehicleLookup.has(key)) {
+                vehicleLookup.set(key, registration);
+              }
+            }
+          }
+          const vehiclesWithReg = connectedVehicles.map((vehicle: ConnectedVehicle) => {
+            const key = String(vehicle.phone || vehicle.id || "").trim();
+            return {
+              ...vehicle,
+              registration: vehicleLookup.get(key) || vehicle.registration || vehicle.name || vehicle.id,
+            };
+          });
           setVehicles(vehiclesWithReg);
+        } else {
+          setVehicles([]);
         }
       }
     } catch (error) {
       console.error("Failed to fetch vehicles:", error);
+      setVehicles([]);
     }
     setLoading(false);
   }, [supabase]);

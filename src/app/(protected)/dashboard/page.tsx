@@ -195,6 +195,13 @@ function UniversalVideoPlayer({
   }, [activeUrl, autoPlay]);
 
   const looksLikeRawH264 = /\.h264(?:$|\?)/i.test(activeUrl);
+  const tryAutoplay = useCallback(() => {
+    const videoEl = videoRef.current;
+    if (!videoEl || !autoPlay) return;
+    void videoEl.play().catch(() => {
+      // Browser autoplay policy can still block; user can press play.
+    });
+  }, [autoPlay]);
 
   return (
     <div className="mb-3">
@@ -207,7 +214,14 @@ function UniversalVideoPlayer({
         muted={autoPlay}
         className={className}
         src={isHlsUrl ? undefined : activeUrl}
-        onCanPlay={() => onPlayableChange?.(true)}
+        onLoadedMetadata={() => {
+          onPlayableChange?.(true);
+          tryAutoplay();
+        }}
+        onCanPlay={() => {
+          onPlayableChange?.(true);
+          tryAutoplay();
+        }}
         onError={() => {
           if (sourceIndex < candidateSources.length - 1) {
             setSourceIndex((prev) => prev + 1);
@@ -1166,9 +1180,18 @@ function RoutingSection({ userRole, handleViewMap, setCurrentTripForNote, setNot
     )
   }, [extractVehicleKey, normalizeId])
 
+  const toDisplayUrl = useCallback((raw?: string) => {
+    const value = String(raw || "").trim()
+    if (!value || value === "upload-failed" || value === "local-only") return ""
+    if (/^https?:\/\//i.test(value)) return value
+    if (value.startsWith("/")) {
+      return directVideoApiBase ? `${directVideoApiBase}${value}` : value
+    }
+    return directVideoApiBase ? `${directVideoApiBase}/${value}` : `/${value.replace(/^\/+/, "")}`
+  }, [directVideoApiBase])
   const isValidDisplayUrl = useCallback((url?: string) => {
-    return !!url && /^https?:\/\//i.test(url) && url !== "upload-failed" && url !== "local-only";
-  }, [])
+    return !!toDisplayUrl(url)
+  }, [toDisplayUrl])
   const getScreenshotDisplayUrl = useCallback((shot: any) => {
     const candidate =
       shot?.url ||
@@ -1178,8 +1201,8 @@ function RoutingSection({ userRole, handleViewMap, setCurrentTripForNote, setNot
       shot?.image_url ||
       shot?.imageUrl ||
       "";
-    return isValidDisplayUrl(candidate) ? candidate : "";
-  }, [isValidDisplayUrl])
+    return toDisplayUrl(candidate);
+  }, [toDisplayUrl])
   const normalizeScreenshotRecord = useCallback((shot: any, fallbackTimestamp?: string) => {
     const url = getScreenshotDisplayUrl(shot);
     if (!url) return null;
@@ -1206,25 +1229,78 @@ function RoutingSection({ userRole, handleViewMap, setCurrentTripForNote, setNot
     return Number.isFinite(duration) && duration > 0 ? duration : 0
   }, [])
 
-  const mapAlertVideoState = useCallback((alertId: string, videosJson: any, detailAlert?: any) => {
+  const mapAlertVideoState = useCallback((alertId: string, videosJson: any, detailAlert?: any, mediaJson?: any) => {
     const videosPayload = videosJson?.videos || {}
+    const mediaPayload = mediaJson?.data || mediaJson || {}
+    const clipUrls = mediaPayload?.clipUrls || {}
     const preDuration = getEventDurationSec(videosJson, detailAlert, "pre_event")
     const postDuration = getEventDurationSec(videosJson, detailAlert, "post_event")
     const hasPrePath = !!(videosPayload?.pre_event?.path || videosJson?.has_pre_event)
     const hasPostPath = !!(videosPayload?.post_event?.path || videosJson?.has_post_event)
-    const hasPreEvent = preDuration >= EVENT_VIDEO_READY_MIN_SECONDS || (hasPrePath && preDuration <= 0)
-    const hasPostEvent = postDuration >= EVENT_VIDEO_READY_MIN_SECONDS || (hasPostPath && postDuration <= 0)
-    const hasCameraVideo = !!(videosPayload?.camera_sd?.path || videosJson?.has_camera_video)
+    const preClipUrl = toDisplayUrl(
+      clipUrls?.pre ||
+      clipUrls?.preRaw ||
+      detailAlert?.metadata?.videoClips?.preStorageUrl ||
+      detailAlert?.metadata?.videoClips?.preUrl
+    )
+    const postClipUrl = toDisplayUrl(
+      clipUrls?.post ||
+      clipUrls?.postRaw ||
+      detailAlert?.metadata?.videoClips?.postStorageUrl ||
+      detailAlert?.metadata?.videoClips?.postUrl
+    )
+    const cameraClipUrl = toDisplayUrl(
+      clipUrls?.camera ||
+      clipUrls?.cameraRaw ||
+      detailAlert?.metadata?.videoClips?.cameraStorageUrl ||
+      detailAlert?.metadata?.videoClips?.cameraUrl
+    )
+    const hasPreEvent = !!preClipUrl || preDuration >= EVENT_VIDEO_READY_MIN_SECONDS || (hasPrePath && preDuration <= 0)
+    const hasPostEvent = !!postClipUrl || postDuration >= EVENT_VIDEO_READY_MIN_SECONDS || (hasPostPath && postDuration <= 0)
+    const hasCameraVideo = !!cameraClipUrl || !!(videosPayload?.camera_sd?.path || videosJson?.has_camera_video)
 
-    const preEventUrl = hasPreEvent ? buildTripAlertVideoUrl(alertId, "pre") : ""
-    const postEventUrl = hasPostEvent ? buildTripAlertVideoUrl(alertId, "post") : ""
-    const cameraUrl = hasCameraVideo ? buildTripAlertVideoUrl(alertId, "camera") : ""
+    const preEventUrl = hasPreEvent ? (preClipUrl || buildTripAlertVideoUrl(alertId, "pre")) : ""
+    const postEventUrl = hasPostEvent ? (postClipUrl || buildTripAlertVideoUrl(alertId, "post")) : ""
+    const cameraUrl = hasCameraVideo ? (cameraClipUrl || buildTripAlertVideoUrl(alertId, "camera")) : ""
 
     const normalizedVideos = [
       { key: "pre_event", label: "Pre-Incident (30s before)", url: preEventUrl, duration: preDuration },
       { key: "post_event", label: "Post-Incident (30s after)", url: postEventUrl, duration: postDuration },
       { key: "camera_sd", label: "Camera SD Clip", url: cameraUrl },
     ].filter((video) => !!video.url)
+
+    const seenVideoUrls = new Set(normalizedVideos.map((video) => video.url))
+    const databaseRecords = Array.isArray(mediaPayload?.videos)
+      ? mediaPayload.videos
+      : Array.isArray(videosPayload?.database_records)
+        ? videosPayload.database_records
+        : []
+
+    for (const record of databaseRecords) {
+      const recordUrl = toDisplayUrl(
+        record?.url ||
+        record?.storage_url ||
+        record?.signed_url ||
+        record?.signedUrl ||
+        record?.playback_url ||
+        record?.download_url ||
+        record?.video_url ||
+        record?.path
+      )
+      if (!recordUrl || seenVideoUrls.has(recordUrl)) continue
+      seenVideoUrls.add(recordUrl)
+      const label =
+        record?.label ||
+        record?.title ||
+        record?.video_type ||
+        record?.type ||
+        `Stored clip ${normalizedVideos.length + 1}`
+      normalizedVideos.push({
+        key: record?.video_type || record?.type || `database_record_${normalizedVideos.length + 1}`,
+        label,
+        url: recordUrl,
+      })
+    }
 
     return {
       videos: {
@@ -1239,7 +1315,7 @@ function RoutingSection({ userRole, handleViewMap, setCurrentTripForNote, setNot
       preDuration,
       postDuration,
     }
-  }, [EVENT_VIDEO_READY_MIN_SECONDS, buildTripAlertVideoUrl, getEventDurationSec])
+  }, [EVENT_VIDEO_READY_MIN_SECONDS, buildTripAlertVideoUrl, getEventDurationSec, toDisplayUrl])
 
   const fetchAlertMediaById = useCallback(async (alertId: string) => {
     const detailRes = await fetch(`${videoProxyBase}/alerts/${alertId}`, {
@@ -1251,8 +1327,12 @@ function RoutingSection({ userRole, handleViewMap, setCurrentTripForNote, setNot
     const now = Date.now()
     const backoffUntil = alertHydrationMediaBackoffRef.current[alertId] || 0
     const allowHeavy = now >= backoffUntil
-    const [videosRes, screenshotsRes] = allowHeavy
+    const [mediaRes, videosRes, screenshotsRes] = allowHeavy
       ? await Promise.all([
+          fetch(`${videoProxyBase}/alerts/${alertId}/media?ensureMedia=true`, {
+            cache: "no-store",
+            signal: AbortSignal.timeout(7000),
+          }),
           fetch(`${videoProxyBase}/alerts/${alertId}/videos`, {
             cache: "no-store",
             signal: AbortSignal.timeout(7000),
@@ -1262,18 +1342,24 @@ function RoutingSection({ userRole, handleViewMap, setCurrentTripForNote, setNot
             signal: AbortSignal.timeout(7000),
           }),
         ])
-      : [null, null]
+      : [null, null, null]
 
-    if (allowHeavy && ((videosRes && videosRes.status >= 500) || (screenshotsRes && screenshotsRes.status >= 500))) {
+    if (allowHeavy && ((mediaRes && mediaRes.status >= 500) || (videosRes && videosRes.status >= 500) || (screenshotsRes && screenshotsRes.status >= 500))) {
       // Back off failing media endpoints for 60s to prevent request floods.
       alertHydrationMediaBackoffRef.current[alertId] = Date.now() + 60_000
     }
 
+    const mediaJson = mediaRes && mediaRes.ok ? await mediaRes.json() : null
     const videosJson = videosRes && videosRes.ok ? await videosRes.json() : null
     const screenshotsJson = screenshotsRes && screenshotsRes.ok ? await screenshotsRes.json() : null
-    const detailAlert = detailJson?.alert || {}
+    const detailAlert = detailJson?.alert || mediaJson?.data?.alert || {}
 
     const fromAlert = Array.isArray(detailAlert?.screenshots) ? detailAlert.screenshots : []
+    const fromMedia = Array.isArray(mediaJson?.data?.screenshots)
+      ? mediaJson.data.screenshots
+      : Array.isArray(mediaJson?.screenshots)
+        ? mediaJson.screenshots
+        : []
     const fromDedicatedEndpoint = Array.isArray(screenshotsJson?.screenshots)
       ? screenshotsJson.screenshots
       : Array.isArray(screenshotsJson?.data?.screenshots)
@@ -1281,7 +1367,7 @@ function RoutingSection({ userRole, handleViewMap, setCurrentTripForNote, setNot
         : []
 
     const mergedByKey = new Map<string, any>()
-    for (const shot of [...fromAlert, ...fromDedicatedEndpoint]) {
+    for (const shot of [...fromAlert, ...fromMedia, ...fromDedicatedEndpoint]) {
       const key =
         normalizeId(shot?.id) ||
         normalizeId(shot?.url) ||
@@ -1291,7 +1377,7 @@ function RoutingSection({ userRole, handleViewMap, setCurrentTripForNote, setNot
       mergedByKey.set(key, shot)
     }
     const screenshots = Array.from(mergedByKey.values())
-    return { detailAlert, screenshots, videosJson }
+    return { detailAlert, screenshots, videosJson, mediaJson }
   }, [normalizeId, videoProxyBase])
 
   const toBaseDashboardAlert = useCallback((activeAlert: any) => {
@@ -1346,9 +1432,9 @@ function RoutingSection({ userRole, handleViewMap, setCurrentTripForNote, setNot
   const buildDashboardAlert = useCallback(async (activeAlert: any) => {
     try {
       const alertId = normalizeId(activeAlert?.id);
-      const { detailAlert, screenshots, videosJson } = alertId
+      const { detailAlert, screenshots, videosJson, mediaJson } = alertId
         ? await fetchAlertMediaById(alertId)
-        : { detailAlert: {}, screenshots: [], videosJson: null };
+        : { detailAlert: {}, screenshots: [], videosJson: null, mediaJson: null };
       const mergedAlert = { ...activeAlert, ...detailAlert };
       const screenshotTimestamps = screenshots
         .map((s: any) => s?.timestamp)
@@ -1360,7 +1446,7 @@ function RoutingSection({ userRole, handleViewMap, setCurrentTripForNote, setNot
         .filter(Boolean);
 
       const mappedVideoState = alertId
-        ? mapAlertVideoState(alertId, videosJson, mergedAlert)
+        ? mapAlertVideoState(alertId, videosJson, mergedAlert, mediaJson)
         : {
           videos: {},
           mediaVideos: [],
@@ -2673,7 +2759,7 @@ function TripReportsSection() {
 }
 
 export default function Dashboard() {
-  const [activeTab, setActiveTab] = useState<string>("routing");
+  const [activeTab, setActiveTab] = useState<string>("video-alerts");
   const [auditData, setAuditData] = useState<any[]>([]);
   const [auditLoading, setAuditLoading] = useState(true);
   const [userRole, setUserRole] = useState<string>("");
@@ -2749,6 +2835,8 @@ export default function Dashboard() {
   const [selectedReportForm, setSelectedReportForm] = useState<'' | 'incident-report' | 'criminal-report'>('');
   const [incidentReportModalOpen, setIncidentReportModalOpen] = useState(false);
   const [selectedTripForIncident, setSelectedTripForIncident] = useState<any>(null);
+  const [timelinePlaybackByAlert, setTimelinePlaybackByAlert] = useState<Record<string, Array<{ key: string; label: string; url: string; fallbackUrls?: string[] }>>>({});
+  const [timelinePlaybackLoading, setTimelinePlaybackLoading] = useState<Record<string, boolean>>({});
   const alertReasonOptions = [
     "Accident",
     "Battery disconnect",
@@ -3021,6 +3109,32 @@ export default function Dashboard() {
     if (raw.startsWith("/")) return videoBaseUrl ? `${videoBaseUrl}${raw}` : raw;
     return videoBaseUrl ? `${videoBaseUrl}/${raw}` : raw;
   };
+  const toAbsoluteImageUrl = useCallback((raw?: string) => {
+    if (!raw) return "";
+    if (raw === "upload-failed" || raw === "local-only") return "";
+    if (/^https?:\/\//i.test(raw)) return raw;
+    if (raw.startsWith("/")) return videoBaseUrl ? `${videoBaseUrl}${raw}` : raw;
+    return videoBaseUrl ? `${videoBaseUrl}/${raw}` : raw;
+  }, [videoBaseUrl]);
+  const normalizeModalScreenshotRecord = useCallback((shot: any, fallbackTimestamp?: string) => {
+    const url = toAbsoluteImageUrl(
+      shot?.url ||
+      shot?.storage_url ||
+      shot?.signed_url ||
+      shot?.signedUrl ||
+      shot?.image_url ||
+      shot?.imageUrl
+    );
+    if (!url) return null;
+    return {
+      id: shot?.id,
+      url,
+      timestamp: shot?.timestamp || fallbackTimestamp,
+      channel: shot?.channel,
+      file_path: shot?.file_path,
+      offset: shot?.offset ?? shot?.capture_offset ?? 0,
+    };
+  }, [toAbsoluteImageUrl]);
   const buildAlertVideoUrl = useCallback((alertId: string, type: "pre" | "post" | "camera") => {
     const encodedId = encodeURIComponent(String(alertId || "").trim());
     if (videoBaseUrl) return `${videoBaseUrl}/api/alerts/${encodedId}/video/${type}`;
@@ -3039,6 +3153,333 @@ export default function Dashboard() {
         ];
     return [...new Set(bases)];
   }, [videoBaseUrl, videoProxyBase]);
+  const buildPlaybackJobFileUrl = useCallback((jobId: string) => {
+    const encodedId = encodeURIComponent(String(jobId || "").trim());
+    if (videoBaseUrl) return `${videoBaseUrl}/api/videos/jobs/${encodedId}/file`;
+    return `${videoProxyBase}/videos/jobs/${encodedId}/file`;
+  }, [videoBaseUrl, videoProxyBase]);
+  const requestAlertWindowCapture = useCallback(async (alertRow: any) => {
+    const alertId = String(alertRow?.id || "").trim();
+    const vehicleId = String(
+      alertRow?.vehicleId ||
+      alertRow?.vehicle_id ||
+      alertRow?.device_id ||
+      alertRow?.deviceId ||
+      ""
+    ).trim();
+    const channel = Number(alertRow?.channel || 1) || 1;
+    const alertTimestamp = new Date(
+      alertRow?.timestamp ||
+      alertRow?.created_at ||
+      alertRow?.alert_timestamp ||
+      Date.now()
+    );
+
+    if (!alertId || !vehicleId || Number.isNaN(alertTimestamp.getTime())) return null;
+
+    const existing = alertVideoRequestStateRef.current[alertId] || {};
+    const now = Date.now();
+    const cooldownMs = 2 * 60 * 1000;
+    if (existing.autoRequesting) return existing;
+    if (existing.requestStartedAt && (now - existing.requestStartedAt) < cooldownMs) return existing;
+
+    alertVideoRequestStateRef.current[alertId] = {
+      ...existing,
+      autoRequested: true,
+      autoRequesting: true,
+      requestStartedAt: now,
+      error: "",
+    };
+    setSelectedAlert((prev: any) => (
+      prev && String(prev?.id || "").trim() === alertId
+        ? {
+            ...prev,
+            videoAutoRequest: {
+              ...(prev?.videoAutoRequest || {}),
+              autoRequested: true,
+              autoRequesting: true,
+              requestStartedAt: now,
+              error: "",
+            },
+          }
+        : prev
+    ));
+
+    const startTime = new Date(alertTimestamp.getTime() - 30 * 1000).toISOString();
+    const endTime = new Date(alertTimestamp.getTime() + 30 * 1000).toISOString();
+
+    try {
+      void fetch(`${videoProxyBase}/alerts/${encodeURIComponent(alertId)}/collect-evidence`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ensureScreenshots: true,
+          ensureVideo: false,
+        }),
+      }).catch(() => undefined);
+
+      const localRes = await fetch(`${videoProxyBase}/vehicles/${encodeURIComponent(vehicleId)}/videos/window`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          alertId,
+          channel,
+          startTime,
+          endTime,
+        }),
+      });
+      const body = await localRes.json().catch(() => ({}));
+      if (!localRes.ok || !body?.success) {
+        throw new Error(body?.message || `HTTP ${localRes.status}`);
+      }
+      const jobId = String(body?.data?.playbackJobId || "").trim();
+      const next = {
+        ...existing,
+        autoRequested: true,
+        autoRequesting: false,
+        requestStartedAt: Date.now(),
+        requestSent: true,
+        jobId: jobId || null,
+        jobStatus: jobId ? "queued" : "requested",
+        source: "stored_local_window",
+        error: "",
+      };
+      alertVideoRequestStateRef.current[alertId] = next;
+      setSelectedAlert((prev: any) => (
+        prev && String(prev?.id || "").trim() === alertId
+          ? {
+              ...prev,
+              videoAutoRequest: next,
+            }
+          : prev
+      ));
+      if (jobId) {
+        const poll = async () => {
+          for (let attempt = 0; attempt < 60; attempt += 1) {
+            await new Promise((resolve) => setTimeout(resolve, attempt === 0 ? 1000 : 2000));
+            try {
+              const statusRes = await fetch(`${videoProxyBase}/videos/jobs/${encodeURIComponent(jobId)}`, {
+                cache: "no-store",
+                signal: AbortSignal.timeout(5000),
+              });
+              const statusBody = await statusRes.json().catch(() => ({}));
+              const job = statusBody?.data || {};
+              alertVideoRequestStateRef.current[alertId] = {
+                ...alertVideoRequestStateRef.current[alertId],
+                autoRequested: true,
+                autoRequesting: false,
+                requestStartedAt: alertVideoRequestStateRef.current[alertId]?.requestStartedAt || Date.now(),
+                jobId,
+                jobStatus: job?.status || "unknown",
+                outputUrl: job?.outputUrl || buildPlaybackJobFileUrl(jobId),
+                error: job?.error || "",
+                source: "stored_local_window",
+              };
+              setSelectedAlert((prev: any) => (
+                prev && String(prev?.id || "").trim() === alertId
+                  ? {
+                      ...prev,
+                      videoAutoRequest: {
+                        ...(prev?.videoAutoRequest || {}),
+                        ...alertVideoRequestStateRef.current[alertId],
+                      },
+                    }
+                  : prev
+              ));
+              if (job?.status === "completed") {
+                const outputUrl = toAbsoluteVideoUrl(job?.outputUrl) || buildPlaybackJobFileUrl(jobId);
+                setSelectedAlert((prev: any) => {
+                  if (!prev || String(prev?.id || "").trim() !== alertId) return prev;
+                  return {
+                    ...prev,
+                    media: {
+                      ...(prev?.media || {}),
+                      videos: [
+                        {
+                          key: "alert_window",
+                          label: "Alert Window (30s before + 30s after)",
+                          url: outputUrl,
+                        },
+                      ],
+                    },
+                  };
+                });
+                break;
+              }
+              if (job?.status === "failed") break;
+            } catch {
+              // continue polling
+            }
+          }
+        };
+        void poll();
+      }
+      try {
+        const shotsRes = await fetch(`${videoProxyBase}/alerts/${encodeURIComponent(alertId)}/screenshots?includeFallback=true`, {
+          cache: "no-store",
+          signal: AbortSignal.timeout(5000),
+        });
+        const shotsJson = shotsRes.ok ? await shotsRes.json() : null;
+        const fromDedicated = Array.isArray(shotsJson?.screenshots)
+          ? shotsJson.screenshots
+          : Array.isArray(shotsJson?.data?.screenshots)
+            ? shotsJson.data.screenshots
+            : [];
+        const refreshedShots = fromDedicated
+          .map((shot: any) => normalizeModalScreenshotRecord(shot, alertRow?.timestamp))
+          .filter(Boolean);
+        if (refreshedShots.length > 0) {
+          setSelectedAlert((prev: any) => {
+            if (!prev || String(prev?.id || "").trim() !== alertId) return prev;
+            const existingShots = Array.isArray(prev?.media?.screenshots) ? prev.media.screenshots : [];
+            const seen = new Set(existingShots.map((shot: any) => String(shot?.id || shot?.url || "")));
+            const mergedShots = [...existingShots];
+            for (const shot of refreshedShots) {
+              const key = String(shot?.id || shot?.url || "");
+              if (!key || seen.has(key)) continue;
+              seen.add(key);
+              mergedShots.push(shot);
+            }
+            return {
+              ...prev,
+              media: {
+                ...(prev?.media || {}),
+                screenshots: mergedShots,
+              },
+            };
+          });
+        }
+      } catch {
+        // Keep replay running even if screenshot refresh fails.
+      }
+
+      return next;
+    } catch (err: any) {
+      const failed = {
+        ...existing,
+        autoRequested: true,
+        autoRequesting: false,
+        requestStartedAt: Date.now(),
+        error: err?.message || String(err),
+      };
+      alertVideoRequestStateRef.current[alertId] = failed;
+      setSelectedAlert((prev: any) => (
+        prev && String(prev?.id || "").trim() === alertId
+          ? { ...prev, videoAutoRequest: failed }
+          : prev
+      ));
+      return failed;
+    }
+  }, [buildPlaybackJobFileUrl, normalizeModalScreenshotRecord, toAbsoluteVideoUrl, videoProxyBase]);
+  const loadTimelineAlertPlayback = useCallback(async (timelineEntry: any) => {
+    const alertId = String(timelineEntry?.id || "").trim();
+    if (!alertId) return;
+
+    setTimelinePlaybackLoading((prev) => ({ ...prev, [alertId]: true }));
+    try {
+      const [detailRes, mediaRes, videosRes] = await Promise.all([
+        fetch(`${videoProxyBase}/alerts/${encodeURIComponent(alertId)}?ensureMedia=true`, {
+          cache: "no-store",
+          signal: AbortSignal.timeout(5000),
+        }),
+        fetch(`${videoProxyBase}/alerts/${encodeURIComponent(alertId)}/media?ensureMedia=true`, {
+          cache: "no-store",
+          signal: AbortSignal.timeout(5000),
+        }),
+        fetch(`${videoProxyBase}/alerts/${encodeURIComponent(alertId)}/videos?ensureMedia=true`, {
+          cache: "no-store",
+          signal: AbortSignal.timeout(5000),
+        }),
+      ]);
+
+      const detailJson = detailRes.ok ? await detailRes.json() : null;
+      const mediaJson = mediaRes.ok ? await mediaRes.json() : null;
+      const videosJson = videosRes.ok ? await videosRes.json() : null;
+      const detailAlert = detailJson?.alert || mediaJson?.data?.alert || {};
+      const mediaPayload = mediaJson?.data || mediaJson || {};
+      const clipUrls = mediaPayload?.clipUrls || {};
+      const videosPayload = videosJson?.videos || {};
+      const metadataClips = detailAlert?.metadata?.videoClips || {};
+
+      const preDuration = Number(videosPayload?.pre_event?.duration ?? metadataClips?.preDuration ?? 0);
+      const postDuration = Number(videosPayload?.post_event?.duration ?? metadataClips?.postDuration ?? 0);
+      const preCandidate = toAbsoluteVideoUrl(
+        clipUrls?.pre ||
+        clipUrls?.preRaw ||
+        metadataClips?.preStorageUrl ||
+        metadataClips?.preUrl
+      );
+      const postCandidate = toAbsoluteVideoUrl(
+        clipUrls?.post ||
+        clipUrls?.postRaw ||
+        metadataClips?.postStorageUrl ||
+        metadataClips?.postUrl
+      );
+      const cameraCandidate = toAbsoluteVideoUrl(
+        clipUrls?.camera ||
+        clipUrls?.cameraRaw ||
+        metadataClips?.cameraStorageUrl ||
+        metadataClips?.cameraUrl
+      );
+
+      const entries: Array<{ key: string; label: string; url: string; fallbackUrls?: string[] }> = [];
+      const seen = new Set<string>();
+      const pushIf = (key: string, label: string, url?: string, fallbackUrls?: string[]) => {
+        const normalized = toAbsoluteVideoUrl(url);
+        if (!normalized || seen.has(normalized)) return;
+        seen.add(normalized);
+        entries.push({ key, label, url: normalized, fallbackUrls: Array.isArray(fallbackUrls) ? fallbackUrls : [] });
+      };
+
+      if (preCandidate || videosPayload?.pre_event?.path || videosJson?.has_pre_event) {
+        pushIf(
+          "pre_event",
+          `Pre-Incident (30s before)${preDuration > 0 ? ` | ${preDuration.toFixed(1)}s` : ""}`,
+          preCandidate || buildAlertVideoUrl(alertId, "pre"),
+          buildAlertVideoUrlCandidates(alertId, "pre")
+        );
+      }
+      if (postCandidate || videosPayload?.post_event?.path || videosJson?.has_post_event) {
+        pushIf(
+          "post_event",
+          `Post-Incident (30s after)${postDuration > 0 ? ` | ${postDuration.toFixed(1)}s` : ""}`,
+          postCandidate || buildAlertVideoUrl(alertId, "post"),
+          buildAlertVideoUrlCandidates(alertId, "post")
+        );
+      }
+      if (cameraCandidate || videosPayload?.camera_sd?.path || videosJson?.has_camera_video) {
+        pushIf(
+          "camera_sd",
+          "Camera SD Clip",
+          cameraCandidate || buildAlertVideoUrl(alertId, "camera"),
+          buildAlertVideoUrlCandidates(alertId, "camera")
+        );
+      }
+
+      const mediaVideos = Array.isArray(mediaPayload?.videos) ? mediaPayload.videos : [];
+      for (const video of mediaVideos) {
+        pushIf(
+          video?.video_type || video?.type || `timeline_${entries.length + 1}`,
+          video?.label || video?.title || video?.video_type || video?.type || `Stored clip ${entries.length + 1}`,
+          video?.url ||
+            video?.storage_url ||
+            video?.signed_url ||
+            video?.signedUrl ||
+            video?.playback_url ||
+            video?.download_url ||
+            video?.video_url ||
+            video?.path
+        );
+      }
+
+      setTimelinePlaybackByAlert((prev) => ({ ...prev, [alertId]: entries }));
+    } catch {
+      setTimelinePlaybackByAlert((prev) => ({ ...prev, [alertId]: [] }));
+    } finally {
+      setTimelinePlaybackLoading((prev) => ({ ...prev, [alertId]: false }));
+    }
+  }, [buildAlertVideoUrl, buildAlertVideoUrlCandidates, toAbsoluteVideoUrl, videoProxyBase]);
+  const selectedAlertVideoRequestState = selectedAlert?.videoAutoRequest || null;
   const selectedAlertVideoList = (() => {
     const entries: Array<{ key: string; label: string; url: string; fallbackUrls?: string[] }> = [];
     const pushIf = (key: string, label: string, url?: string, fallbackUrls?: string[]) => {
@@ -3053,6 +3494,14 @@ export default function Dashboard() {
     mediaVideos.forEach((video: any, idx: number) => {
       pushIf(video?.key || `media_${idx}`, video?.label || video?.camera || `Video ${idx + 1}`, video?.url);
     });
+    if (selectedAlertVideoRequestState?.jobStatus === "completed" && selectedAlertVideoRequestState?.jobId) {
+      pushIf(
+        "alert_window",
+        "Alert Window (30s before + 30s after)",
+        selectedAlertVideoRequestState?.outputUrl || buildPlaybackJobFileUrl(String(selectedAlertVideoRequestState.jobId)),
+        [buildPlaybackJobFileUrl(String(selectedAlertVideoRequestState.jobId))]
+      );
+    }
     pushIf("pre_event", "Pre-Incident (30s before)", selectedAlert?.videos?.pre_event || selectedAlert?.preIncidentVideoUrl);
     pushIf("post_event", "Post-Incident (30s after)", selectedAlert?.videos?.post_event || selectedAlert?.postIncidentVideoUrl);
     const fallbackAlertId = String(selectedAlert?.id || "").trim();
@@ -3083,11 +3532,23 @@ export default function Dashboard() {
       String(v.key || "").includes("camera_sd") ||
       String(v.label || "").toLowerCase().includes("sd")
   );
+  const alertWindowVideo = selectedAlertVideoList.find(
+    (v) =>
+      String(v.key || "").includes("alert_window") ||
+      String(v.label || "").toLowerCase().includes("alert window")
+  );
   const prePostVideos = [preEventVideo, postEventVideo].filter(Boolean) as Array<{ key: string; label: string; url: string }>;
+  const genericEventVideos = selectedAlertVideoList.filter((video) => {
+    const key = String(video?.key || "").toLowerCase();
+    if (key.includes("pre_event") || key.includes("post_event") || key.includes("camera_sd") || key.includes("alert_window")) return false;
+    return true;
+  });
   const shouldShowOnlySdCard =
     !!cameraSdVideo &&
     prePostVideos.length > 0 &&
     prePostVideos.every((video) => videoPlaybackFailures[video.url] === true);
+  const normalizeDetailId = (value: unknown) =>
+    value === null || value === undefined ? "" : String(value).trim();
   const selectedAlertScreenshots = (() => {
     const mediaShots = Array.isArray(selectedAlert?.media?.screenshots) ? selectedAlert.media.screenshots : [];
     const rawShots = Array.isArray((selectedAlert as any)?.screenshots) ? (selectedAlert as any).screenshots : [];
@@ -3095,9 +3556,12 @@ export default function Dashboard() {
     const out: any[] = [];
     const seen = new Set<string>();
     for (const shot of all) {
-      const normalized = normalizeScreenshotRecord(shot, selectedAlert?.timestamp);
+      const normalized = normalizeModalScreenshotRecord(shot, selectedAlert?.timestamp);
       if (!normalized) continue;
-      const key = normalizeId(normalized.id) || normalizeId(normalized.url) || `${normalizeId(normalized.timestamp)}-${normalizeId(normalized.channel)}`;
+      const key =
+        normalizeDetailId(normalized.id) ||
+        normalizeDetailId(normalized.url) ||
+        `${normalizeDetailId(normalized.timestamp)}-${normalizeDetailId(normalized.channel)}`;
       if (!key || seen.has(key)) continue;
       seen.add(key);
       out.push(normalized);
@@ -3107,7 +3571,6 @@ export default function Dashboard() {
   const selectedAlertTimeline = Array.isArray((selectedAlert as any)?.resolution_timeline)
     ? (selectedAlert as any).resolution_timeline
     : [];
-
   useEffect(() => {
     if (alertDetailModalOpen) {
       setVideoPlaybackFailures({});
@@ -3317,7 +3780,7 @@ export default function Dashboard() {
         .filter(Boolean)
         .sort((a: string, b: string) => new Date(b).getTime() - new Date(a).getTime());
       const normalizedScreenshots = screenshots
-        .map((s: any) => normalizeScreenshotRecord(s, detailAlert?.timestamp || baseAlert?.timestamp))
+        .map((s: any) => normalizeModalScreenshotRecord(s, detailAlert?.timestamp || baseAlert?.timestamp))
         .filter(Boolean);
       const metadataScreenshotCandidates = firstArray(
         detailAlert?.metadata?.evidence,
@@ -3325,7 +3788,7 @@ export default function Dashboard() {
         detailAlert?.metadata?.images
       );
       const metadataScreenshots = metadataScreenshotCandidates
-        .map((s: any) => normalizeScreenshotRecord(s, detailAlert?.timestamp || baseAlert?.timestamp))
+        .map((s: any) => normalizeModalScreenshotRecord(s, detailAlert?.timestamp || baseAlert?.timestamp))
         .filter(Boolean);
       const mergedNormalizedShotsByKey = new Map<string, any>();
       for (const shot of [...normalizedScreenshots, ...metadataScreenshots]) {
@@ -3338,6 +3801,8 @@ export default function Dashboard() {
       }
       const mergedNormalizedScreenshots = Array.from(mergedNormalizedShotsByKey.values());
       const videosPayload = videosJson?.videos || {};
+      const mediaPayload = mediaJson?.data || mediaJson || {};
+      const clipUrls = mediaPayload?.clipUrls || {};
       const metadataClips = detailAlert?.metadata?.videoClips || {};
       const preDuration = Number(videosPayload?.pre_event?.duration ?? metadataClips?.preDuration ?? 0);
       const postDuration = Number(videosPayload?.post_event?.duration ?? metadataClips?.postDuration ?? 0);
@@ -3358,38 +3823,68 @@ export default function Dashboard() {
         metadataClips?.camera_sd_url ||
         detailAlert?.metadata?.cameraVideoUrl ||
         detailAlert?.cameraVideoUrl;
+      const mediaPreUrl = toAbsoluteVideoUrl(clipUrls?.pre || clipUrls?.preRaw);
+      const mediaPostUrl = toAbsoluteVideoUrl(clipUrls?.post || clipUrls?.postRaw);
+      const mediaCameraUrl = toAbsoluteVideoUrl(clipUrls?.camera || clipUrls?.cameraRaw);
       const hasPreEvent =
+        !!mediaPreUrl ||
         (Number.isFinite(preDuration) && preDuration >= EVENT_VIDEO_READY_MIN_SECONDS) ||
         (hasPrePath && (!Number.isFinite(preDuration) || preDuration <= 0)) ||
         !!toAbsoluteVideoUrl(metadataPreUrl);
       const hasPostEvent =
+        !!mediaPostUrl ||
         (Number.isFinite(postDuration) && postDuration >= EVENT_VIDEO_READY_MIN_SECONDS) ||
         (hasPostPath && (!Number.isFinite(postDuration) || postDuration <= 0)) ||
         !!toAbsoluteVideoUrl(metadataPostUrl);
       const hasCameraVideo =
+        !!mediaCameraUrl ||
         !!(videosPayload?.camera_sd?.path || videosJson?.has_camera_video) ||
         !!toAbsoluteVideoUrl(metadataCameraUrl);
 
-      if (requestIfMissing && (!hasPreEvent || !hasPostEvent)) {
-        await ensureAlertVideoRequested(alertId, hasPreEvent, hasPostEvent);
-      }
-
       const preEventUrl = hasPreEvent
-        ? (hasPrePath ? buildAlertVideoUrl(alertId, "pre") : toAbsoluteVideoUrl(metadataPreUrl))
+        ? (mediaPreUrl || (hasPrePath ? buildAlertVideoUrl(alertId, "pre") : toAbsoluteVideoUrl(metadataPreUrl)))
         : "";
       const postEventUrl = hasPostEvent
-        ? (hasPostPath ? buildAlertVideoUrl(alertId, "post") : toAbsoluteVideoUrl(metadataPostUrl))
+        ? (mediaPostUrl || (hasPostPath ? buildAlertVideoUrl(alertId, "post") : toAbsoluteVideoUrl(metadataPostUrl)))
         : "";
       const cameraUrl = hasCameraVideo
-        ? ((videosPayload?.camera_sd?.path || videosJson?.has_camera_video)
+        ? (mediaCameraUrl || ((videosPayload?.camera_sd?.path || videosJson?.has_camera_video)
           ? buildAlertVideoUrl(alertId, "camera")
-          : toAbsoluteVideoUrl(metadataCameraUrl))
+          : toAbsoluteVideoUrl(metadataCameraUrl)))
         : "";
       const normalizedVideos = [
         { key: "pre_event", label: "Pre-Incident (30s before)", url: preEventUrl, duration: preDuration },
         { key: "post_event", label: "Post-Incident (30s after)", url: postEventUrl, duration: postDuration },
         { key: "camera_sd", label: "Camera SD Clip", url: cameraUrl },
       ];
+      const seenVideoUrls = new Set<string>();
+      const dedupedNormalizedVideos: typeof normalizedVideos = [];
+      for (const video of normalizedVideos) {
+        const videoUrl = toAbsoluteVideoUrl(video?.url);
+        if (!videoUrl || seenVideoUrls.has(videoUrl)) continue;
+        seenVideoUrls.add(videoUrl);
+        dedupedNormalizedVideos.push({ ...video, url: videoUrl });
+      }
+      const mediaVideos = Array.isArray(mediaPayload?.videos) ? mediaPayload.videos : [];
+      for (const video of mediaVideos) {
+        const videoUrl = toAbsoluteVideoUrl(
+          video?.url ||
+          video?.storage_url ||
+          video?.signed_url ||
+          video?.signedUrl ||
+          video?.playback_url ||
+          video?.download_url ||
+          video?.video_url ||
+          video?.path
+        );
+        if (!videoUrl || seenVideoUrls.has(videoUrl)) continue;
+        seenVideoUrls.add(videoUrl);
+        dedupedNormalizedVideos.push({
+          key: video?.video_type || video?.type || `media_${dedupedNormalizedVideos.length + 1}`,
+          label: video?.label || video?.title || video?.video_type || video?.type || `Stored clip ${dedupedNormalizedVideos.length + 1}`,
+          url: videoUrl,
+        });
+      }
       const recentAlerts: any[] = [];
 
       const classifyResolutionType = (alertRow: any): "false_alert" | "ncr" | "report" | "resolved" => {
@@ -3431,7 +3926,7 @@ export default function Dashboard() {
           baseAlert?.alert_type,
         media: {
           screenshots: mergedNormalizedScreenshots,
-          videos: normalizedVideos.filter((v) => !!v.url),
+          videos: dedupedNormalizedVideos,
         },
         screenshot_timestamps: screenshotTimestamps,
         videos: {
@@ -3463,6 +3958,15 @@ export default function Dashboard() {
       }
 
       setSelectedAlert((prev: any) => ({ ...prev, ...merged }));
+      if (!silent) {
+        void requestAlertWindowCapture({
+          ...baseAlert,
+          ...detailAlert,
+          vehicleId: getVehicleKeyLocal({ ...baseAlert, ...detailAlert }) || baseAlert?.vehicleId,
+          timestamp: detailAlert?.timestamp || baseAlert?.timestamp,
+          channel: detailAlert?.channel || baseAlert?.channel || 1,
+        });
+      }
 
       // Phase 2: load heavier history/timeline details without blocking first paint.
       // Skip this on silent polling refreshes to keep alert detail fast.
@@ -3554,7 +4058,7 @@ export default function Dashboard() {
         setAlertRealtimeLoading(false);
       }
     }
-  }, [EVENT_VIDEO_READY_MIN_SECONDS, buildAlertVideoUrl, ensureAlertVideoRequested, getAlertCoordinates, toAbsoluteVideoUrl]);
+  }, [EVENT_VIDEO_READY_MIN_SECONDS, buildAlertVideoUrl, getAlertCoordinates, requestAlertWindowCapture, toAbsoluteVideoUrl]);
 
   useEffect(() => {
     if (!alertDetailModalOpen || !selectedAlert?.id) return;
@@ -3904,7 +4408,7 @@ export default function Dashboard() {
         )}
 
         {activeTab === "video-alerts" && (
-          <VideoAlertsDashboardTab />
+          <VideoAlertsDashboardTab onOpenAlertDetail={openAlertDetailRealtime} />
         )}
 
         {activeTab === "screenshots" && (
@@ -5679,98 +6183,69 @@ export default function Dashboard() {
                     {/* Video Clips Tab */}
                     <TabsContent value="videos" className="mt-4">
                       <Card className="p-4 border-slate-200 bg-white shadow-sm">
-                        <h3 className="text-lg font-semibold text-slate-900 mb-4">
-                          Event Video (Pre and Post Incident)
-                        </h3>
-                        <div className="space-y-4">
-                          {alertRealtimeLoading && !cameraSdVideo && !preEventVideo && !postEventVideo ? (
-                            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                              {[0, 1].map((idx) => (
-                                <Card key={`video-skeleton-${idx}`} className="p-4 border-slate-200 shadow-sm bg-slate-950 text-slate-100">
-                                  <div className="aspect-video w-full rounded mb-3 border border-slate-700 bg-slate-800 animate-pulse" />
-                                  <div className="h-4 w-40 bg-slate-700 rounded animate-pulse" />
-                                </Card>
-                              ))}
+                        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                          <h3 className="text-lg font-semibold text-slate-900">
+                            Event Video
+                          </h3>
+                          {selectedAlertVideoRequestState?.jobStatus || selectedAlertVideoRequestState?.autoRequesting || selectedAlertVideoRequestState?.error ? (
+                            <div className="text-xs text-slate-600">
+                              {selectedAlertVideoRequestState?.error ? (
+                                <span className="text-rose-600">Video request failed: {selectedAlertVideoRequestState.error}</span>
+                              ) : selectedAlertVideoRequestState?.autoRequesting ? (
+                                <span>Preparing alert video from stored footage...</span>
+                              ) : (
+                                <span>
+                                  Video job: {String(selectedAlertVideoRequestState?.jobStatus || "queued")}
+                                  {selectedAlertVideoRequestState?.source ? ` via ${selectedAlertVideoRequestState.source}` : ""}
+                                </span>
+                              )}
                             </div>
-                          ) : shouldShowOnlySdCard && cameraSdVideo ? (
+                          ) : null}
+                        </div>
+                        <div className="space-y-4">
+                          {alertRealtimeLoading && !alertWindowVideo ? (
                             <div className="grid grid-cols-1 gap-4">
                               <Card className="p-4 border-slate-200 shadow-sm bg-slate-950 text-slate-100">
-                                  <UniversalVideoPlayer
-                                    url={cameraSdVideo.url}
-                                    fallbackUrls={cameraSdVideo.fallbackUrls || []}
-                                    autoPlay={true}
-                                    className="w-full rounded mb-3 border border-slate-700"
-                                  />
-                                <div className="flex items-center justify-between">
-                                  <div className="flex items-center gap-3">
-                                    <Video className="w-5 h-5 text-cyan-300" />
-                                    <div>
-                                      <p className="font-medium text-white">{cameraSdVideo.label || "Camera SD Clip"}</p>
-                                      <p className="text-xs text-slate-300">SD card video (fallback)</p>
-                                    </div>
-                                  </div>
-                                  <div className="flex items-center gap-2">
-                                    <Button
-                                      variant="outline"
-                                      size="sm"
-                                      className="border-cyan-400/40 bg-slate-900 text-cyan-200 hover:bg-slate-800"
-                                      onClick={() => setVideoPreview({ url: cameraSdVideo.url, label: cameraSdVideo.label || "Camera SD Clip" })}
-                                    >
-                                      Preview
-                                    </Button>
-                                    <Button variant="outline" size="sm" onClick={() => window.open(cameraSdVideo.url, '_blank')}>
-                                      <Download className="w-4 h-4 mr-2" />
-                                      Download
-                                    </Button>
-                                  </div>
-                                </div>
+                                <div className="aspect-video w-full rounded mb-3 border border-slate-700 bg-slate-800 animate-pulse" />
                               </Card>
                             </div>
-                          ) : (preEventVideo || postEventVideo) ? (
-                            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                              {[preEventVideo, postEventVideo].filter(Boolean).map((video: any, idx: number) => (
-                                <Card key={video.url || idx} className="p-4 border-slate-200 shadow-sm bg-slate-950 text-slate-100">
-                                  <UniversalVideoPlayer
-                                    url={video.url}
-                                    fallbackUrls={video.fallbackUrls || []}
-                                    autoPlay={idx === 0}
-                                    className="w-full rounded mb-3 border border-slate-700"
-                                    onPlayableChange={(playable) => {
-                                      setVideoPlaybackFailures((prev) => ({
-                                        ...prev,
-                                        [video.url]: !playable,
-                                      }));
-                                    }}
-                                  />
-                                  <div className="flex items-center justify-between">
-                                    <div className="flex items-center gap-3">
-                                      <Video className="w-5 h-5 text-cyan-300" />
-                                      <div>
-                                        <p className="font-medium text-white">{video.label || `Video ${idx + 1}`}</p>
-                                        <p className="text-xs text-slate-300">Event video from vehicle camera</p>
-                                      </div>
-                                    </div>
-                                    <div className="flex items-center gap-2">
-                                      <Button
-                                        variant="outline"
-                                        size="sm"
-                                        className="border-cyan-400/40 bg-slate-900 text-cyan-200 hover:bg-slate-800"
-                                        onClick={() => setVideoPreview({ url: video.url, label: video.label || "Video Preview" })}
-                                      >
-                                        Preview
-                                      </Button>
-                                      <Button variant="outline" size="sm" onClick={() => window.open(video.url, '_blank')}>
-                                        <Download className="w-4 h-4 mr-2" />
-                                        Download
-                                      </Button>
-                                    </div>
+                          ) : alertWindowVideo ? (
+                            <Card className="p-4 border-slate-200 shadow-sm bg-slate-950 text-slate-100">
+                              <UniversalVideoPlayer
+                                url={alertWindowVideo.url}
+                                fallbackUrls={alertWindowVideo.fallbackUrls || []}
+                                autoPlay={true}
+                                className="w-full rounded mb-3 border border-slate-700"
+                              />
+                              <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+                                <div className="flex items-center gap-3">
+                                  <Video className="w-5 h-5 text-cyan-300" />
+                                  <div>
+                                    <p className="font-medium text-white">{alertWindowVideo.label || "Alert Window Video"}</p>
+                                    <p className="text-xs text-slate-300">Stored MP4 clip for this vehicle, channel, and alert time range.</p>
                                   </div>
-                                </Card>
-                              ))}
-                            </div>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="border-cyan-400/40 bg-slate-900 text-cyan-200 hover:bg-slate-800"
+                                    onClick={() => setVideoPreview({ url: alertWindowVideo.url, label: alertWindowVideo.label || "Alert Window Video" })}
+                                  >
+                                    Preview
+                                  </Button>
+                                  <Button variant="outline" size="sm" onClick={() => window.open(alertWindowVideo.url, "_blank")}>
+                                    <Download className="w-4 h-4 mr-2" />
+                                    Download
+                                  </Button>
+                                </div>
+                              </div>
+                            </Card>
                           ) : (
                             <div className="text-center py-12 text-slate-500">
-                              Video clips are not ready yet for this alert.
+                              {selectedAlertVideoRequestState?.autoRequesting || selectedAlertVideoRequestState?.jobStatus === "queued" || selectedAlertVideoRequestState?.jobStatus === "running"
+                                ? "Preparing alert video from stored footage..."
+                                : "Alert video is not ready yet for this alert."}
                             </div>
                           )}
                         </div>
@@ -5816,6 +6291,63 @@ export default function Dashboard() {
                                   </p>
                                   {entry.notes ? (
                                     <p className="text-xs text-slate-700 mt-2 line-clamp-2">{entry.notes}</p>
+                                  ) : null}
+                                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      className="border-cyan-300 bg-white text-cyan-700 hover:bg-cyan-50"
+                                      onClick={() => void loadTimelineAlertPlayback(entry)}
+                                      disabled={timelinePlaybackLoading[String(entry?.id || "").trim()]}
+                                    >
+                                      <Video className="mr-2 h-4 w-4" />
+                                      {timelinePlaybackLoading[String(entry?.id || "").trim()] ? "Loading video..." : "Load Playback"}
+                                    </Button>
+                                    {Array.isArray(timelinePlaybackByAlert[String(entry?.id || "").trim()]) &&
+                                    timelinePlaybackByAlert[String(entry?.id || "").trim()].length > 0 ? (
+                                      <Badge variant="outline" className="text-[10px]">
+                                        {timelinePlaybackByAlert[String(entry?.id || "").trim()].length} clip(s)
+                                      </Badge>
+                                    ) : null}
+                                  </div>
+                                  {Array.isArray(timelinePlaybackByAlert[String(entry?.id || "").trim()]) &&
+                                  timelinePlaybackByAlert[String(entry?.id || "").trim()].length > 0 ? (
+                                    <div className="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-2">
+                                      {timelinePlaybackByAlert[String(entry?.id || "").trim()].map((video: any, idx: number) => (
+                                        <Card key={`${entry.id}-${video.url}-${idx}`} className="p-3 border-slate-200 shadow-sm bg-slate-950 text-slate-100">
+                                          <UniversalVideoPlayer
+                                            url={video.url}
+                                            fallbackUrls={video.fallbackUrls || []}
+                                            autoPlay={idx === 0}
+                                            className="w-full rounded mb-3 border border-slate-700"
+                                          />
+                                          <div className="flex items-center justify-between gap-2">
+                                            <div>
+                                              <p className="text-sm font-medium text-white">{video.label || `Video ${idx + 1}`}</p>
+                                              <p className="text-xs text-slate-300">Alert-time playback</p>
+                                            </div>
+                                            <div className="flex items-center gap-2">
+                                              <Button
+                                                variant="outline"
+                                                size="sm"
+                                                className="border-cyan-400/40 bg-slate-900 text-cyan-200 hover:bg-slate-800"
+                                                onClick={() => setVideoPreview({ url: video.url, label: video.label || "Timeline video" })}
+                                              >
+                                                Preview
+                                              </Button>
+                                              <Button
+                                                variant="outline"
+                                                size="sm"
+                                                onClick={() => window.open(video.url, "_blank")}
+                                              >
+                                                <Download className="mr-2 h-4 w-4" />
+                                                Download
+                                              </Button>
+                                            </div>
+                                          </div>
+                                        </Card>
+                                      ))}
+                                    </div>
                                   ) : null}
                                 </Card>
                               </div>
@@ -6216,7 +6748,11 @@ export default function Dashboard() {
               </Button>
             </div>
             <div className="p-4">
-              <UniversalVideoPlayer url={videoPreview.url} className="w-full rounded border border-slate-700 bg-black" />
+              <UniversalVideoPlayer
+                url={videoPreview.url}
+                autoPlay={true}
+                className="w-full rounded border border-slate-700 bg-black"
+              />
               <div className="mt-3 flex justify-end">
                 <Button variant="outline" onClick={() => window.open(videoPreview.url, "_blank")}>
                   <Download className="w-4 h-4 mr-2" />

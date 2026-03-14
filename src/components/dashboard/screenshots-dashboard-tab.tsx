@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Camera, RefreshCw, Download, MonitorPlay, Shield, RadioTower, Activity } from "lucide-react";
+import { Camera, RefreshCw, Download, MonitorPlay, Shield, RadioTower, Activity, ExternalLink } from "lucide-react";
 import { useVideoWebSocket } from "@/hooks/use-video-websocket";
 
 type ChannelInfo = {
@@ -89,7 +89,11 @@ function buildTargets(vehicles: ConnectedVehicle[]): CaptureTarget[] {
   return targets;
 }
 
-export default function ScreenshotsDashboardTab() {
+type ScreenshotsDashboardTabProps = {
+  detachable?: boolean;
+};
+
+export default function ScreenshotsDashboardTab({ detachable = true }: ScreenshotsDashboardTabProps) {
   const [vehicles, setVehicles] = useState<ConnectedVehicle[]>([]);
   const [screenshots, setScreenshots] = useState<ScreenshotItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -99,6 +103,14 @@ export default function ScreenshotsDashboardTab() {
   const [error, setError] = useState<string | null>(null);
   const vehiclesRef = useRef<ConnectedVehicle[]>([]);
   const lastWsRefreshAt = useRef(0);
+
+  const toDisplayUrl = useCallback((raw?: string) => {
+    const value = String(raw || "").trim();
+    if (!value || value === "upload-failed" || value === "local-only") return "";
+    if (/^https?:\/\//i.test(value)) return value;
+    if (value.startsWith("/")) return value;
+    return `/${value.replace(/^\/+/, "")}`;
+  }, []);
 
   const fetchConnectedVehicles = useCallback(async () => {
     const response = await fetch("/api/video-server/vehicles/connected");
@@ -122,10 +134,12 @@ export default function ScreenshotsDashboardTab() {
 
       const data = await response.json();
       const rows = Array.isArray(data?.screenshots) ? data.screenshots : [];
-      const validRows = rows.filter((row: ScreenshotItem) => {
-        const url = row.storage_url || "";
-        return url.length > 0 && url !== "upload-failed" && url !== "local-only";
-      });
+      const validRows = rows
+        .map((row: ScreenshotItem) => ({
+          ...row,
+          storage_url: toDisplayUrl(row.storage_url),
+        }))
+        .filter((row: ScreenshotItem) => row.storage_url && row.storage_url.length > 0);
 
       setScreenshots(validRows);
       setLastRefresh(new Date());
@@ -134,7 +148,7 @@ export default function ScreenshotsDashboardTab() {
       setError("Recent screenshots request failed. Retrying automatically.");
       return [];
     }
-  }, []);
+  }, [toDisplayUrl]);
 
   const requestScreenshot = useCallback(async (target: CaptureTarget) => {
     await fetch(`/api/video-server/vehicles/${target.vehicleId}/screenshot`, {
@@ -325,6 +339,16 @@ export default function ScreenshotsDashboardTab() {
               <RefreshCw className={`mr-2 h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
               Refresh
             </Button>
+            {detachable && (
+              <Button
+                variant="outline"
+                onClick={() => window.open("/dashboard/screenshots-monitor", "screenshots-monitor", "popup=yes,width=1600,height=1000,resizable=yes,scrollbars=yes")}
+                className="border-slate-600 bg-slate-900 text-slate-100 hover:bg-slate-800"
+              >
+                <ExternalLink className="mr-2 h-4 w-4" />
+                Pop Out Monitor
+              </Button>
+            )}
           </div>
         </div>
       </Card>
