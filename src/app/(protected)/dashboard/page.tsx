@@ -99,6 +99,10 @@ const ScreenshotsDashboardTab = dynamic(
   () => import("@/components/dashboard/screenshots-dashboard-tab"),
   { ssr: false, loading: () => <div className="h-40 animate-pulse rounded-lg bg-slate-100" /> }
 );
+const PlaybackDashboardTab = dynamic(
+  () => import("@/components/dashboard/playback-dashboard-tab"),
+  { ssr: false, loading: () => <div className="h-40 animate-pulse rounded-lg bg-slate-100" /> }
+);
 const FinancialsPanel = dynamic(
   () => import("@/components/financials/FinancialsPanel"),
   { ssr: false, loading: () => <div className="h-40 animate-pulse rounded-lg bg-slate-100" /> }
@@ -3132,7 +3136,7 @@ export default function Dashboard() {
       timestamp: shot?.timestamp || fallbackTimestamp,
       channel: shot?.channel,
       file_path: shot?.file_path,
-      offset: shot?.offset ?? shot?.capture_offset ?? 0,
+      offset: shot?.offset ?? shot?.offsetSeconds ?? shot?.capture_offset ?? 0,
     };
   }, [toAbsoluteImageUrl]);
   const buildAlertVideoUrl = useCallback((alertId: string, type: "pre" | "post" | "camera") => {
@@ -3205,9 +3209,6 @@ export default function Dashboard() {
         : prev
     ));
 
-    const startTime = new Date(alertTimestamp.getTime() - 30 * 1000).toISOString();
-    const endTime = new Date(alertTimestamp.getTime() + 30 * 1000).toISOString();
-
     try {
       void fetch(`${videoProxyBase}/alerts/${encodeURIComponent(alertId)}/collect-evidence`, {
         method: "POST",
@@ -3218,14 +3219,12 @@ export default function Dashboard() {
         }),
       }).catch(() => undefined);
 
-      const localRes = await fetch(`${videoProxyBase}/vehicles/${encodeURIComponent(vehicleId)}/videos/window`, {
+      const localRes = await fetch(`${videoProxyBase}/alerts/${encodeURIComponent(alertId)}/request-report-video`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          alertId,
-          channel,
-          startTime,
-          endTime,
+          lookbackSeconds: 30,
+          forwardSeconds: 30,
         }),
       });
       const body = await localRes.json().catch(() => ({}));
@@ -4348,6 +4347,12 @@ export default function Dashboard() {
                 Screenshots
               </TabsTrigger>
               <TabsTrigger
+                value="playback"
+                className="px-6 py-2 text-sm font-medium rounded-md data-[state=active]:bg-white data-[state=active]:shadow-sm"
+              >
+                Playback
+              </TabsTrigger>
+              <TabsTrigger
                 value="routing"
                 className="px-6 py-2 text-sm font-medium rounded-md data-[state=active]:bg-white data-[state=active]:shadow-sm"
               >
@@ -4418,6 +4423,10 @@ export default function Dashboard() {
 
         {activeTab === "screenshots" && (
           <ScreenshotsDashboardTab />
+        )}
+
+        {activeTab === "playback" && (
+          <PlaybackDashboardTab />
         )}
 
         {activeTab === "reports" && (

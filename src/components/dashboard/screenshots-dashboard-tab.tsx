@@ -133,7 +133,7 @@ export default function ScreenshotsDashboardTab({ detachable = true }: Screensho
 
   const fetchRecentScreenshots = useCallback(async () => {
     try {
-      const response = await fetch("/api/video-server/screenshots/recent?limit=300&minutes=30");
+      const response = await fetch("/api/video-server/screenshots/recent?limit=300&minutes=1");
       if (!response.ok) {
         setError("Recent screenshots endpoint is temporarily unavailable.");
         return [];
