@@ -1,9 +1,9 @@
 "use client";
 
-import React, { useState, useEffect, useCallback, useMemo } from "react";
+import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { useVideoAlerts } from "@/context/video-alerts-context/context";
-import { useAlertPolling } from "@/hooks/use-alert-polling";
 import { useVideoWebSocket } from "@/hooks/use-video-websocket";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -22,37 +22,45 @@ import {
   Clock,
   RefreshCw,
   Search,
-  LayoutList, 
-  LayoutGrid, 
   Siren,
   Video,
   Camera,
   User,
   ChevronRight,
-  Bell,
   ShieldAlert,
   MinusCircle,
-  Signal
+  Signal,
+  ExternalLink
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { format, differenceInHours } from "date-fns";
 
 type VideoAlertsDashboardTabProps = {
   onOpenAlertDetail?: (alert: any, trip?: any) => Promise<any> | any;
+  standaloneSeverity?: "critical" | "high" | "medium" | "low" | "all" | null;
+  standaloneMode?: boolean;
 };
 
-export default function VideoAlertsDashboardTab({ onOpenAlertDetail }: VideoAlertsDashboardTabProps) {
+export default function VideoAlertsDashboardTab({
+  onOpenAlertDetail,
+  standaloneSeverity = null,
+  standaloneMode = false,
+}: VideoAlertsDashboardTabProps) {
   const router = useRouter();
   const { filters, loading } = useVideoAlerts();
   const videoProxyBase = "/api/video-server";
-  const alertStats = useAlertPolling();
   const [searchTerm, setSearchTerm] = useState("");
   const [activeTab, setActiveTab] = useState("all"); 
-  const [viewMode, setViewMode] = useState<"grid" | "list">("list");
-  const [levelFilter, setLevelFilter] = useState<"all" | "critical" | "high" | "medium" | "low">("all");
-  const [boardLevelFilter, setBoardLevelFilter] = useState<"all" | "critical" | "high" | "medium" | "low" | null>(null);
+  const [levelFilter, setLevelFilter] = useState<"all" | "critical" | "high" | "medium" | "low">(
+    standaloneSeverity && standaloneSeverity !== "all" ? standaloneSeverity : "all"
+  );
+  const [boardLevelFilter, setBoardLevelFilter] = useState<"all" | "critical" | "high" | "medium" | "low" | null>(
+    standaloneMode ? null : standaloneSeverity
+  );
   const [sourceAlerts, setSourceAlerts] = useState<any[]>([]);
   const [realtimeAlerts, setRealtimeAlerts] = useState<any[]>([]);
+  const [popoutTargets, setPopoutTargets] = useState<Record<string, HTMLElement | null>>({});
+  const popoutTargetsRef = useRef<Record<string, HTMLElement | null>>({});
 
   const normalizeAlert = useCallback((incoming: any) => {
     if (!incoming || typeof incoming !== "object") return null;
@@ -158,7 +166,7 @@ export default function VideoAlertsDashboardTab({ onOpenAlertDetail }: VideoAler
     }
   }, [dedupeByIdAndSort, fetchTripRoutingStyleAlerts, normalizeRealtimeAlert]);
 
-  useVideoWebSocket(handleRealtimeMessage);
+  const { connected: wsConnected } = useVideoWebSocket(handleRealtimeMessage);
 
   const getAlertLevel = (alert: any): "critical" | "high" | "medium" | "low" => {
     const raw = String(alert?.severity || alert?.priority || "").toLowerCase();
@@ -210,6 +218,44 @@ export default function VideoAlertsDashboardTab({ onOpenAlertDetail }: VideoAler
 
     return Array.from(groups.values()).sort((a: any, b: any) => new Date(b.latestTimestamp || b.timestamp || 0).getTime() - new Date(a.latestTimestamp || a.timestamp || 0).getTime());
   }, [mergedAlerts, normalizeAlert]);
+
+  const formatAverageHandlingTime = useCallback((minutes: number | null) => {
+    if (minutes === null || !Number.isFinite(minutes) || minutes < 0) return "n/a";
+    if (minutes < 1) return "<1m";
+    if (minutes < 60) return `${Math.round(minutes)}m`;
+    const hours = Math.floor(minutes / 60);
+    const mins = Math.round(minutes % 60);
+    return mins > 0 ? `${hours}h ${mins}m` : `${hours}h`;
+  }, []);
+
+  const averageHandlingTimeBySeverity = useMemo(() => {
+    const keys: Array<"critical" | "high" | "medium" | "low"> = ["critical", "high", "medium", "low"];
+    const result: Record<string, string> = {};
+
+    keys.forEach((key) => {
+      const closedAlerts = groupedAlerts.filter((alert: any) => {
+        if (getAlertLevel(alert) !== key) return false;
+        return ["closed", "resolved"].includes(String(alert?.status || "").toLowerCase());
+      });
+
+      const durations = closedAlerts
+        .map((alert: any) => {
+          const openedAt = new Date(alert.timestamp || alert.created_at || alert.alert_timestamp || 0).getTime();
+          const closedAt = new Date(alert.resolved_at || alert.closed_at || alert.updated_at || 0).getTime();
+          if (!openedAt || !closedAt || closedAt < openedAt) return null;
+          return (closedAt - openedAt) / 60000;
+        })
+        .filter((value: number | null): value is number => value !== null);
+
+      const averageMinutes = durations.length
+        ? durations.reduce((sum, value) => sum + value, 0) / durations.length
+        : null;
+
+      result[key] = formatAverageHandlingTime(averageMinutes);
+    });
+
+    return result;
+  }, [formatAverageHandlingTime, groupedAlerts]);
 
   // Calculate statistics from alerts
   const calculatedStats = {
@@ -284,6 +330,7 @@ export default function VideoAlertsDashboardTab({ onOpenAlertDetail }: VideoAler
   const mediumCount = calculatedStats.medium_alerts || 0;
   const lowCount = calculatedStats.low_alerts || 0;
   const allOpenCount = displayStats?.total_alerts || 0;
+  const closedAlertsCount = groupedAlerts.filter((alert: any) => ["closed", "resolved"].includes(String(alert?.status || "").toLowerCase())).length;
 
   // Render Helpers
   const getSeverityColor = (severity: string) => {
@@ -355,7 +402,29 @@ export default function VideoAlertsDashboardTab({ onOpenAlertDetail }: VideoAler
     { key: "high", icon: <ShieldAlert className="w-5 h-5" /> },
     { key: "medium", icon: <Siren className="w-5 h-5" /> },
     { key: "low", icon: <MinusCircle className="w-5 h-5" /> },
-    { key: "all", icon: <Signal className="w-5 h-5" /> },
+  ];
+
+  const statusCards = [
+    {
+      key: "open",
+      label: "Open Alerts",
+      value: allOpenCount,
+      description: "Currently active and unattended",
+      icon: <Signal className="w-5 h-5" />,
+      cardClass: "border-l-emerald-500",
+      iconWrapClass: "bg-emerald-100",
+      iconClass: "text-emerald-600",
+    },
+    {
+      key: "closed",
+      label: "Closed Alerts",
+      value: closedAlertsCount,
+      description: "Resolved or closed alerts",
+      icon: <Clock className="w-5 h-5" />,
+      cardClass: "border-l-slate-500",
+      iconWrapClass: "bg-slate-100",
+      iconClass: "text-slate-600",
+    },
   ];
 
   const boardColumns = [
@@ -394,29 +463,95 @@ export default function VideoAlertsDashboardTab({ onOpenAlertDetail }: VideoAler
       key: "critical",
       title: "Critical",
       className: "bg-rose-50/60",
+      avgHandlingTime: averageHandlingTimeBySeverity.critical,
       alerts: filteredAlerts.filter((alert: any) => getAlertLevel(alert) === "critical"),
     },
     {
       key: "high",
       title: "High",
       className: "bg-red-50/60",
+      avgHandlingTime: averageHandlingTimeBySeverity.high,
       alerts: filteredAlerts.filter((alert: any) => getAlertLevel(alert) === "high"),
     },
     {
       key: "medium",
       title: "Medium",
       className: "bg-amber-50/60",
+      avgHandlingTime: averageHandlingTimeBySeverity.medium,
       alerts: filteredAlerts.filter((alert: any) => getAlertLevel(alert) === "medium"),
     },
     {
       key: "low",
       title: "Low",
       className: "bg-blue-50/60",
+      avgHandlingTime: averageHandlingTimeBySeverity.low,
       alerts: filteredAlerts.filter((alert: any) => getAlertLevel(alert) === "low"),
     },
   ];
 
   const severityTableRowCount = Math.max(0, ...severityTableColumns.map((column) => column.alerts.length));
+
+  const openSeverityPopout = useCallback((severity: "critical" | "high" | "medium" | "low" | "all") => {
+    if (typeof window === "undefined") return;
+
+    const existingTarget = popoutTargets[severity];
+    const existingWindow = existingTarget?.ownerDocument?.defaultView;
+    if (existingWindow && !existingWindow.closed) {
+      existingWindow.focus();
+      return;
+    }
+
+    const popup = window.open(
+      "",
+      `live-alerts-${severity}`,
+      "popup=yes,width=1500,height=950,resizable=yes,scrollbars=yes"
+    );
+
+    if (!popup) return;
+
+    popup.document.title = `${severity.toUpperCase()} Alerts`;
+    popup.document.body.innerHTML = "";
+    popup.document.body.style.margin = "0";
+    popup.document.body.style.background = "#f1f5f9";
+
+    Array.from(document.querySelectorAll("link[rel='stylesheet'], style")).forEach((node) => {
+      popup.document.head.appendChild(node.cloneNode(true));
+    });
+
+    const container = popup.document.createElement("div");
+    container.id = `popout-root-${severity}`;
+    popup.document.body.appendChild(container);
+
+    const cleanup = () => {
+      setPopoutTargets((prev) => {
+        const next = { ...prev };
+        delete next[severity];
+        return next;
+      });
+    };
+
+    popup.addEventListener("beforeunload", cleanup);
+    setPopoutTargets((prev) => ({ ...prev, [severity]: container }));
+  }, [popoutTargets]);
+
+  const openAllSeverityPopouts = useCallback(() => {
+    ["critical", "high", "medium", "low"].forEach((severity) => {
+      openSeverityPopout(severity as "critical" | "high" | "medium" | "low");
+    });
+  }, [openSeverityPopout]);
+
+  useEffect(() => {
+    popoutTargetsRef.current = popoutTargets;
+  }, [popoutTargets]);
+
+  useEffect(() => {
+    return () => {
+      Object.values(popoutTargetsRef.current).forEach((target) => {
+        const popup = target?.ownerDocument?.defaultView;
+        if (popup && !popup.closed) popup.close();
+      });
+    };
+  }, []);
 
   const renderAlertBoardRow = (alert: any) => {
     const vehicleLabel = alert?.vehicle_registration || alert?.vehicleId || alert?.device_id || "N/A";
@@ -531,42 +666,111 @@ export default function VideoAlertsDashboardTab({ onOpenAlertDetail }: VideoAler
     );
   };
 
-  return (
-    <div className="flex flex-col space-y-4 animate-in fade-in duration-500">
-      
-      {/* Bell Notification */}
-      <div className="flex justify-between items-center gap-2">
-        <div className="flex flex-wrap gap-2">
-          <Button variant="outline" size="sm" onClick={() => router.push('/video-alerts/management')}>
-            Management
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => router.push('/video-alerts/unattended')}>
-            Unattended
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => router.push('/video-alerts/escalations')}>
-            Escalations
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => router.push('/video-alerts/flooding')}>
-            Flooding
+  const renderDetachedSeverityRow = (alert: any, severityKey: string) => {
+    if (!alert) {
+      return (
+        <div className="grid grid-cols-[minmax(0,2fr)_minmax(0,1.2fr)_90px_80px_110px] items-center gap-3 border-b border-dashed border-slate-200 px-3 py-3 text-[11px] text-slate-400">
+          <div>No alerts</div>
+          <div>-</div>
+          <div>-</div>
+          <div>-</div>
+          <div className="text-right">-</div>
+        </div>
+      );
+    }
+
+    return (
+      <div
+        key={`detached-${severityKey}-${alert.id}`}
+        className="grid grid-cols-[minmax(0,2fr)_minmax(0,1.2fr)_90px_80px_110px] items-center gap-3 border-b border-slate-200 px-3 py-2.5 text-[12px] hover:bg-slate-50"
+        onClick={() => handleViewAlert(alert)}
+      >
+        <div className="min-w-0">
+          <div className="truncate font-semibold text-slate-900">{alert.title}</div>
+          <div className="truncate text-[11px] text-slate-500">{(alert.alert_type || "alert").replace(/_/g, " ")}</div>
+        </div>
+        <div className="min-w-0">
+          <div className="truncate font-mono font-semibold text-slate-900">{alert.vehicle_registration || "N/A"}</div>
+          <div className="truncate text-[11px] text-slate-500">{alert.driver_name || "Unknown"}</div>
+        </div>
+        <div className="min-w-0">
+          <Badge variant="outline" className={cn("capitalize text-[10px] font-semibold", getSeverityColor(severityKey))}>
+            {severityKey}
+          </Badge>
+          <div className="mt-1 text-[10px] uppercase tracking-wide text-slate-400">{alert.status || "new"}</div>
+        </div>
+        <div className="min-w-0 text-[11px] text-slate-600">
+          {Number(alert?.count || 1) > 1 ? `x${alert.count}` : "x1"}
+          <div className="text-[10px] text-slate-400">{format(new Date(alert.timestamp), "HH:mm")}</div>
+        </div>
+        <div className="flex justify-end">
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-7 px-2 text-[11px]"
+            onClick={(e) => {
+              e.stopPropagation();
+              handleViewAlert(alert);
+            }}
+          >
+            Action
           </Button>
         </div>
-        <Button 
-          variant="outline" 
-          size="sm" 
-          className="relative"
-          onClick={() => router.push('/video-alerts')}
-        >
-          <Bell className="w-4 h-4" />
-          {alertStats.newCount > 0 && (
-            <Badge className="absolute -top-2 -right-2 h-5 w-5 flex items-center justify-center p-0 bg-red-500">
-              {alertStats.newCount}
-            </Badge>
-          )}
-        </Button>
       </div>
+    );
+  };
+
+  const renderSeverityLane = (column: { key: string; title: string; className: string; alerts: any[]; avgHandlingTime?: string }, detached = false) => (
+    <div className={cn("rounded-xl border border-slate-200 bg-slate-50", detached ? "min-h-screen p-3" : "p-0", column.className)}>
+      <div className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-200 bg-white/90 px-3 py-2 backdrop-blur">
+        <div className="flex items-center gap-2">
+          <span className="text-[13px] font-semibold text-slate-900">{column.title}</span>
+          <Badge variant="secondary" className="rounded-full px-2 py-0.5 text-xs">
+            {column.alerts.length}
+          </Badge>
+          <span className={cn("inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium", wsConnected ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700")}>
+            <span className={cn("h-1.5 w-1.5 rounded-full", wsConnected ? "bg-emerald-500" : "bg-amber-500")} />
+            {wsConnected ? "Live" : "Polling"}
+          </span>
+        </div>
+        <div className="text-[11px] text-slate-500">
+          Avg handle: <span className="font-semibold text-slate-700">{column.avgHandlingTime || "n/a"}</span>
+        </div>
+      </div>
+      {detached ? (
+        <div className="overflow-auto rounded-b-xl bg-white">
+          <div className="grid grid-cols-[minmax(0,2fr)_minmax(0,1.2fr)_90px_80px_110px] gap-3 border-b border-slate-200 bg-slate-100 px-3 py-2 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+            <div>Alert</div>
+            <div>Vehicle</div>
+            <div>Status</div>
+            <div>Count</div>
+            <div className="text-right">Action</div>
+          </div>
+          <div>
+            {column.alerts.length > 0
+              ? column.alerts.map((alert: any) => renderDetachedSeverityRow(alert, column.key))
+              : renderDetachedSeverityRow(null, column.key)}
+          </div>
+        </div>
+      ) : (
+        <div className="space-y-1.5 p-2">
+          {column.alerts.length > 0 ? (
+            column.alerts.map((alert: any) => renderSeverityTableCell(alert, column.key))
+          ) : (
+            <div className="rounded-md border border-dashed border-slate-200 bg-white px-2 py-4 text-center text-[11px] text-slate-400">
+              No alerts
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+
+  return (
+    <div className={cn("flex flex-col animate-in fade-in duration-500", standaloneMode ? "space-y-3 bg-slate-100 p-3 min-h-screen" : "space-y-4")}>
       
       {/* Top Stats Row - alert level filters */}
-      <div className="grid grid-cols-2 gap-3 xl:grid-cols-5">
+      {!standaloneMode && <div className="grid grid-cols-2 gap-3 xl:grid-cols-6">
         {levelCards.map(({ key, icon }) => {
           const meta = getLevelMeta(key);
           const isActive = boardLevelFilter === key;
@@ -601,47 +805,28 @@ export default function VideoAlertsDashboardTab({ onOpenAlertDetail }: VideoAler
             </Card>
           );
         })}
-      </div>
+        {statusCards.map((card) => (
+          <Card
+            key={card.key}
+            className={cn("p-3 border-l-4 bg-white shadow-sm transition-all", card.cardClass)}
+          >
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs font-medium text-slate-500">{card.label}</p>
+                <h3 className="text-xl font-bold leading-6 text-slate-900">{card.value}</h3>
+              </div>
+              <div className={cn("p-1.5 rounded-full", card.iconWrapClass)}>
+                <span className={cn("scale-90", card.iconClass)}>{card.icon}</span>
+              </div>
+            </div>
+            <div className="mt-1 text-[11px] leading-4 text-slate-400">{card.description}</div>
+          </Card>
+        ))}
+      </div>}
 
       {/* Toolbar */}
       <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-3 bg-slate-50 p-3 rounded-xl border border-slate-200">
         
-        {/* Tabs */}
-        <div className="flex flex-wrap gap-2">
-           <Button 
-             variant={activeTab === 'all' ? 'default' : 'outline'} 
-             size="sm" 
-             onClick={() => setActiveTab('all')}
-             className="rounded-full"
-           >
-             All
-           </Button>
-           <Button 
-             variant={activeTab === 'new' ? 'default' : 'outline'} 
-             size="sm" 
-             onClick={() => setActiveTab('new')}
-             className={cn("rounded-full", activeTab === 'new' && "bg-purple-600 hover:bg-purple-700")}
-           >
-             New
-           </Button>
-            <Button 
-              variant={activeTab === 'unattended' ? 'default' : 'outline'} 
-              size="sm" 
-              onClick={() => setActiveTab('unattended')}
-              className={cn("rounded-full", activeTab === 'unattended' && "bg-orange-600 hover:bg-orange-700")}
-            >
-              Unattended
-            </Button>
-           <Button 
-             variant={activeTab === 'history' ? 'default' : 'outline'} 
-             size="sm" 
-             onClick={() => setActiveTab('history')}
-             className="rounded-full"
-           >
-             History
-           </Button>
-        </div>
-
         {/* Right Side Tools */}
         <div className="flex items-center gap-2 w-full lg:w-auto">
           <div className="relative flex-1 lg:w-64">
@@ -654,24 +839,12 @@ export default function VideoAlertsDashboardTab({ onOpenAlertDetail }: VideoAler
             />
           </div>
           
-          <div className="flex items-center bg-white border rounded-lg p-1 shadow-sm">
-             <Button
-               variant={viewMode === 'list' ? 'secondary' : 'ghost'}
-               size="icon"
-               className="h-8 w-8"
-               onClick={() => setViewMode('list')}
-             >
-               <LayoutList className="h-4 w-4" />
-             </Button>
-             <Button
-               variant={viewMode === 'grid' ? 'secondary' : 'ghost'}
-               size="icon"
-               className="h-8 w-8"
-               onClick={() => setViewMode('grid')}
-             >
-               <LayoutGrid className="h-4 w-4" />
-             </Button>
-          </div>
+          {!standaloneMode && (
+            <Button variant="outline" size="sm" onClick={openAllSeverityPopouts} title="Open all severity lanes on other screens">
+              <ExternalLink className="mr-1 h-4 w-4" />
+              Pop out all
+            </Button>
+          )}
 
           <Button variant="outline" size="icon" onClick={handleRefresh} title="Refresh Data">
             <RefreshCw className={cn("h-4 w-4", loading && "animate-spin")} />
@@ -703,7 +876,7 @@ export default function VideoAlertsDashboardTab({ onOpenAlertDetail }: VideoAler
                   Severity table view fed by websocket + API for all vehicles
                 </div>
               </div>
-              <Button
+              {!standaloneMode && <Button
                 variant="outline"
                 size="sm"
                 onClick={() => {
@@ -712,7 +885,7 @@ export default function VideoAlertsDashboardTab({ onOpenAlertDetail }: VideoAler
                 }}
               >
                 Back to table
-              </Button>
+              </Button>}
             </div>
 
           <div className="grid grid-cols-1 gap-3 xl:grid-cols-4">
@@ -722,6 +895,9 @@ export default function VideoAlertsDashboardTab({ onOpenAlertDetail }: VideoAler
                     <div>
                       <div className="text-[13px] font-semibold text-slate-900">{column.title}</div>
                       <div className="text-[11px] text-slate-500">{column.description}</div>
+                      <div className="text-[11px] text-slate-500">
+                        Avg handle: <span className="font-semibold text-slate-700">{column.avgHandlingTime || "n/a"}</span>
+                      </div>
                     </div>
                     <Badge variant="secondary" className="rounded-full px-2 py-0.5 text-xs">
                       {column.alerts.length}
@@ -741,90 +917,6 @@ export default function VideoAlertsDashboardTab({ onOpenAlertDetail }: VideoAler
               ))}
             </div>
           </div>
-        ) : viewMode === 'grid' ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-            {filteredAlerts.map((alert: any) => (
-              <Card 
-                key={alert.id} 
-                className="overflow-hidden hover:shadow-lg transition-all duration-300 group cursor-pointer border-slate-200"
-                onClick={() => handleViewAlert(alert)}
-              >
-                {/* Image/Video Header Section */}
-                <div className="relative aspect-video bg-slate-900">
-                  {alert.screenshots?.[0]?.url ? (
-                    <img 
-                      src={alert.screenshots[0].url} 
-                      alt="Alert Snapshot" 
-                      className="w-full h-full object-cover opacity-90 group-hover:opacity-100 transition-opacity"
-                    />
-                  ) : (
-                    <div className="w-full h-full flex items-center justify-center text-slate-600">
-                      <Camera className="h-12 w-12 opacity-20" />
-                    </div>
-                  )}
-                  
-                   {/* Overlay Badges */}
-                   <div className="absolute top-3 right-3 flex gap-2">
-                     <Badge className={cn("shadow-sm capitalize", getSeverityColor(getAlertLevel(alert)))}>
-                       {getAlertLevel(alert)}
-                     </Badge>
-                   </div>
-                  <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 via-black/50 to-transparent p-4">
-                     <div className="flex items-center justify-between text-white">
-                       <span className="font-mono text-sm font-bold tracking-wider">
-                         {alert.vehicle_registration || "NO-PLATE"}
-                       </span>
-                       <span className="text-xs font-medium opacity-80 flex items-center gap-1">
-                         <Clock className="w-3 h-3" />
-                         {format(new Date(alert.timestamp), "HH:mm")}
-                       </span>
-                     </div>
-                  </div>
-                </div>
-
-                {/* Card Body */}
-                <div className="p-4 bg-white">
-                  <div className="flex justify-between items-start mb-3">
-                     <div>
-                       <h4 className="font-semibold text-slate-900 line-clamp-1">{alert.title}</h4>
-                       <p className="text-xs text-slate-500 uppercase tracking-wide mt-1">{alert.alert_type?.replace(/_/g, ' ')}</p>
-                     </div>
-                     <Badge variant="outline" className={cn(
-                       "capitalize font-semibold",
-                       alert.status === 'new' ? "border-purple-300 text-purple-700 bg-purple-50" : 
-                       alert.status === 'escalated' ? "border-red-300 text-red-700 bg-red-50" :
-                       alert.status === 'investigating' ? "border-blue-300 text-blue-700 bg-blue-50" :
-                       "border-slate-200 text-slate-600"
-                     )}>
-                       {alert.status}
-                     </Badge>
-                  </div>
-                  
-                  <div className="space-y-2 mb-4">
-                    <div className="flex items-center text-xs text-slate-600">
-                       <User className="w-3.5 h-3.5 mr-2 text-slate-400" />
-                       {alert.driver_name || "Unknown Driver"}
-                    </div>
-                    {isUnattended(alert) && (
-                      <div className="flex items-center text-xs text-orange-600 bg-orange-50 px-2 py-1 rounded w-fit">
-                         <AlertTriangle className="w-3.5 h-3.5 mr-1" />
-                         Unattended for {differenceInHours(new Date(), new Date(alert.timestamp))}h
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="flex items-center justify-between pt-3 border-t border-slate-100">
-                     <div className="text-xs text-slate-400">
-                        ID: {alert.id.slice(0,8)}
-                     </div>
-                     <Button size="sm" variant="ghost" className="h-8 text-xs hover:bg-slate-100 hover:text-blue-600">
-                       Action Alert <ChevronRight className="w-3 h-3 ml-1" />
-                     </Button>
-                  </div>
-                </div>
-              </Card>
-            ))}
-          </div>
         ) : (
           <div className="bg-white rounded-lg border border-slate-200 shadow-sm overflow-hidden">
              <Table>
@@ -833,10 +925,25 @@ export default function VideoAlertsDashboardTab({ onOpenAlertDetail }: VideoAler
                       {severityTableColumns.map((column) => (
                         <TableHead key={column.key} className={cn("min-w-[260px] px-2 py-2 border-l border-slate-200 first:border-l-0", column.className)}>
                           <div className="flex items-center justify-between">
-                            <span className="text-[13px] font-semibold text-slate-900">{column.title}</span>
-                            <Badge variant="secondary" className="rounded-full px-2 py-0.5 text-xs">
-                              {column.alerts.length}
-                            </Badge>
+                            <div className="flex items-center gap-2">
+                              <span className="text-[13px] font-semibold text-slate-900">{column.title}</span>
+                              <Badge variant="secondary" className="rounded-full px-2 py-0.5 text-xs">
+                                {column.alerts.length}
+                              </Badge>
+                            </div>
+                            <div className="mr-auto pl-3 text-[11px] text-slate-500">
+                              Avg handle: <span className="font-semibold text-slate-700">{column.avgHandlingTime || "n/a"}</span>
+                            </div>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 px-2 text-[11px]"
+                              onClick={() => openSeverityPopout(column.key as "critical" | "high" | "medium" | "low")}
+                              title={`Detach ${column.title} lane`}
+                            >
+                              <ExternalLink className="mr-1 h-3.5 w-3.5" />
+                              Pop out
+                            </Button>
                           </div>
                         </TableHead>
                       ))}
@@ -860,6 +967,17 @@ export default function VideoAlertsDashboardTab({ onOpenAlertDetail }: VideoAler
           </div>
         )
       )}
+      {Object.entries(popoutTargets).map(([severity, target]) => {
+        if (!target) return null;
+        const column = severityTableColumns.find((item) => item.key === severity);
+        if (!column) return null;
+        return createPortal(
+          <div className="min-h-screen bg-slate-100 p-2">
+            {renderSeverityLane(column, true)}
+          </div>,
+          target
+        );
+      })}
     </div>
   );
 }

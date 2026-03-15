@@ -3264,6 +3264,11 @@ export default function Dashboard() {
               });
               const statusBody = await statusRes.json().catch(() => ({}));
               const job = statusBody?.data || {};
+              const preferredOutputUrl =
+                toAbsoluteVideoUrl(job?.persistedVideoUrl) ||
+                (job?.persistedVideoId ? toAbsoluteVideoUrl(`${videoProxyBase}/videos/${encodeURIComponent(String(job.persistedVideoId))}/file`) : "") ||
+                toAbsoluteVideoUrl(job?.outputUrl) ||
+                buildPlaybackJobFileUrl(jobId);
               alertVideoRequestStateRef.current[alertId] = {
                 ...alertVideoRequestStateRef.current[alertId],
                 autoRequested: true,
@@ -3271,7 +3276,7 @@ export default function Dashboard() {
                 requestStartedAt: alertVideoRequestStateRef.current[alertId]?.requestStartedAt || Date.now(),
                 jobId,
                 jobStatus: job?.status || "unknown",
-                outputUrl: job?.outputUrl || buildPlaybackJobFileUrl(jobId),
+                outputUrl: preferredOutputUrl,
                 error: job?.error || "",
                 source: "stored_local_window",
               };
@@ -3287,7 +3292,7 @@ export default function Dashboard() {
                   : prev
               ));
               if (job?.status === "completed") {
-                const outputUrl = toAbsoluteVideoUrl(job?.outputUrl) || buildPlaybackJobFileUrl(jobId);
+                const outputUrl = preferredOutputUrl;
                 setSelectedAlert((prev: any) => {
                   if (!prev || String(prev?.id || "").trim() !== alertId) return prev;
                   return {

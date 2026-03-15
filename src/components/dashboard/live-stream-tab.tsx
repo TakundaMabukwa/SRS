@@ -39,6 +39,7 @@ interface ConnectedVehicle {
 
 type PinnedFeed = {
   vehicleId: string;
+  fallbackVehicleIds: string[];
   channel: number;
   vehicleName: string;
 };
@@ -46,6 +47,7 @@ type PinnedFeed = {
 type StreamEntry = {
   id: string;
   vehicleId: string;
+  fallbackVehicleIds: string[];
   channel: number;
   vehicleName: string;
 };
@@ -159,9 +161,13 @@ export default function LiveStreamTab() {
 
     return channels.map((ch, idx) => {
       const channelNumber = getChannelNumber(ch);
+      const fallbackVehicleIds = Array.from(
+        new Set([vehicle.id, vehicle.phone].map((value) => String(value || "").trim()).filter(Boolean))
+      );
       return {
         id: `${vehicleId}-${channelNumber}-${idx}`,
         vehicleId,
+        fallbackVehicleIds,
         channel: channelNumber,
         vehicleName: `${vehicle?.registration || vehicle?.name || vehicleId} - Ch ${channelNumber}`,
       };
@@ -303,6 +309,7 @@ export default function LiveStreamTab() {
                     onClick={() => {
                       setPinnedFeed({
                         vehicleId: entry.vehicleId,
+                        fallbackVehicleIds: entry.fallbackVehicleIds,
                         channel: entry.channel,
                         vehicleName: entry.vehicleName,
                       });
@@ -319,6 +326,7 @@ export default function LiveStreamTab() {
                 </div>
                 <HLSPlayer
                   vehicleId={entry.vehicleId}
+                  fallbackVehicleIds={entry.fallbackVehicleIds}
                   channel={entry.channel}
                   vehicleName={entry.vehicleName}
                   onStop={() => toggleVehicle(entry.vehicleId)}
@@ -361,6 +369,7 @@ export default function LiveStreamTab() {
 
           <HLSPlayer
             vehicleId={pinnedFeed.vehicleId}
+            fallbackVehicleIds={pinnedFeed.fallbackVehicleIds}
             channel={pinnedFeed.channel}
             vehicleName={`${pinnedFeed.vehicleName} (Pinned)`}
             onStop={() => {

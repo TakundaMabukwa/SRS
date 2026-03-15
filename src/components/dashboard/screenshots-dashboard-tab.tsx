@@ -31,6 +31,7 @@ type ScreenshotItem = {
 type CaptureTarget = {
   vehicleId: string;
   channel: number;
+  fallbackVehicleIds?: string[];
 };
 
 type VehicleChannelCard = {
@@ -77,7 +78,13 @@ function buildTargets(vehicles: ConnectedVehicle[]): CaptureTarget[] {
     const channels = videoChannels.length > 0 ? videoChannels : [1];
 
     for (const channel of channels) {
-      const target = { vehicleId, channel };
+      const target = {
+        vehicleId,
+        channel,
+        fallbackVehicleIds: Array.from(
+          new Set([vehicle.id, vehicle.phone].map((value) => String(value || "").trim()).filter(Boolean))
+        ),
+      };
       const key = toTargetKey(target);
       if (!seen.has(key)) {
         seen.add(key);
@@ -151,15 +158,27 @@ export default function ScreenshotsDashboardTab({ detachable = true }: Screensho
   }, [toDisplayUrl]);
 
   const requestScreenshot = useCallback(async (target: CaptureTarget) => {
-    await fetch(`/api/video-server/vehicles/${target.vehicleId}/screenshot`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        channel: target.channel,
-        fallback: true,
-        fallbackDelayMs: 600,
-      }),
-    });
+    const candidateVehicleIds = Array.from(
+      new Set([target.vehicleId, ...(target.fallbackVehicleIds || [])].map((value) => String(value || "").trim()).filter(Boolean))
+    );
+
+    for (const candidateId of candidateVehicleIds) {
+      const response = await fetch(`/api/video-server/vehicles/${candidateId}/screenshot`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          channel: target.channel,
+          fallback: true,
+          fallbackDelayMs: 600,
+        }),
+      });
+
+      if (response.ok) {
+        return true;
+      }
+    }
+
+    return false;
   }, []);
 
   const runCaptureCycle = useCallback(async () => {
@@ -271,6 +290,9 @@ export default function ScreenshotsDashboardTab({ detachable = true }: Screensho
     return connectedVehicles
       .map((vehicle) => {
         const vehicleId = toVehicleKey(vehicle);
+        const lookupIds = Array.from(
+          new Set([vehicle.id, vehicle.phone].map((value) => String(value || "").trim()).filter(Boolean))
+        );
         const videoChannels = (vehicle.channels || [])
           .filter(isVideoChannel)
           .map((channel) => channel.logicalChannel ?? channel.channel ?? 1);
@@ -279,7 +301,10 @@ export default function ScreenshotsDashboardTab({ detachable = true }: Screensho
 
         const groupedChannels = dedupedChannels.map((channel) => ({
           channel,
-          screenshot: latestByDeviceChannel.get(`${vehicleId}:${channel}`),
+          screenshot:
+            lookupIds
+              .map((lookupId) => latestByDeviceChannel.get(`${lookupId}:${channel}`))
+              .find(Boolean),
         }));
 
         return {

@@ -9,9 +9,10 @@ interface HLSPlayerProps {
   channel: number;
   vehicleName?: string;
   onStop?: () => void;
+  fallbackVehicleIds?: string[];
 }
 
-export default function HLSPlayer({ vehicleId, channel, vehicleName, onStop }: HLSPlayerProps) {
+export default function HLSPlayer({ vehicleId, channel, vehicleName, onStop, fallbackVehicleIds = [] }: HLSPlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const hlsRef = useRef<Hls | null>(null);
   const [status, setStatus] = useState('Starting stream...');
@@ -39,17 +40,29 @@ export default function HLSPlayer({ vehicleId, channel, vehicleName, onStop }: H
         // Step 1: Start the stream on video server
         setStatus('Starting stream...');
         console.log(`[HLS Player] Starting ${vehicleId} ch${channel}`);
-        const startResponse = await fetch('/api/start-stream', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ vehicleId, channel })
-        });
+        const candidateVehicleIds = Array.from(new Set([vehicleId, ...fallbackVehicleIds].map((value) => String(value || '').trim()).filter(Boolean)));
+        let activeVehicleId = vehicleId;
+        let startData: any = null;
+        let started = false;
 
-        const startData = await startResponse.json();
-        console.log('[HLS Player] Start response:', startResponse.status, startData);
+        for (const candidateId of candidateVehicleIds) {
+          const startResponse = await fetch(`/api/video-server/vehicles/${encodeURIComponent(candidateId)}/start-live`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ channel })
+          });
 
-        if (!startResponse.ok) {
-          throw new Error(startData.error || 'Failed to start stream');
+          startData = await startResponse.json().catch(() => null);
+          console.log('[HLS Player] Start response:', candidateId, startResponse.status, startData);
+
+          if (startResponse.ok) {
+            activeVehicleId = candidateId;
+            started = true;
+            break;
+          }
+        }
+        if (!started) {
+          console.warn('[HLS Player] Start-live failed for all candidate ids; probing existing playlists.', candidateVehicleIds);
         }
 
         if (!mounted) {
@@ -65,7 +78,34 @@ export default function HLSPlayer({ vehicleId, channel, vehicleName, onStop }: H
           return;
         }
 
-        hlsUrlBase = `/api/hls-proxy/${vehicleId}/${channel}/playlist.m3u8`;
+        const streamCandidates = candidateVehicleIds.map((candidateId) => `/api/video-server/stream/${candidateId}/${channel}/playlist.m3u8`);
+        let selectedStreamUrl = streamCandidates[0] || `/api/video-server/stream/${activeVehicleId}/${channel}/playlist.m3u8`;
+
+        for (const candidateUrl of streamCandidates) {
+          try {
+            const probeResponse = await fetch(candidateUrl, {
+              method: 'GET',
+              cache: 'no-store',
+              headers: { Range: 'bytes=0-256' },
+            });
+            if (probeResponse.ok) {
+              selectedStreamUrl = candidateUrl;
+              break;
+            }
+          } catch {
+            // Ignore and continue probing candidates.
+          }
+        }
+
+        if (!started && selectedStreamUrl === streamCandidates[0] && !streamCandidates.length) {
+          throw new Error(startData?.error || startData?.message || 'Failed to start stream');
+        }
+
+        if (!started) {
+          setStatus('Checking existing stream...');
+        }
+
+        hlsUrlBase = selectedStreamUrl;
         console.log('[HLS Player] Base URL:', hlsUrlBase);
 
         if (Hls.isSupported()) {
