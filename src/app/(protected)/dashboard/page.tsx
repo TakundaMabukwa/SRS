@@ -2808,6 +2808,7 @@ export default function Dashboard() {
   const [alertDetailModalOpen, setAlertDetailModalOpen] = useState(false);
   const [alertRealtimeLoading, setAlertRealtimeLoading] = useState(false);
   const [alertNotesDraft, setAlertNotesDraft] = useState("");
+  const [alertScreenshotsExpanded, setAlertScreenshotsExpanded] = useState(false);
   const [alertActionLoading, setAlertActionLoading] = useState(false);
   const [alertActionError, setAlertActionError] = useState("");
   const [alertActionSuccess, setAlertActionSuccess] = useState("");
@@ -3573,12 +3574,16 @@ export default function Dashboard() {
     }
     return out;
   })();
+  const visibleAlertScreenshots = alertScreenshotsExpanded
+    ? selectedAlertScreenshots
+    : selectedAlertScreenshots.slice(0, 4);
   const selectedAlertTimeline = Array.isArray((selectedAlert as any)?.resolution_timeline)
     ? (selectedAlert as any).resolution_timeline
     : [];
   useEffect(() => {
     if (alertDetailModalOpen) {
       setVideoPlaybackFailures({});
+      setAlertScreenshotsExpanded(false);
     }
   }, [alertDetailModalOpen, selectedAlert?.id]);
   useEffect(() => {
@@ -5983,8 +5988,8 @@ export default function Dashboard() {
 
       {/* Alert Detail Modal */}
       {alertDetailModalOpen && selectedAlert && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-3 md:p-6">
-          <div className="w-full max-w-[1200px] h-[92vh] overflow-hidden rounded-2xl border border-slate-300 bg-slate-50 shadow-2xl flex flex-col">
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/70 backdrop-blur-sm p-2 sm:p-4 md:items-center md:p-6">
+          <div className="flex w-full max-w-[1200px] max-h-[92vh] min-h-0 flex-col overflow-hidden rounded-2xl border border-slate-300 bg-slate-50 shadow-2xl">
             {/* Header */}
             <div className="border-b border-slate-200 bg-gradient-to-r from-slate-950 via-slate-900 to-red-950 px-3 md:px-4 py-1.5 flex-shrink-0">
               <div className="flex items-center justify-between gap-3">
@@ -6032,7 +6037,7 @@ export default function Dashboard() {
                 </div>
 
                 {/* Action Buttons */}
-                <div className="flex items-center gap-1.5 overflow-x-auto whitespace-nowrap pb-0.5">
+                <div className="flex flex-wrap items-center justify-end gap-1.5 pb-0.5">
                   <select
                     className="h-7 min-w-[160px] rounded-md border border-white/20 bg-white/10 px-2 text-xs text-white outline-none focus:border-white/40"
                     value={alertReason}
@@ -6128,6 +6133,18 @@ export default function Dashboard() {
                           <h3 className="text-lg font-semibold text-slate-900">
                             Camera Screenshots
                           </h3>
+                          {selectedAlertScreenshots.length > 4 ? (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={() => setAlertScreenshotsExpanded((prev) => !prev)}
+                            >
+                              {alertScreenshotsExpanded
+                                ? "Show less"
+                                : `View more (${selectedAlertScreenshots.length - 4})`}
+                            </Button>
+                          ) : null}
                         </div>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                           {alertRealtimeLoading && selectedAlertScreenshots.length === 0 ? (
@@ -6142,7 +6159,7 @@ export default function Dashboard() {
                               ))}
                             </>
                           ) : selectedAlertScreenshots.length > 0 ? (
-                            selectedAlertScreenshots.map((screenshot, idx) => (
+                            visibleAlertScreenshots.map((screenshot, idx) => (
                               <Card key={idx} className="overflow-hidden border-slate-200 shadow-sm hover:shadow-md transition-shadow">
                                 <div className="relative aspect-video bg-slate-900">
                                   <img
@@ -6380,42 +6397,42 @@ export default function Dashboard() {
                 </div>
 
                 {/* Sidebar */}
-                <div className="xl:col-span-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="xl:col-span-4 grid grid-cols-1 gap-4">
                   {/* Alert Details */}
                   <Card className="p-4 border-slate-200 bg-white shadow-sm">
                     <h3 className="font-semibold text-slate-900 mb-4">Alert Details</h3>
                     <div className="space-y-3 text-sm">
-                      <div className="flex items-start gap-2">
+                      <div className="flex items-start gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
                         <Car className="w-4 h-4 text-slate-500 mt-0.5" />
                         <div>
-                          <p className="text-slate-600">Vehicle</p>
-                          <p className="font-medium text-slate-900">
+                          <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Vehicle</p>
+                          <p className="mt-1 font-semibold text-slate-900">
                             {selectedAlert.vehicle_registration || selectedAlert.fleet_number || selectedAlert.vehicleId || "N/A"}
                           </p>
                         </div>
                       </div>
-                      <div className="border-t border-slate-200" />
-                      <div className="flex items-start gap-2">
+                      <div className="hidden border-t border-slate-200" />
+                      <div className="flex items-start gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
                         <User className="w-4 h-4 text-slate-500 mt-0.5" />
                         <div>
-                          <p className="text-slate-600">Driver</p>
-                          <p className="font-medium text-slate-900">
+                          <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Driver</p>
+                          <p className="mt-1 font-semibold text-slate-900">
                             {selectedAlert.driver_name || "N/A"}
                           </p>
                         </div>
                       </div>
-                      <div className="border-t border-slate-200" />
-                      <div className="flex items-start gap-2">
+                      <div className="hidden border-t border-slate-200" />
+                      <div className="flex items-start gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
                         <MapPin className="w-4 h-4 text-slate-500 mt-0.5" />
                         <div>
-                          <p className="text-slate-600">Location</p>
-                          <p className="font-medium text-slate-900">
+                          <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Location</p>
+                          <p className="mt-1 font-semibold text-slate-900">
                             {selectedAlertCoordinates
                               ? `${selectedAlertCoordinates.longitude.toFixed(6)}, ${selectedAlertCoordinates.latitude.toFixed(6)}`
                               : "No location data"}
                           </p>
                           {selectedAlertCoordinates ? (
-                            <p className="text-xs text-slate-600 mt-0.5">
+                            <p className="text-xs text-slate-600 mt-1 leading-relaxed">
                               {selectedAlertPlaceLoading
                                 ? "Resolving place name..."
                                 : selectedAlertPlaceName || "Place name unavailable"}
@@ -6423,12 +6440,12 @@ export default function Dashboard() {
                           ) : null}
                         </div>
                       </div>
-                      <div className="border-t border-slate-200" />
-                      <div className="flex items-start gap-2">
+                      <div className="hidden border-t border-slate-200" />
+                      <div className="flex items-start gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
                         <AlertTriangle className="w-4 h-4 text-slate-500 mt-0.5" />
                         <div>
-                          <p className="text-slate-600">Alert Type</p>
-                          <p className="font-medium text-slate-900">
+                          <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Alert Type</p>
+                          <p className="mt-1 font-semibold text-slate-900">
                             {selectedAlert.type || selectedAlert.alert_type?.replace(/_/g, " ").toUpperCase() || "N/A"}
                           </p>
                         </div>
@@ -6462,7 +6479,7 @@ export default function Dashboard() {
                     </div>
                   </Card>
                   {/* Map Section */}
-                  <Card className="p-4 border-slate-200 bg-white shadow-sm">
+                  <Card className="hidden p-4 border-slate-200 bg-white shadow-sm">
                     <h3 className="font-semibold text-slate-900 mb-4">Map</h3>
                     {selectedAlertCoordinates ? (
                       <div
@@ -6534,9 +6551,9 @@ export default function Dashboard() {
                   </Card>
 
                   {/* Notes Section */}
-                  <Card className="p-4 border-slate-200 bg-white shadow-sm md:col-span-2">
+                  <Card className="p-4 border-slate-200 bg-white shadow-sm">
                     <h3 className="font-semibold text-slate-900 mb-4">Notes</h3>
-                    <div className="space-y-3">
+                    <div className="space-y-4">
                       <textarea
                         value={alertNotesDraft}
                         onChange={(e) => {
@@ -6544,17 +6561,18 @@ export default function Dashboard() {
                           if (alertActionError) setAlertActionError("");
                           if (alertActionSuccess) setAlertActionSuccess("");
                         }}
-                        className="w-full min-h-28 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-500"
+                        className="w-full min-h-36 rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
                         placeholder="Add investigation/resolution notes for this alert..."
                       />
-                      <div className="flex items-center justify-between gap-2">
-                        <p className="text-xs text-slate-500">
+                      <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                        <p className="text-xs leading-5 text-slate-600">
                           Close options: Reason, NCR form, or Report type. Selection is saved to DB with this alert.
                         </p>
-                        <div className="flex items-center gap-2">
+                        <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3">
                           <Button
                             variant="outline"
                             size="sm"
+                            className="w-full justify-center"
                             disabled={alertActionLoading || !selectedAlert?.id || !String(alertReason || "").trim()}
                             onClick={() => closeSelectedAlert("resolved")}
                           >
@@ -6563,6 +6581,7 @@ export default function Dashboard() {
                           <Button
                             variant="outline"
                             size="sm"
+                            className="w-full justify-center"
                             disabled={alertActionLoading || !selectedAlert?.id || !String(selectedNcrForm || "").trim()}
                             onClick={() => closeSelectedAlert("ncr")}
                           >
@@ -6571,6 +6590,7 @@ export default function Dashboard() {
                           <Button
                             variant="outline"
                             size="sm"
+                            className="w-full justify-center"
                             disabled={alertActionLoading || !selectedAlert?.id || !String(selectedReportForm || "").trim()}
                             onClick={() => closeSelectedAlert("report")}
                           >
