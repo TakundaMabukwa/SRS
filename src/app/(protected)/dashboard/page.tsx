@@ -84,6 +84,7 @@ import NCRSafetyViolationModal from '@/components/video-alerts/ncr-safety-violat
 import NCRSpeedingModal from '@/components/video-alerts/ncr-speeding-modal';
 import IncidentReportModal from '@/components/video-alerts/incident-report-modal';
 import CriminalReportModal from '@/components/video-alerts/criminal-report-modal';
+import DispatchReportModal from '@/components/video-alerts/dispatch-report-modal';
 import IncidentReportTemplateModal from '@/components/video-alerts/incident-report-template-modal';
 import { useVideoWebSocket } from "@/hooks/use-video-websocket";
 
@@ -2836,7 +2837,7 @@ export default function Dashboard() {
   const [showNCRModal, setShowNCRModal] = useState(false);
   const [selectedNcrForm, setSelectedNcrForm] = useState<'' | 'nrc-camera-covered' | 'ncr-safety-violation' | 'ncr-speeding'>('');
   const [showReportModal, setShowReportModal] = useState(false);
-  const [selectedReportForm, setSelectedReportForm] = useState<'' | 'incident-report' | 'criminal-report'>('');
+  const [selectedReportForm, setSelectedReportForm] = useState<'' | 'incident-report' | 'criminal-report' | 'dispatch-report'>('');
   const [incidentReportModalOpen, setIncidentReportModalOpen] = useState(false);
   const [selectedTripForIncident, setSelectedTripForIncident] = useState<any>(null);
   const [timelinePlaybackByAlert, setTimelinePlaybackByAlert] = useState<Record<string, Array<{ key: string; label: string; url: string; fallbackUrls?: string[] }>>>({});
@@ -6093,7 +6094,7 @@ export default function Dashboard() {
                         className="h-7 min-w-[150px] rounded-md border border-white/20 bg-white/10 px-2 text-xs text-white outline-none focus:border-white/40"
                         value={selectedReportForm}
                         onChange={(e) => {
-                          const formType = (e.target.value || '') as '' | 'incident-report' | 'criminal-report';
+                          const formType = (e.target.value || '') as '' | 'incident-report' | 'criminal-report' | 'dispatch-report';
                           setSelectedReportForm(formType);
                           if (formType) setShowReportModal(true);
                         }}
@@ -6101,6 +6102,7 @@ export default function Dashboard() {
                         <option value="" className="text-slate-900">Reports</option>
                         <option value="incident-report" className="text-slate-900">incident-report</option>
                         <option value="criminal-report" className="text-slate-900">criminal-report</option>
+                        <option value="dispatch-report" className="text-slate-900">dispatch-report</option>
                       </select>
                     </>
                   )}
@@ -6698,6 +6700,32 @@ export default function Dashboard() {
       )}
       {showReportModal && selectedAlert && selectedReportForm === 'criminal-report' && (
         <CriminalReportModal
+          isOpen={showReportModal}
+          onClose={() => setShowReportModal(false)}
+          onSaved={async () => {
+            setShowReportModal(false)
+            await closeSelectedAlert("report")
+          }}
+          driverInfo={{
+            name: selectedAlert.driver_name || 'Unknown Driver',
+            fleetNumber: selectedAlert.vehicle_registration || selectedAlert.device_id,
+            department: 'Fleet Operations',
+            timestamp: selectedAlert.timestamp,
+            location: selectedAlertLocationText
+          }}
+          alertDetails={{
+            id: selectedAlert.id,
+            type: selectedAlert.type || selectedAlert.alert_type,
+            severity: selectedAlert.priority || selectedAlert.severity,
+            timestamp: selectedAlertDisplayTs || selectedAlert.timestamp,
+            location: selectedAlert.location || selectedAlert.metadata,
+            screenshots: selectedAlertScreenshots || [],
+            videos: selectedAlertVideoList || []
+          }}
+        />
+      )}
+      {showReportModal && selectedAlert && selectedReportForm === 'dispatch-report' && (
+        <DispatchReportModal
           isOpen={showReportModal}
           onClose={() => setShowReportModal(false)}
           onSaved={async () => {

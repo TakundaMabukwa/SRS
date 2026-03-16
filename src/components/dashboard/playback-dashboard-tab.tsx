@@ -85,7 +85,7 @@ function normalizeBackendMediaUrl(url: string, videoProxyBase: string) {
 
 function PlaybackVideoPlayer({
   url,
-  className = "w-full rounded-xl border border-slate-700 bg-black",
+  className = "w-full rounded-2xl border border-slate-800 bg-black shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]",
 }: {
   url: string;
   className?: string;
@@ -468,7 +468,7 @@ export default function PlaybackDashboardTab() {
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-12 gap-5">
-        <Card className="xl:col-span-4 p-4 border-slate-200 shadow-sm">
+        <Card className="xl:col-span-4 overflow-hidden border-slate-200 shadow-sm">
           <div className="flex items-center justify-between gap-3 mb-4">
             <h3 className="text-base font-semibold text-slate-900">Find Vehicle</h3>
             <Badge variant="outline">{filteredVehicles.length} vehicles</Badge>
@@ -502,19 +502,17 @@ export default function PlaybackDashboardTab() {
               <thead className="sticky top-0 bg-slate-50">
                 <tr className="text-left text-slate-600">
                   <th className="px-3 py-2 font-medium">Vehicle</th>
-                  <th className="px-3 py-2 font-medium">Channels</th>
-                  <th className="px-3 py-2 font-medium">Latest</th>
                   <th className="px-3 py-2 font-medium text-right">Action</th>
                 </tr>
               </thead>
               <tbody>
                 {loading ? (
                   <tr>
-                    <td className="px-3 py-8 text-center text-slate-500" colSpan={4}>Loading playback inventory...</td>
+                    <td className="px-3 py-8 text-center text-slate-500" colSpan={2}>Loading playback inventory...</td>
                   </tr>
                 ) : filteredVehicles.length === 0 ? (
                   <tr>
-                    <td className="px-3 py-8 text-center text-slate-500" colSpan={4}>No stored playback data found.</td>
+                    <td className="px-3 py-8 text-center text-slate-500" colSpan={2}>No stored playback data found.</td>
                   </tr>
                 ) : (
                   filteredVehicles.map((vehicle) => {
@@ -524,12 +522,6 @@ export default function PlaybackDashboardTab() {
                         <td className="px-3 py-3 align-top">
                           <div className="font-medium text-slate-900">{vehicle.vehicleId}</div>
                           <div className="text-xs text-slate-500">{vehicle.clipCount} clip(s)</div>
-                        </td>
-                        <td className="px-3 py-3 align-top text-slate-700">
-                          {vehicle.channels.map((channel) => `CH${channel}`).join(", ") || "N/A"}
-                        </td>
-                        <td className="px-3 py-3 align-top text-xs text-slate-600">
-                          {formatDateTime(vehicle.latestTime)}
                         </td>
                         <td className="px-3 py-3 align-top text-right">
                           <Button
@@ -638,7 +630,7 @@ export default function PlaybackDashboardTab() {
                 </label>
               </div>
 
-              <div className="flex flex-wrap items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3">
                 <Button
                   type="button"
                   variant={playBothChannels ? "default" : "outline"}
@@ -663,8 +655,8 @@ export default function PlaybackDashboardTab() {
                 {availabilityLoading ? <span className="text-xs text-slate-500">Loading channel coverage...</span> : null}
               </div>
 
-              <div className="rounded-lg border border-slate-200 bg-slate-50/70 p-3">
-                <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
                   <div>
                     <p className="text-sm font-semibold text-slate-900">Quick range picks</p>
                     <p className="text-xs text-slate-500">
@@ -673,7 +665,7 @@ export default function PlaybackDashboardTab() {
                   </div>
                   {selectedChannelAvailability ? (
                     <Badge variant="outline">
-                      {`CH${selectedChannel} • ${selectedChannelAvailability.clipCount} stored segment(s)`}
+                      {`CH${selectedChannel} Ã¢â‚¬Â¢ ${selectedChannelAvailability.clipCount} stored segment(s)`}
                     </Badge>
                   ) : null}
                 </div>
@@ -686,7 +678,7 @@ export default function PlaybackDashboardTab() {
                         type="button"
                         variant="outline"
                         size="sm"
-                        className="bg-white"
+                        className="rounded-xl bg-white px-4 shadow-sm"
                         onClick={() => void applyClipRangeAndPlay(option.start, option.end)}
                       >
                         {option.label}
@@ -696,48 +688,69 @@ export default function PlaybackDashboardTab() {
                 ) : (
                   <p className="text-xs text-slate-500">No stored ranges found yet for this date and channel.</p>
                 )}
-              </div>
-
-              <Card className="p-4 border-slate-200 bg-slate-950 text-slate-100 shadow-none">
-                <div className="mb-3 flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-2">
-                    <Video className="h-5 w-5 text-cyan-300" />
-                    <div>
-                      <p className="font-medium text-white">Playback Player</p>
-                      <p className="text-xs text-slate-300">
-                        {playbackItems.length > 0
-                          ? `${selectedVehicle.vehicleId} ${playBothChannels ? "dual-channel" : `CH${selectedChannel}`} playback`
-                          : "Choose a range and play stored footage."}
-                      </p>
-                      {rangeSummary ? <p className="text-[11px] text-cyan-200/80">{rangeSummary}</p> : null}
+              </div>`r`n`r`n              <Card className="overflow-hidden border-slate-200 bg-[#070b16] text-slate-100 shadow-none">
+                <div className="border-b border-slate-800 bg-[#0b1020] px-4 py-3">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex items-center gap-3">
+                      <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-cyan-500/10 text-cyan-300 ring-1 ring-cyan-400/20">
+                        <Video className="h-5 w-5" />
+                      </div>
+                      <div>
+                        <p className="text-sm font-semibold text-white">Now Playing</p>
+                        <p className="text-xs text-slate-300">
+                          {playbackItems.length > 0
+                            ? `${selectedVehicle.vehicleId} ${playBothChannels ? "dual-channel playback" : `CH${selectedChannel} playback`}`
+                            : "Choose a range and play stored footage."}
+                        </p>
+                        {rangeSummary ? <p className="text-[11px] text-cyan-200/80">{rangeSummary}</p> : null}
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Badge className="border border-slate-700 bg-slate-900 text-slate-200 hover:bg-slate-900">
+                        {selectedVehicle.vehicleId}
+                      </Badge>
+                      {playBothChannels && playbackItems.length > 1 ? (
+                        <Badge className="bg-cyan-500/15 text-cyan-200 hover:bg-cyan-500/15">
+                          Dual channel compare
+                        </Badge>
+                      ) : null}
                     </div>
                   </div>
-                  {playBothChannels && playbackItems.length > 1 ? (
-                    <Badge className="bg-cyan-500/15 text-cyan-200 hover:bg-cyan-500/15">
-                      Dual channel compare
-                    </Badge>
-                  ) : null}
                 </div>
 
                 {playbackState === "ready" && playbackItems.length > 0 ? (
-                  <div className={`grid gap-4 ${playbackItems.length > 1 ? "grid-cols-1 2xl:grid-cols-2" : "grid-cols-1"}`}>
+                  <div className={`grid gap-4 p-4 ${playbackItems.length > 1 ? "grid-cols-1 2xl:grid-cols-2" : "grid-cols-1"}`}>
                     {playbackItems.map((item) => (
-                      <div key={`${item.channel}:${item.url}`} className="space-y-2">
-                        <div className="flex items-center justify-between">
-                          <Badge className="bg-cyan-500/15 text-cyan-200 hover:bg-cyan-500/15">CH{item.channel}</Badge>
+                      <div
+                        key={`${item.channel}:${item.url}`}
+                        className="space-y-3 rounded-2xl border border-slate-800 bg-[#0a1020] p-3 shadow-[0_10px_30px_rgba(0,0,0,0.25)]"
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="flex items-center gap-2">
+                            <Badge className="bg-cyan-500/15 text-cyan-200 hover:bg-cyan-500/15">CH{item.channel}</Badge>
+                            <span className="text-xs uppercase tracking-[0.18em] text-slate-500">Playback</span>
+                          </div>
                           <span className="text-xs text-slate-400">{item.label}</span>
                         </div>
-                        <PlaybackVideoPlayer url={item.url} />
+                        <PlaybackVideoPlayer url={item.url} className="aspect-video w-full rounded-2xl border border-slate-800 bg-black" />
+                        <div className="flex items-center justify-between rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2 text-xs text-slate-400">
+                          <span>Source window</span>
+                          <span className="text-slate-200">{rangeSummary || "Selected time range"}</span>
+                        </div>
                       </div>
                     ))}
                   </div>
                 ) : playbackState === "loading" ? (
-                  <div className="aspect-video w-full rounded-xl border border-slate-800 bg-slate-900 grid place-items-center text-slate-300">
-                    Preparing playback video...
+                  <div className="p-4">
+                    <div className="aspect-video w-full rounded-2xl border border-slate-800 bg-slate-900 grid place-items-center text-slate-300">
+                      Preparing playback video...
+                    </div>
                   </div>
                 ) : (
-                  <div className="aspect-video w-full rounded-xl border border-slate-800 bg-slate-900 grid place-items-center text-slate-400">
-                    {playbackError || "No playback selected yet."}
+                  <div className="p-4">
+                    <div className="aspect-video w-full rounded-2xl border border-slate-800 bg-slate-900 grid place-items-center text-slate-400">
+                      {playbackError || "No playback selected yet."}
+                    </div>
                   </div>
                 )}
               </Card>
@@ -748,3 +761,4 @@ export default function PlaybackDashboardTab() {
     </div>
   );
 }
+
