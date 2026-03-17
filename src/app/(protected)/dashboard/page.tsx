@@ -6085,13 +6085,13 @@ export default function Dashboard() {
                         className="h-7 min-w-[170px] rounded-md border border-white/20 bg-white/10 px-2 text-xs text-white outline-none focus:border-white/40"
                         value={selectedNcrForm}
                         onChange={(e) => {
-                          const formType = (e.target.value || '') as '' | 'nrc-camera-covered' | 'ncr-safety-violation' | 'ncr-speeding';
+                          const formType = (e.target.value || '') as '' | 'ncr-camera-covered' | 'ncr-safety-violation' | 'ncr-speeding';
                           setSelectedNcrForm(formType);
                           if (formType) setShowNCRModal(true);
                         }}
                       >
                         <option value="" className="text-slate-900">Select NCR form</option>
-                        <option value="nrc-camera-covered" className="text-slate-900">nrc-camera-covered</option>
+                        <option value="ncr-camera-covered" className="text-slate-900">ncr-camera-covered</option>
                         <option value="ncr-safety-violation" className="text-slate-900">ncr-safety-violation</option>
                         <option value="ncr-speeding" className="text-slate-900">ncr-speeding</option>
                       </select>

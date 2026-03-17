@@ -245,10 +245,9 @@ export default function ProtectedLayout({ children }: ProtectedLayoutProps) {
         <div className="px-3 py-4">
           <div className="flex items-center justify-between">
             <img
-              src="https://srsgroup.co.za/wp-content/uploads/2023/12/SRS-WEB-LOGO-WHITE-3.png"
+              src="/image001.png"
               alt="SRS Logo"
               className={`object-contain ${sidebarExpanded ? "h-10 w-32" : "h-10 w-10"}`}
-              style={{ filter: "brightness(0) saturate(100%) invert(26%) sepia(79%) saturate(1619%) hue-rotate(207deg) brightness(96%) contrast(95%)" }}
             />
             {/* Toggle is duplicated here visually hidden on small but kept for layout */}
             <div className="hidden"></div>
