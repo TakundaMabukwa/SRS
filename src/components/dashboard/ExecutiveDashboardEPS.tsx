@@ -51,7 +51,7 @@ export default function ExecutiveDashboardEPS() {
       <div className="bg-white shadow-md p-6 border border-gray-200 rounded-lg">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="font-bold text-2xl text-gray-800">EPS Courier Services</h1>
+            <h1 className="font-bold text-2xl text-gray-800">SRS Dashboard</h1>
             <p className="text-sm text-gray-600 mt-1">Executive Dashboard - Fleet Analytics</p>
           </div>
           <div className="flex items-center space-x-4">
