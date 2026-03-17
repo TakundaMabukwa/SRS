@@ -85,6 +85,7 @@ import NCRSpeedingModal from '@/components/video-alerts/ncr-speeding-modal';
 import IncidentReportModal from '@/components/video-alerts/incident-report-modal';
 import CriminalReportModal from '@/components/video-alerts/criminal-report-modal';
 import DispatchReportModal from '@/components/video-alerts/dispatch-report-modal';
+import AccidentReportModal from '@/components/video-alerts/accident-report-modal';
 import IncidentReportTemplateModal from '@/components/video-alerts/incident-report-template-modal';
 import { useVideoWebSocket } from "@/hooks/use-video-websocket";
 
@@ -6085,29 +6086,30 @@ export default function Dashboard() {
                         className="h-7 min-w-[170px] rounded-md border border-white/20 bg-white/10 px-2 text-xs text-white outline-none focus:border-white/40"
                         value={selectedNcrForm}
                         onChange={(e) => {
-                          const formType = (e.target.value || '') as '' | 'ncr-camera-covered' | 'ncr-safety-violation' | 'ncr-speeding';
+                          const formType = (e.target.value || '') as '' | 'NCR-COVERED-CAMERA' | 'NCR-SAFETY-VIOLATION' | 'NCR-SPEEDING';
                           setSelectedNcrForm(formType);
                           if (formType) setShowNCRModal(true);
                         }}
                       >
                         <option value="" className="text-slate-900">Select NCR form</option>
-                        <option value="ncr-camera-covered" className="text-slate-900">ncr-camera-covered</option>
-                        <option value="ncr-safety-violation" className="text-slate-900">ncr-safety-violation</option>
-                        <option value="ncr-speeding" className="text-slate-900">ncr-speeding</option>
+                        <option value="NCR-COVERED-CAMERA" className="text-slate-900">NCR-COVERED-CAMERA</option>
+                        <option value="NCR-SAFETY-VIOLATION" className="text-slate-900">NCR-SAFETY-VIOLATION</option>
+                        <option value="NCR-SPEEDING" className="text-slate-900">NCR-SPEEDING</option>
                       </select>
                       <select
                         className="h-7 min-w-[150px] rounded-md border border-white/20 bg-white/10 px-2 text-xs text-white outline-none focus:border-white/40"
                         value={selectedReportForm}
                         onChange={(e) => {
-                          const formType = (e.target.value || '') as '' | 'incident-report' | 'criminal-report' | 'dispatch-report';
+                          const formType = (e.target.value || '') as '' | 'incident-report' | 'criminal-report' | 'dispatch-report' | 'accident-report';
                           setSelectedReportForm(formType);
                           if (formType) setShowReportModal(true);
                         }}
                       >
                         <option value="" className="text-slate-900">Reports</option>
-                        <option value="incident-report" className="text-slate-900">incident-report</option>
-                        <option value="criminal-report" className="text-slate-900">criminal-report</option>
-                        <option value="dispatch-report" className="text-slate-900">dispatch-report</option>
+                        <option value="incident-report" className="text-slate-900">INCIDENT-REPORT</option>
+                        <option value="criminal-report" className="text-slate-900">CRIMINAL-REPORT</option>
+                        <option value="dispatch-report" className="text-slate-900">DISPATCH-REPORT</option>
+                        <option value="accident-report" className="text-slate-900">ACCIDENT-REPORT</option>
                       </select>
                     </>
                   )}
@@ -6746,6 +6748,32 @@ export default function Dashboard() {
       )}
       {showReportModal && selectedAlert && selectedReportForm === 'dispatch-report' && (
         <DispatchReportModal
+          isOpen={showReportModal}
+          onClose={() => setShowReportModal(false)}
+          onSaved={async () => {
+            setShowReportModal(false)
+            await closeSelectedAlert("report")
+          }}
+          driverInfo={{
+            name: selectedAlert.driver_name || 'Unknown Driver',
+            fleetNumber: selectedAlert.vehicle_registration || selectedAlert.device_id,
+            department: 'Fleet Operations',
+            timestamp: selectedAlert.timestamp,
+            location: selectedAlertLocationText
+          }}
+          alertDetails={{
+            id: selectedAlert.id,
+            type: selectedAlert.type || selectedAlert.alert_type,
+            severity: selectedAlert.priority || selectedAlert.severity,
+            timestamp: selectedAlertDisplayTs || selectedAlert.timestamp,
+            location: selectedAlert.location || selectedAlert.metadata,
+            screenshots: selectedAlertScreenshots || [],
+            videos: selectedAlertVideoList || []
+          }}
+        />
+      )}
+      {showReportModal && selectedAlert && selectedReportForm === 'accident-report' && (
+        <AccidentReportModal
           isOpen={showReportModal}
           onClose={() => setShowReportModal(false)}
           onSaved={async () => {
