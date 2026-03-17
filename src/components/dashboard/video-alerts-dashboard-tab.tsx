@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { useVideoAlerts } from "@/context/video-alerts-context/context";
 import { useVideoWebSocket } from "@/hooks/use-video-websocket";
+import { enrichAlertsWithVehicleData } from "@/lib/utils/enrich-alerts-with-vehicles";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
@@ -119,7 +120,13 @@ export default function VideoAlertsDashboardTab({
             ? json.data
             : [];
 
-      setSourceAlerts(dedupeByIdAndSort(activeList));
+      // Normalize alerts first
+      const normalized = dedupeByIdAndSort(activeList);
+      
+      // Enrich with vehicle data from vehiclesc table
+      const enriched = await enrichAlertsWithVehicleData(normalized);
+      
+      setSourceAlerts(enriched);
     } catch (error) {
       console.error("Failed to fetch video alerts board data:", error);
     }
@@ -150,7 +157,15 @@ export default function VideoAlertsDashboardTab({
       return;
     }
 
-    setRealtimeAlerts((prev) => dedupeByIdAndSort([payloadAlert, ...prev]));
+    // Enrich realtime alert with vehicle data
+    enrichAlertsWithVehicleData([payloadAlert]).then((enriched) => {
+      const enrichedAlert = enriched[0] || payloadAlert;
+      setRealtimeAlerts((prev) => dedupeByIdAndSort([enrichedAlert, ...prev]));
+    }).catch((err) => {
+      console.error("Failed to enrich realtime alert:", err);
+      // Fallback to non-enriched alert
+      setRealtimeAlerts((prev) => dedupeByIdAndSort([payloadAlert, ...prev]));
+    });
 
     if (
       eventType === "alert-status-changed" ||

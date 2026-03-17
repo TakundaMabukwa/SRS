@@ -84,9 +84,22 @@ export async function POST(
   const { path: pathArray } = await params
   const path = pathArray.join('/')
   const url = `${VIDEO_SERVER_URL}/api/${path}`
-  const body = await request.json()
 
   try {
+    // Safely parse JSON body, handle empty or missing body
+    let body = {}
+    const contentType = request.headers.get('content-type') || ''
+    const contentLength = request.headers.get('content-length')
+    
+    if (contentType.includes('application/json') && contentLength && parseInt(contentLength) > 0) {
+      try {
+        body = await request.json()
+      } catch (parseError) {
+        console.warn('Failed to parse request body as JSON:', parseError)
+        body = {}
+      }
+    }
+
     const response = await fetch(url, {
       method: 'POST',
       headers: {
@@ -95,11 +108,30 @@ export async function POST(
       body: JSON.stringify(body),
     })
 
-    const data = await response.json()
-    return Response.json(data, { status: response.status })
+    const contentTypeResponse = response.headers.get('content-type') || ''
+    
+    // Handle both JSON and non-JSON responses
+    if (contentTypeResponse.includes('application/json')) {
+      const data = await response.json()
+      return Response.json(data, { status: response.status })
+    } else {
+      // For non-JSON responses (like images), return as-is
+      const arrayBuffer = await response.arrayBuffer()
+      const passHeaders = new Headers()
+      const passThroughKeys = ['content-type', 'content-length', 'cache-control', 'content-disposition']
+      passThroughKeys.forEach((key) => {
+        const value = response.headers.get(key)
+        if (value) passHeaders.set(key, value)
+      })
+      return new Response(arrayBuffer, {
+        status: response.status,
+        headers: passHeaders
+      })
+    }
   } catch (error) {
+    console.error('Video server POST error:', error)
     return Response.json(
-      { success: false, error: 'Failed to post to video server' },
+      { success: false, error: 'Failed to post to video server', details: String(error) },
       { status: 500 }
     )
   }
