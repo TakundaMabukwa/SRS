@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, use } from "react";
+import React, { useState, useEffect, use, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { useVideoAlerts } from "@/context/video-alerts-context/context";
 import { useToast } from "@/hooks/use-toast";
@@ -43,7 +43,6 @@ export default function AlertDetailPage({ params }) {
     updateAlertStatus,
     addNote,
     escalateAlert,
-    refreshScreenshots,
   } = useVideoAlerts();
   const { toast } = useToast();
 
@@ -51,6 +50,8 @@ export default function AlertDetailPage({ params }) {
   const [addingNote, setAddingNote] = useState(false);
   const [showCloseModal, setShowCloseModal] = useState(false);
   const [currentUser] = useState({ id: "user-1", name: "Current User", role: "Operator" });
+  const [resolvedScreenshots, setResolvedScreenshots] = useState([]);
+  const [screenshotsLoading, setScreenshotsLoading] = useState(false);
   const [resolvedVideos, setResolvedVideos] = useState([]);
   const [videoLoading, setVideoLoading] = useState(false);
 
@@ -61,6 +62,33 @@ export default function AlertDetailPage({ params }) {
     if (clean.startsWith("/")) return clean;
     return `/${clean.replace(/^\/+/, "")}`;
   };
+
+  const normalizeScreenshotUrl = (url) => {
+    const clean = String(url || "").trim();
+    if (!clean) return "";
+    if (/^https?:\/\//i.test(clean)) return clean;
+    if (clean.startsWith("/")) return clean;
+    return `/${clean.replace(/^\/+/, "")}`;
+  };
+
+  const normalizeScreenshots = (rows = []) =>
+    rows
+      .map((shot, index) => {
+        const url = normalizeScreenshotUrl(shot?.url || shot?.storage_url || shot?.storageUrl);
+        if (!url) return null;
+        return {
+          id: shot?.id || `shot-${index + 1}`,
+          url,
+          camera_name:
+            shot?.camera_name ||
+            shot?.cameraName ||
+            (shot?.channel ? `Camera ${shot.channel}` : "Camera"),
+          channel: Number(shot?.channel || 1),
+          timestamp: shot?.timestamp || shot?.capturedAt || selectedAlert?.timestamp || new Date().toISOString(),
+          capture_offset: Number(shot?.capture_offset ?? shot?.offset ?? 0),
+        };
+      })
+      .filter(Boolean);
 
   const resolveStoredWindowVideo = async (alert) => {
     const vehicleId = String(
@@ -133,6 +161,15 @@ export default function AlertDetailPage({ params }) {
     if (!alertIdValue) return null;
 
     try {
+      await fetch(`/api/video-server/alerts/${encodeURIComponent(alertIdValue)}/collect-evidence`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ensureScreenshots: true,
+          ensureVideo: true,
+        }),
+      }).catch(() => null);
+
       const cameraRes = await fetch(`/api/video-server/alerts/${encodeURIComponent(alertIdValue)}/request-report-video`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -156,6 +193,50 @@ export default function AlertDetailPage({ params }) {
     return null;
   };
 
+  const fetchAlertScreenshots = useCallback(async (forceRequest = false) => {
+    if (!alertId) return [];
+
+    const parseRows = (payload) => {
+      const rows =
+        (Array.isArray(payload?.screenshots) ? payload.screenshots : null) ||
+        (Array.isArray(payload?.data?.screenshots) ? payload.data.screenshots : null) ||
+        [];
+      return normalizeScreenshots(rows);
+    };
+
+    setScreenshotsLoading(true);
+    try {
+      const fetchRows = async () => {
+        const res = await fetch(`/api/video-server/alerts/${encodeURIComponent(alertId)}/screenshots?includeFallback=true`, {
+          cache: "no-store",
+        });
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok) return [];
+        return parseRows(json);
+      };
+
+      let shots = await fetchRows();
+      if (shots.length === 0 || forceRequest) {
+        await fetch(`/api/video-server/alerts/${encodeURIComponent(alertId)}/collect-evidence`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            ensureScreenshots: true,
+            ensureVideo: false,
+          }),
+        }).catch(() => null);
+
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        shots = await fetchRows();
+      }
+
+      setResolvedScreenshots(shots);
+      return shots;
+    } finally {
+      setScreenshotsLoading(false);
+    }
+  }, [alertId]);
+
   useEffect(() => {
     if (alertId && alerts.length > 0) {
       const alert = alerts.find(a => a.id === alertId);
@@ -170,11 +251,19 @@ export default function AlertDetailPage({ params }) {
     if (!selectedAlert || selectedAlert.status === "closed") return;
     
     const interval = setInterval(() => {
-      refreshScreenshots(alertId);
+      void fetchAlertScreenshots();
     }, 30000);
     
     return () => clearInterval(interval);
-  }, [alertId, selectedAlert]);
+  }, [alertId, selectedAlert, fetchAlertScreenshots]);
+
+  useEffect(() => {
+    if (!selectedAlert) {
+      setResolvedScreenshots([]);
+      return;
+    }
+    void fetchAlertScreenshots();
+  }, [selectedAlert, fetchAlertScreenshots]);
 
   useEffect(() => {
     let cancelled = false;
@@ -348,18 +437,18 @@ export default function AlertDetailPage({ params }) {
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={() => refreshScreenshots(alertId)}
+                      onClick={() => void fetchAlertScreenshots(true)}
                     >
                       <RefreshCw className="w-4 h-4 mr-2" />
                       Refresh
                     </Button>
                   </div>
                   <p className="text-sm text-slate-600 mb-4">
-                    Screenshots auto-refresh every 30 seconds
+                    Screenshots auto-refresh every 30 seconds and request fresh evidence if needed
                   </p>
                   <div className="grid grid-cols-2 gap-4">
-                    {selectedAlert.screenshots?.length > 0 ? (
-                      selectedAlert.screenshots.map((screenshot) => (
+                    {resolvedScreenshots.length > 0 ? (
+                      resolvedScreenshots.map((screenshot) => (
                         <Card key={screenshot.id} className="overflow-hidden">
                           <div className="relative aspect-video bg-slate-900">
                             <img
@@ -387,7 +476,7 @@ export default function AlertDetailPage({ params }) {
                       ))
                     ) : (
                       <div className="col-span-2 text-center py-12 text-slate-500">
-                        No screenshots available
+                        {screenshotsLoading ? "Resolving alert screenshots..." : "No screenshots available yet"}
                       </div>
                     )}
                   </div>

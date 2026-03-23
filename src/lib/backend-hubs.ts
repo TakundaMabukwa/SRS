@@ -59,7 +59,6 @@ export function resolveVideoServerProxyBase(pathArray: string[]) {
     first === "playback" ||
     first === "videos" ||
     (first === "vehicles" && third === "videos") ||
-    (first === "alerts" && third === "video") ||
     fourth === "videos";
 
   if (isPlaybackPath) {

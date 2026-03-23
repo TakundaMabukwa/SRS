@@ -322,7 +322,7 @@ export function AddDriversForm() {
               />
             </div>
           </div>
-        </Card>
+        </div>
 
         {/* Address & Location Section */}
         <Card className="p-6 border-l-4 border-l-purple-500">

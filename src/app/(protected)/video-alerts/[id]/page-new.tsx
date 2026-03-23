@@ -238,7 +238,7 @@ export default function AlertDetailPage({ params }: { params: Promise<{ id: stri
           timestamp: alert.timestamp,
           location: alert.metadata?.location
         }}
-      />>
+      />
     </div>
   )
 }

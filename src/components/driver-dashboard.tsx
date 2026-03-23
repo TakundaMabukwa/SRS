@@ -269,6 +269,7 @@ export default function DriverDashboard() {
             </div>
           </div>
         </div>
+      </div>
 
       {/* Sidebar */}
       <div className="fixed left-0 top-16 h-[calc(100vh-4rem)] w-64 bg-gradient-to-b from-slate-800 via-slate-900 to-gray-900 shadow-xl">
@@ -653,5 +654,5 @@ export default function DriverDashboard() {
         )}
       </div>
     </div>
-  )\
+  )
 }

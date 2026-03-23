@@ -145,6 +145,15 @@ export default function VideoAlertsPage() {
     if (!alertId) return null
 
     try {
+      await fetch(`/api/video-server/alerts/${encodeURIComponent(alertId)}/collect-evidence`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ensureScreenshots: true,
+          ensureVideo: true
+        })
+      }).catch(() => null)
+
       const cameraRes = await fetch(`/api/video-server/alerts/${encodeURIComponent(alertId)}/request-report-video`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

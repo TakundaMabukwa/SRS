@@ -44,6 +44,11 @@ type VehicleGroupCard = {
   channels: VehicleChannelCard[];
 };
 
+type CaptureAvailability = {
+  failedAt?: number;
+  status?: number;
+};
+
 function isVideoChannel(channel: ChannelInfo): boolean {
   const channelType = (channel.type || "").toLowerCase();
   return channelType === "video" || channelType === "audio_video";
@@ -110,6 +115,8 @@ export default function ScreenshotsDashboardTab({ detachable = true }: Screensho
   const [error, setError] = useState<string | null>(null);
   const vehiclesRef = useRef<ConnectedVehicle[]>([]);
   const lastWsRefreshAt = useRef(0);
+  const captureAvailabilityRef = useRef<Map<string, CaptureAvailability>>(new Map());
+  const SCREENSHOT_FAILURE_COOLDOWN_MS = 90_000;
 
   const toDisplayUrl = useCallback((raw?: string) => {
     const value = String(raw || "").trim();
@@ -158,6 +165,12 @@ export default function ScreenshotsDashboardTab({ detachable = true }: Screensho
   }, [toDisplayUrl]);
 
   const requestScreenshot = useCallback(async (target: CaptureTarget) => {
+    const targetKey = toTargetKey(target);
+    const availability = captureAvailabilityRef.current.get(targetKey);
+    if (availability?.failedAt && Date.now() - availability.failedAt < SCREENSHOT_FAILURE_COOLDOWN_MS) {
+      return false;
+    }
+
     const candidateVehicleIds = Array.from(
       new Set([target.vehicleId, ...(target.fallbackVehicleIds || [])].map((value) => String(value || "").trim()).filter(Boolean))
     );
@@ -174,10 +187,19 @@ export default function ScreenshotsDashboardTab({ detachable = true }: Screensho
       });
 
       if (response.ok) {
+        captureAvailabilityRef.current.delete(targetKey);
         return true;
+      }
+
+      if (response.status === 404) {
+        continue;
       }
     }
 
+    captureAvailabilityRef.current.set(targetKey, {
+      failedAt: Date.now(),
+      status: 404,
+    });
     return false;
   }, []);
 
@@ -307,12 +329,19 @@ export default function ScreenshotsDashboardTab({ detachable = true }: Screensho
               .find(Boolean),
         }));
 
+        const visibleChannels = groupedChannels.filter((channelCard) => {
+          if (channelCard.screenshot?.storage_url) return true;
+          const availability = captureAvailabilityRef.current.get(`${vehicleId}:${channelCard.channel}`);
+          if (!availability?.failedAt) return true;
+          return Date.now() - availability.failedAt >= SCREENSHOT_FAILURE_COOLDOWN_MS;
+        });
+
         return {
           vehicleId,
-          channels: groupedChannels,
+          channels: visibleChannels,
         };
       })
-      .filter((card) => card.vehicleId.length > 0);
+      .filter((card) => card.vehicleId.length > 0 && card.channels.length > 0);
   }, [connectedVehicles, screenshots]);
 
   const liveCount = useMemo(() => {
