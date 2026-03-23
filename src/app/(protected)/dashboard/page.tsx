@@ -3634,7 +3634,7 @@ export default function Dashboard() {
       setSelectedAlertPlaybackLoading(true);
       setSelectedAlertPlaybackError("");
       try {
-        const videos = await resolveAlertPlaybackVideos(String(selectedAlert.id), videoProxyBase);
+        const videos = await resolveAlertPlaybackVideos(selectedAlert, videoProxyBase);
         if (!cancelled) {
           setSelectedAlertPlaybackVideos(videos);
         }

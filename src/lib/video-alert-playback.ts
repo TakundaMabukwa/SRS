@@ -6,6 +6,8 @@ export type AlertPlaybackVideo = {
   url: string;
 };
 
+type AlertPlaybackSource = string | { [key: string]: any };
+
 const DEFAULT_VIDEO_PROXY_BASE = "/api/video-server";
 
 function timeoutSignal(timeoutMs: number) {
@@ -97,9 +99,114 @@ async function pollPlaybackJob(jobId: string, videoProxyBase = DEFAULT_VIDEO_PRO
   throw new Error("Playback job timed out.");
 }
 
-export async function resolveAlertPlaybackVideos(alertId: string, videoProxyBase = DEFAULT_VIDEO_PROXY_BASE): Promise<AlertPlaybackVideo[]> {
-  const id = String(alertId || "").trim();
+function getAlertVehicleId(alert: any) {
+  return String(
+    alert?.vehicleId ||
+      alert?.device_id ||
+      alert?.vehicle?.vehicleId ||
+      alert?.vehicle?.terminalPhone ||
+      alert?.metadata?.vehicle?.vehicleId ||
+      alert?.metadata?.vehicle?.terminalPhone ||
+      ""
+  ).trim();
+}
+
+function getAlertChannel(alert: any) {
+  const candidates = [
+    alert?.channel,
+    alert?.metadata?.channel,
+    alert?.metadata?.resourceChannel,
+    alert?.metadata?.locationFix?.channel,
+  ];
+  for (const candidate of candidates) {
+    const value = Number(candidate);
+    if (Number.isFinite(value) && value > 0) return value;
+  }
+  return 1;
+}
+
+async function resolvePlaybackWindowForAlert(alert: any, videoProxyBase = DEFAULT_VIDEO_PROXY_BASE): Promise<AlertPlaybackVideo[]> {
+  const vehicleId = getAlertVehicleId(alert);
+  const timestamp = getAlertDisplayTimestamp(alert) || alert?.metadata?.locationFix?.timestamp;
+  const channel = getAlertChannel(alert);
+  if (!vehicleId || !timestamp) return [];
+
+  const alertTime = new Date(timestamp);
+  if (Number.isNaN(alertTime.getTime())) return [];
+
+  const startIso = new Date(alertTime.getTime() - 30 * 1000).toISOString();
+  const endIso = new Date(alertTime.getTime() + 30 * 1000).toISOString();
+
+  const res = await fetch(`${videoProxyBase}/vehicles/${encodeURIComponent(vehicleId)}/videos/window`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      channel,
+      startTime: startIso,
+      endTime: endIso,
+    }),
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok || !json?.success) {
+    throw new Error(json?.message || `HTTP ${res.status}`);
+  }
+
+  const data = json?.data || {};
+  if (data?.playbackSource === "live_fallback" && data?.streamUrl) {
+    return [
+      {
+        key: `live_fallback_${vehicleId}_${channel}`,
+        label: `Alert-time Live Fallback CH${channel}`,
+        url: normalizeBackendMediaUrl(String(data.streamUrl), videoProxyBase),
+      },
+    ];
+  }
+
+  const directUrl = normalizeBackendMediaUrl(
+    String(data?.persistedVideoUrl || "").trim() ||
+      (data?.persistedVideoId ? `${videoProxyBase}/videos/${encodeURIComponent(String(data.persistedVideoId))}/file` : "") ||
+      String(data?.outputUrl || "").trim() ||
+      String(data?.playbackJobUrl || "").trim(),
+    videoProxyBase
+  );
+  if (directUrl && !/\/videos\/jobs\/JOB-LOCAL-/i.test(directUrl)) {
+    return [
+      {
+        key: `window_${vehicleId}_${channel}`,
+        label: `Alert-time Playback CH${channel}`,
+        url: directUrl,
+      },
+    ];
+  }
+
+  const jobId = String(data?.playbackJobId || "").trim();
+  if (!jobId) return [];
+
+  const resolvedUrl = await pollPlaybackJob(jobId, videoProxyBase);
+  return [
+    {
+      key: `job_${jobId}`,
+      label: `Alert-time Playback CH${channel}`,
+      url: resolvedUrl,
+    },
+  ];
+}
+
+export async function resolveAlertPlaybackVideos(alertSource: AlertPlaybackSource, videoProxyBase = DEFAULT_VIDEO_PROXY_BASE): Promise<AlertPlaybackVideo[]> {
+  const alert = typeof alertSource === "object" && alertSource !== null ? alertSource : null;
+  const id = String(alert?.id || alertSource || "").trim();
   if (!id) return [];
+
+  if (alert) {
+    try {
+      const playbackWindowVideos = await resolvePlaybackWindowForAlert(alert, videoProxyBase);
+      if (playbackWindowVideos.length > 0) {
+        return playbackWindowVideos;
+      }
+    } catch {
+      // Fall back to alert-centric resolution below.
+    }
+  }
 
   const videosRes = await fetch(`${videoProxyBase}/alerts/${encodeURIComponent(id)}/videos?ensureMedia=true`, {
     cache: "no-store",

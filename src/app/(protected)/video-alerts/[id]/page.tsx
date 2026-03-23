@@ -313,7 +313,7 @@ export default function AlertDetailPage({ params }) {
       setLoadingEventVideos(true);
       setEventVideoError("");
       try {
-        const videos = await resolveAlertPlaybackVideos(String(selectedAlert.id));
+        const videos = await resolveAlertPlaybackVideos(selectedAlert);
         if (!cancelled) {
           setEventVideos(videos);
         }

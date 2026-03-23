@@ -316,7 +316,7 @@ export default function VideoAlertsPage() {
       const normalized = normalizeAlert(alertPayload, screenshotPayload)
       if ((normalized.videos?.length || 0) === 0) {
         try {
-          const playbackVideos = await resolveAlertPlaybackVideos(normalized.id)
+          const playbackVideos = await resolveAlertPlaybackVideos(normalized)
           if (playbackVideos.length > 0) {
             normalized.videos = playbackVideos
           } else {
