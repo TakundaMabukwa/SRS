@@ -164,14 +164,19 @@ export default function IncidentReportTemplateModal({
     setSaving(true);
     setError(null);
     try {
-      const response = await fetch(`/api/video-server/alerts/${alert.id}/resolve-with-notes`, {
+      const response = await fetch(`/api/video-server/alerts/${alert.id}/close`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          closureType: "report",
           notes: compileNotes(),
-          resolvedBy: form.reportCompiledBy || form.reportedByController || "Controller",
-          actionTaken: form.immediateActionTaken,
-          incidentReport: form,
+          actor: form.reportCompiledBy || form.reportedByController || "Controller",
+          reasonLabel: form.typeOfIncident || "Incident report filed",
+          documentType: "incident_report",
+          payload: {
+            actionTaken: form.immediateActionTaken,
+            incidentReport: form,
+          },
         }),
       });
 

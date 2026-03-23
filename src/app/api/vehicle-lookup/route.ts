@@ -5,6 +5,53 @@ export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
     const deviceId = searchParams.get('deviceId');
+    const deviceIdsRaw = searchParams.get('deviceIds');
+
+    if (deviceIdsRaw) {
+      const deviceIds = Array.from(
+        new Set(
+          deviceIdsRaw
+            .split(',')
+            .map((value) => value.trim())
+            .filter((value) => value && value !== 'undefined' && value !== 'null')
+        )
+      );
+
+      if (deviceIds.length === 0) {
+        return NextResponse.json({
+          success: false,
+          vehicles: [],
+          message: 'Invalid or missing deviceIds'
+        }, { status: 400 });
+      }
+
+      const supabase = createClient();
+      const { data, error } = await supabase
+        .from('vehiclesc')
+        .select('registration_number, fleet_number, make, model, camera_serial, camera_sim_id')
+        .in('camera_sim_id', deviceIds);
+
+      if (error) {
+        return NextResponse.json({
+          success: false,
+          vehicles: [],
+          message: error.message
+        });
+      }
+
+      const vehicles = (data || []).map((vehicle) => ({
+        deviceId: vehicle.camera_sim_id,
+        plate: vehicle.registration_number,
+        fleetNumber: vehicle.fleet_number,
+        make: vehicle.make,
+        model: vehicle.model,
+      }));
+
+      return NextResponse.json({
+        success: true,
+        vehicles
+      });
+    }
 
     if (!deviceId || deviceId === 'undefined' || deviceId === 'null') {
       return NextResponse.json({ 

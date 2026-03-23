@@ -1156,7 +1156,11 @@ function RoutingSection({ userRole, handleViewMap, setCurrentTripForNote, setNot
   const [costCenterFilter, setCostCenterFilter] = useState<string>('all')
   const ALERTS_PER_PAGE = 10
   const videoProxyBase = "/api/video-server"
-  const directVideoApiBase = (process.env.NEXT_PUBLIC_VIDEO_BASE_URL || "").replace(/\/$/, "")
+  const directVideoApiBase = (
+    process.env.NEXT_PUBLIC_VIDEO_HUB_BASE_URL ||
+    process.env.NEXT_PUBLIC_VIDEO_BASE_URL ||
+    ""
+  ).replace(/\/$/, "")
   const initialTripsLoadedRef = useRef(false)
   const groupedAlertsRef = useRef<any[]>([])
   const autoVideoRequestStateRef = useRef<Record<string, { autoRequested?: boolean; autoRequesting?: boolean; requestStartedAt?: number; error?: string }>>({})
@@ -2832,7 +2836,11 @@ export default function Dashboard() {
   >({});
   const alertMediaFetchBackoffRef = useRef<Record<string, number>>({});
   const [alertReason, setAlertReason] = useState("");
-  const videoBaseUrl = (process.env.NEXT_PUBLIC_VIDEO_BASE_URL || "").replace(/\/$/, "");
+  const videoBaseUrl = (
+    process.env.NEXT_PUBLIC_VIDEO_HUB_BASE_URL ||
+    process.env.NEXT_PUBLIC_VIDEO_BASE_URL ||
+    ""
+  ).replace(/\/$/, "");
   const videoProxyBase = "/api/video-server";
   const EVENT_VIDEO_READY_MIN_SECONDS = 25;
   const [showNCRModal, setShowNCRModal] = useState(false);
@@ -2884,6 +2892,16 @@ export default function Dashboard() {
     "Yawning Alert",
     "Optix Fatigue",
   ];
+  const ncrFormOptions = [
+    { value: "nrc-camera-covered", label: "NCR CAMERA COVERED" },
+    { value: "ncr-safety-violation", label: "NCR SAFETY VIOLATION" },
+    { value: "ncr-speeding", label: "NCR SPEEDING" },
+  ] as const;
+  const reportFormOptions = [
+    { value: "incident-report", label: "ACCIDENT REPORT" },
+    { value: "criminal-report", label: "CRIMINAL REPORT" },
+    { value: "dispatch-report", label: "DISPATCH REPORT" },
+  ] as const;
   const toFiniteNumber = (value: any): number | null => {
     if (value === null || value === undefined || value === "") return null;
     const parsed = typeof value === "number" ? value : Number(value);
@@ -6050,10 +6068,10 @@ export default function Dashboard() {
                       }
                     }}
                   >
-                    <option value="" className="text-slate-900">Select reason</option>
+                    <option value="" className="text-slate-900">SELECT REASON</option>
                     {alertReasonOptions.map((reason) => (
                       <option key={reason} value={reason} className="text-slate-900">
-                        {reason}
+                        {String(reason).toUpperCase()}
                       </option>
                     ))}
                   </select>
@@ -6090,10 +6108,12 @@ export default function Dashboard() {
                           if (formType) setShowNCRModal(true);
                         }}
                       >
-                        <option value="" className="text-slate-900">Select NCR form</option>
-                        <option value="nrc-camera-covered" className="text-slate-900">nrc-camera-covered</option>
-                        <option value="ncr-safety-violation" className="text-slate-900">ncr-safety-violation</option>
-                        <option value="ncr-speeding" className="text-slate-900">ncr-speeding</option>
+                        <option value="" className="text-slate-900">SELECT NCR FORM</option>
+                        {ncrFormOptions.map((option) => (
+                          <option key={option.value} value={option.value} className="text-slate-900">
+                            {option.label}
+                          </option>
+                        ))}
                       </select>
                       <select
                         className="h-7 min-w-[150px] rounded-md border border-white/20 bg-white/10 px-2 text-xs text-white outline-none focus:border-white/40"
@@ -6104,10 +6124,12 @@ export default function Dashboard() {
                           if (formType) setShowReportModal(true);
                         }}
                       >
-                        <option value="" className="text-slate-900">Reports</option>
-                        <option value="incident-report" className="text-slate-900">incident-report</option>
-                        <option value="criminal-report" className="text-slate-900">criminal-report</option>
-                        <option value="dispatch-report" className="text-slate-900">dispatch-report</option>
+                        <option value="" className="text-slate-900">REPORTS</option>
+                        {reportFormOptions.map((option) => (
+                          <option key={option.value} value={option.value} className="text-slate-900">
+                            {option.label}
+                          </option>
+                        ))}
                       </select>
                     </>
                   )}

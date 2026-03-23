@@ -13,6 +13,10 @@ type PlaybackVehicle = {
   earliestTime?: string | null;
   latestTime?: string | null;
   channels: number[];
+  vehicleRegistration?: string | null;
+  fleetNumber?: string | null;
+  make?: string | null;
+  model?: string | null;
 };
 
 type PlaybackClip = {
@@ -153,35 +157,90 @@ export default function PlaybackDashboardTab() {
   const [playbackState, setPlaybackState] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const [playbackError, setPlaybackError] = useState("");
   const [rangeSummary, setRangeSummary] = useState("");
+  const PLAYBACK_LIST_TIMEOUT_MS = 20000;
+  const PLAYBACK_AVAILABILITY_TIMEOUT_MS = 20000;
+
+  const vehicleDisplayLabel = useCallback((vehicle: PlaybackVehicle | null | undefined) => {
+    if (!vehicle) return "N/A";
+    return vehicle.vehicleRegistration || vehicle.fleetNumber || vehicle.vehicleId;
+  }, []);
+
+  const fetchJsonWithRetry = useCallback(async (url: string, timeoutMs: number, retries = 1) => {
+    let lastError: any = null;
+    for (let attempt = 0; attempt <= retries; attempt += 1) {
+      try {
+        const res = await fetch(url, {
+          cache: "no-store",
+          signal: AbortSignal.timeout(timeoutMs),
+        });
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok || !json?.success) {
+          throw new Error(json?.message || json?.error || `HTTP ${res.status}`);
+        }
+        return json;
+      } catch (error) {
+        lastError = error;
+        if (attempt >= retries) throw error;
+        await new Promise((resolve) => setTimeout(resolve, 800 * (attempt + 1)));
+      }
+    }
+    throw lastError || new Error("Request failed");
+  }, []);
 
   const fetchVehicles = useCallback(async () => {
-    const res = await fetch(`${videoProxyBase}/playback/vehicles?days=14&limit=500`, {
-      cache: "no-store",
-      signal: AbortSignal.timeout(8000),
-    });
-    const json = await res.json().catch(() => ({}));
-    if (!res.ok || !json?.success) {
-      throw new Error(json?.message || `HTTP ${res.status}`);
-    }
+    const json = await fetchJsonWithRetry(
+      `${videoProxyBase}/playback/vehicles?days=14&limit=500`,
+      PLAYBACK_LIST_TIMEOUT_MS,
+      1
+    );
     const rows = Array.isArray(json?.data) ? json.data : [];
-    setVehicles(rows);
-    return rows as PlaybackVehicle[];
-  }, []);
+    const deviceIds = Array.from(
+      new Set(rows.map((row: any) => String(row?.vehicleId || "").trim()).filter(Boolean))
+    );
+
+    let vehicleDetails = new Map<string, any>();
+    if (deviceIds.length > 0) {
+      try {
+        const lookupRes = await fetch(
+          `/api/vehicle-lookup?deviceIds=${encodeURIComponent(deviceIds.join(","))}`,
+          {
+            cache: "no-store",
+            signal: AbortSignal.timeout(PLAYBACK_LIST_TIMEOUT_MS),
+          }
+        );
+        const lookupJson = await lookupRes.json().catch(() => ({}));
+        const lookupRows = Array.isArray(lookupJson?.vehicles) ? lookupJson.vehicles : [];
+        vehicleDetails = new Map(
+          lookupRows.map((row: any) => [String(row?.deviceId || "").trim(), row])
+        );
+      } catch (error) {
+        console.warn("Playback vehicle registration lookup failed:", error);
+      }
+    }
+
+    const enrichedRows = rows.map((row: any) => {
+      const vehicleId = String(row?.vehicleId || "").trim();
+      const details = vehicleDetails.get(vehicleId);
+      return {
+        ...row,
+        vehicleRegistration: details?.plate || null,
+        fleetNumber: details?.fleetNumber || null,
+        make: details?.make || null,
+        model: details?.model || null,
+      };
+    });
+    setVehicles(enrichedRows);
+    return enrichedRows as PlaybackVehicle[];
+  }, [fetchJsonWithRetry]);
 
   const fetchAvailability = useCallback(async (vehicleId: string, date: string) => {
     setAvailabilityLoading(true);
     try {
-      const res = await fetch(
+      const json = await fetchJsonWithRetry(
         `${videoProxyBase}/vehicles/${encodeURIComponent(vehicleId)}/videos/availability?date=${encodeURIComponent(date)}`,
-        {
-          cache: "no-store",
-          signal: AbortSignal.timeout(8000),
-        }
+        PLAYBACK_AVAILABILITY_TIMEOUT_MS,
+        1
       );
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok || !json?.success) {
-        throw new Error(json?.message || `HTTP ${res.status}`);
-      }
       const channels = Array.isArray(json?.data?.channels) ? json.data.channels : [];
       setAvailability(channels);
       if (channels.length > 0) {
@@ -199,7 +258,7 @@ export default function PlaybackDashboardTab() {
     } finally {
       setAvailabilityLoading(false);
     }
-  }, []);
+  }, [fetchJsonWithRetry]);
 
   const refreshAll = useCallback(async () => {
     setRefreshing(true);
@@ -231,7 +290,17 @@ export default function PlaybackDashboardTab() {
   const filteredVehicles = useMemo(() => {
     const needle = searchQuery.trim().toLowerCase();
     if (!needle) return vehicles;
-    return vehicles.filter((vehicle) => String(vehicle.vehicleId || "").toLowerCase().includes(needle));
+    return vehicles.filter((vehicle) =>
+      [
+        vehicle.vehicleId,
+        vehicle.vehicleRegistration,
+        vehicle.fleetNumber,
+        vehicle.make,
+        vehicle.model,
+      ]
+        .map((value) => String(value || "").toLowerCase())
+        .some((value) => value.includes(needle))
+    );
   }, [searchQuery, vehicles]);
 
   const selectedChannelAvailability = useMemo(
@@ -520,8 +589,15 @@ export default function PlaybackDashboardTab() {
                     return (
                       <tr key={vehicle.vehicleId} className={`border-t border-slate-100 ${selected ? "bg-cyan-50" : "bg-white"}`}>
                         <td className="px-3 py-3 align-top">
-                          <div className="font-medium text-slate-900">{vehicle.vehicleId}</div>
-                          <div className="text-xs text-slate-500">{vehicle.clipCount} clip(s)</div>
+                          <div className="font-medium text-slate-900">{vehicleDisplayLabel(vehicle)}</div>
+                          {vehicle.vehicleRegistration || vehicle.fleetNumber ? (
+                            <>
+                              <div className="text-xs text-slate-500">{vehicle.vehicleId}</div>
+                              <div className="text-xs text-slate-500">{vehicle.clipCount} clip(s)</div>
+                            </>
+                          ) : (
+                            <div className="text-xs text-slate-500">{vehicle.clipCount} clip(s)</div>
+                          )}
                         </td>
                         <td className="px-3 py-3 align-top text-right">
                           <Button
@@ -559,8 +635,11 @@ export default function PlaybackDashboardTab() {
             <div className="space-y-4">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
-                  <h3 className="text-lg font-semibold text-slate-900">{selectedVehicle.vehicleId}</h3>
+                  <h3 className="text-lg font-semibold text-slate-900">{vehicleDisplayLabel(selectedVehicle)}</h3>
                   <p className="text-sm text-slate-600">Choose the day, channel, and time window. Quick picks below use real stored coverage.</p>
+                  {(selectedVehicle.vehicleRegistration || selectedVehicle.fleetNumber) ? (
+                    <p className="text-xs text-slate-500">{selectedVehicle.vehicleId}</p>
+                  ) : null}
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
                   <Badge className="bg-slate-100 text-slate-700 hover:bg-slate-100">{selectedVehicle.clipCount} clip(s)</Badge>
@@ -699,7 +778,7 @@ export default function PlaybackDashboardTab() {
                         <p className="text-sm font-semibold text-white">Now Playing</p>
                         <p className="text-xs text-slate-300">
                           {playbackItems.length > 0
-                            ? `${selectedVehicle.vehicleId} ${playBothChannels ? "dual-channel playback" : `CH${selectedChannel} playback`}`
+                            ? `${vehicleDisplayLabel(selectedVehicle)} ${playBothChannels ? "dual-channel playback" : `CH${selectedChannel} playback`}`
                             : "Choose a range and play stored footage."}
                         </p>
                         {rangeSummary ? <p className="text-[11px] text-cyan-200/80">{rangeSummary}</p> : null}
@@ -707,7 +786,7 @@ export default function PlaybackDashboardTab() {
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
                       <Badge className="border border-slate-700 bg-slate-900 text-slate-200 hover:bg-slate-900">
-                        {selectedVehicle.vehicleId}
+                        {vehicleDisplayLabel(selectedVehicle)}
                       </Badge>
                       {playBothChannels && playbackItems.length > 1 ? (
                         <Badge className="bg-cyan-500/15 text-cyan-200 hover:bg-cyan-500/15">

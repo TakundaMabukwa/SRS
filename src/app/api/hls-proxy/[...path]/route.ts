@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { getListenerBaseUrl } from '@/lib/backend-hubs';
 
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ path: string[] }> }
 ) {
   const { path } = await params;
-  const videoBaseUrl = process.env.NEXT_PUBLIC_VIDEO_BASE_URL || 'http://164.90.182.2:3000';
+  const videoBaseUrl = getListenerBaseUrl();
   
   // path will be like: ["221083633486", "1", "playlist.m3u8"]
   // We need to convert to: /api/stream/221083633486/1/playlist.m3u8

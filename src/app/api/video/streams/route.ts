@@ -1,15 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { getListenerBaseUrl } from '@/lib/backend-hubs';
 
 export async function GET(request: NextRequest) {
   try {
-    const videoServerUrl = process.env.NEXT_PUBLIC_VIDEO_SERVER_BASE_URL;
-
-    if (!videoServerUrl) {
-      return NextResponse.json(
-        { error: 'Video server URL not configured' },
-        { status: 500 }
-      );
-    }
+    const videoServerUrl = getListenerBaseUrl();
 
     const response = await fetch(`${videoServerUrl}/api/stream/network`, {
       method: 'GET',
@@ -29,14 +23,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const videoServerUrl = process.env.NEXT_PUBLIC_VIDEO_SERVER_BASE_URL;
-
-    if (!videoServerUrl) {
-      return NextResponse.json(
-        { error: 'Video server URL not configured' },
-        { status: 500 }
-      );
-    }
+    const videoServerUrl = getListenerBaseUrl();
 
     const response = await fetch(`${videoServerUrl}/api/stream/vehicles/streams`, {
       method: 'POST',

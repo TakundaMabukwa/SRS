@@ -8,8 +8,12 @@ interface WebSocketMessage {
   count?: number
 }
 
-const VIDEO_BASE_URL = process.env.NEXT_PUBLIC_VIDEO_BASE_URL
-const VIDEO_WS_URL = process.env.NEXT_PUBLIC_VIDEO_WS_URL
+const ALERT_HUB_BASE_URL =
+  process.env.NEXT_PUBLIC_ALERT_HUB_BASE_URL ||
+  process.env.NEXT_PUBLIC_VIDEO_BASE_URL
+const ALERT_HUB_WS_URL =
+  process.env.NEXT_PUBLIC_ALERT_HUB_WS_URL ||
+  process.env.NEXT_PUBLIC_VIDEO_WS_URL
 
 function getWsCandidates() {
   const out: string[] = []
@@ -23,7 +27,7 @@ function getWsCandidates() {
     out.push(v)
   }
 
-  const rawWs = (VIDEO_WS_URL || '').trim()
+  const rawWs = (ALERT_HUB_WS_URL || '').trim()
   if (rawWs) {
     try {
       const parsed = new URL(rawWs.replace(/^ws:\/\//i, 'http://').replace(/^wss:\/\//i, 'https://'))
@@ -33,8 +37,8 @@ function getWsCandidates() {
     }
   }
 
-  if (VIDEO_BASE_URL) {
-    const cleaned = VIDEO_BASE_URL
+  if (ALERT_HUB_BASE_URL) {
+    const cleaned = ALERT_HUB_BASE_URL
       .replace(/\/api\/video-server\/?$/i, '')
       .replace(/\/api\/?$/i, '')
       .replace(/\/+$/, '')
@@ -52,7 +56,7 @@ function getWsCandidates() {
     }
   }
 
-  if (typeof window !== 'undefined' && !rawWs && !VIDEO_BASE_URL) {
+  if (typeof window !== 'undefined' && !rawWs && !ALERT_HUB_BASE_URL) {
     const hostname = window.location.hostname
     const isLocal = hostname === 'localhost' || hostname === '127.0.0.1'
     if (!isLocal) {
@@ -71,7 +75,7 @@ export function useVideoWebSocket(onMessage?: (data: WebSocketMessage) => void) 
   useEffect(() => {
     const urls = getWsCandidates()
     if (!urls.length) {
-      console.error('NEXT_PUBLIC_VIDEO_BASE_URL is not set. WebSocket disabled.')
+      console.error('Alert hub base URL is not set. WebSocket disabled.')
       return
     }
 

@@ -30,12 +30,13 @@ export default function CloseAlertModal({ isOpen, onClose, alertId, onSuccess }:
     setError('')
 
     try {
-      const response = await fetch(`/api/video-server/alerts/${alertId}/resolve-with-notes`, {
+      const response = await fetch(`/api/video-server/alerts/${alertId}/close`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          closureType: 'resolved',
           notes: notes.trim(),
-          resolvedBy: 'Current User'
+          actor: 'Current User'
         })
       })
 

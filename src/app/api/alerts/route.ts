@@ -1,8 +1,9 @@
 import { NextResponse } from 'next/server';
+import { getAlertHubBaseUrl } from '@/lib/backend-hubs';
 
 export async function GET() {
   try {
-    const baseUrl = process.env.NEXT_PUBLIC_VIDEO_BASE_URL || 'http://localhost:3000'
+    const baseUrl = getAlertHubBaseUrl()
     const response = await fetch(`${baseUrl}/api/alerts`);
     const data = await response.json();
     return NextResponse.json(data);

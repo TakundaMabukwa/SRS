@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { getListenerBaseUrl } from '@/lib/backend-hubs';
 
 export async function POST(req: NextRequest) {
-  const videoBaseUrl = process.env.NEXT_PUBLIC_VIDEO_BASE_URL || 'http://164.90.182.2:3000';
+  const videoBaseUrl = getListenerBaseUrl();
   
   try {
     const body = await req.json();

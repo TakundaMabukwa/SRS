@@ -65,6 +65,7 @@ export default function VideoAlertsDashboardTab({
   const normalizeAlert = useCallback((incoming: any) => {
     if (!incoming || typeof incoming !== "object") return null;
 
+    const vehicleMeta = incoming?.metadata?.vehicle || incoming?.vehicle || {};
     const id = String(incoming.id || incoming.alert_id || incoming.alertId || "").trim();
     const title = String(incoming.title || incoming.type || incoming.alert_type || "Alert").trim();
     const severity = String(incoming.severity || incoming.priority || "low").toLowerCase();
@@ -73,6 +74,9 @@ export default function VideoAlertsDashboardTab({
         incoming.vehicle_reg ||
         incoming.registration ||
         incoming.fleet_number ||
+        vehicleMeta.plateNumber ||
+        vehicleMeta.terminalId ||
+        vehicleMeta.vehicleId ||
         incoming.device_id ||
         incoming.vehicleId ||
         incoming.vehicle_id ||
@@ -88,7 +92,7 @@ export default function VideoAlertsDashboardTab({
       priority: severity,
       status: String(incoming.status || "new").toLowerCase(),
       vehicle_registration: vehicle,
-      driver_name: incoming.driver_name || incoming.driver || "Unknown",
+      driver_name: incoming.driver_name || incoming.driver || incoming?.metadata?.driverName || "Unknown",
       timestamp: incoming.timestamp || incoming.created_at || incoming.alert_timestamp || new Date().toISOString(),
     };
   }, []);

@@ -27,7 +27,10 @@ import { cn } from '@/lib/utils'
 
 export default function VideoAlertsPage() {
   const router = useRouter()
-  const videoBaseUrl = process.env.NEXT_PUBLIC_VIDEO_BASE_URL || 'configured video server'
+  const alertHubBaseUrl =
+    process.env.NEXT_PUBLIC_ALERT_HUB_BASE_URL ||
+    process.env.NEXT_PUBLIC_VIDEO_BASE_URL ||
+    'configured alert hub'
   const [alerts, setAlerts] = useState({ critical: [], high: [], medium: [], low: [] })
   const [screenshots, setScreenshots] = useState([])
   const [selectedAlert, setSelectedAlert] = useState(null)
@@ -41,6 +44,128 @@ export default function VideoAlertsPage() {
   const toNum = (value) => {
     const n = Number(value)
     return Number.isFinite(n) ? n : null
+  }
+
+  const toIsoString = (value) => {
+    const d = value instanceof Date ? value : new Date(value)
+    return Number.isNaN(d.getTime()) ? null : d.toISOString()
+  }
+
+  const normalizeVideoUrl = (url) => {
+    const clean = String(url || '').trim()
+    if (!clean) return ''
+    if (/^https?:\/\//i.test(clean)) return clean
+    if (clean.startsWith('/')) return clean
+    return `/${clean.replace(/^\/+/, '')}`
+  }
+
+  const findAlertVehicleId = (alert) =>
+    String(
+      alert?.vehicleId ||
+      alert?.device_id ||
+      alert?.metadata?.vehicle?.vehicleId ||
+      alert?.metadata?.vehicle?.terminalPhone ||
+      ''
+    ).trim()
+
+  const findAlertChannel = (alert) => {
+    const candidates = [
+      alert?.channel,
+      alert?.metadata?.channel,
+      alert?.metadata?.resourceChannel,
+      alert?.metadata?.locationFix?.channel
+    ]
+    for (const candidate of candidates) {
+      const value = Number(candidate)
+      if (Number.isFinite(value) && value > 0) return value
+    }
+    return 1
+  }
+
+  const resolvePlaybackWindowVideo = async (alert) => {
+    const vehicleId = findAlertVehicleId(alert)
+    const channel = findAlertChannel(alert)
+    const alertId = String(alert?.id || '').trim()
+    const ts = toIsoString(alert?.timestamp || alert?.metadata?.locationFix?.timestamp)
+    if (!vehicleId || !ts) return null
+
+    const alertTime = new Date(ts)
+    const startIso = new Date(alertTime.getTime() - 30 * 1000).toISOString()
+    const endIso = new Date(alertTime.getTime() + 30 * 1000).toISOString()
+
+    const createRes = await fetch(`/api/video-server/vehicles/${encodeURIComponent(vehicleId)}/videos/window`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        channel,
+        startTime: startIso,
+        endTime: endIso
+      })
+    })
+
+    const createJson = await createRes.json().catch(() => ({}))
+    if (!createRes.ok || !createJson?.success) return null
+
+    const data = createJson?.data || {}
+    if (data?.streamUrl) {
+      return {
+        key: 'alert_window_live',
+        label: 'Alert Window (Live Fallback)',
+        url: normalizeVideoUrl(data.streamUrl)
+      }
+    }
+
+    const jobId = String(data?.playbackJobId || '').trim()
+    if (!jobId) return null
+
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, attempt === 0 ? 800 : 1500))
+      const statusRes = await fetch(`/api/video-server/videos/jobs/${encodeURIComponent(jobId)}`, {
+        cache: 'no-store'
+      })
+      const statusJson = await statusRes.json().catch(() => ({}))
+      const job = statusJson?.data || {}
+      if (job?.status === 'completed') {
+        const url = normalizeVideoUrl(
+          String(job?.persistedVideoUrl || '').trim() ||
+          (job?.persistedVideoId ? `/api/video-server/videos/${encodeURIComponent(String(job.persistedVideoId))}/file` : '') ||
+          String(job?.outputUrl || '').trim() ||
+          `/api/video-server/videos/jobs/${encodeURIComponent(jobId)}/file`
+        )
+        if (!url) return null
+        return {
+          key: 'alert_window',
+          label: 'Alert Window (30s before + 30s after)',
+          url
+        }
+      }
+      if (job?.status === 'failed') return null
+    }
+
+    if (!alertId) return null
+
+    try {
+      const cameraRes = await fetch(`/api/video-server/alerts/${encodeURIComponent(alertId)}/request-report-video`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          lookbackSeconds: 30,
+          forwardSeconds: 30
+        })
+      })
+      const cameraJson = await cameraRes.json().catch(() => ({}))
+      if (cameraRes.ok && cameraJson?.success) {
+        return {
+          key: 'camera_request',
+          label: 'CAMERA REQUEST',
+          url: `/api/video-server/alerts/${encodeURIComponent(alertId)}/video/camera`
+        }
+      }
+    } catch {
+      // fall through
+    }
+
+    return null
   }
 
   const normalizeScreenshots = (alert, mediaPayload) => {
@@ -89,6 +214,11 @@ export default function VideoAlertsPage() {
     add('Post-Incident Video', clips.postStorageUrl || clips.post, 'post')
     add('Camera Pre Video', clips.cameraPreVideo, 'camera_pre')
     add('Camera Post Video', clips.cameraPostVideo, 'camera_post')
+    add('Pre-Incident Video', alert?.preIncidentVideoUrl || mediaPayload?.preIncidentVideoUrl || mediaPayload?.clipUrls?.pre, 'pre_fallback')
+    add('Post-Incident Video', alert?.postIncidentVideoUrl || mediaPayload?.postIncidentVideoUrl || mediaPayload?.clipUrls?.post, 'post_fallback')
+    add('Camera Video', alert?.cameraVideoUrl || mediaPayload?.cameraVideoUrl || mediaPayload?.clipUrls?.camera, 'camera_fallback')
+    add('Raw Pre Video', alert?.preIncidentRawUrl || mediaPayload?.clipUrls?.preRaw, 'pre_raw')
+    add('Raw Post Video', alert?.postIncidentRawUrl || mediaPayload?.clipUrls?.postRaw, 'post_raw')
 
     const fromMedia = Array.isArray(mediaPayload?.videos) ? mediaPayload.videos : []
     fromMedia.forEach((v, idx) => {
@@ -109,6 +239,7 @@ export default function VideoAlertsPage() {
 
   const normalizeAlert = (raw, mediaPayload = null) => {
     const metadata = raw?.metadata || {}
+    const vehicleMeta = metadata?.vehicle || raw?.vehicle || {}
     const lat = toNum(raw?.location?.latitude ?? raw?.latitude ?? metadata?.locationFix?.latitude)
     const lon = toNum(raw?.location?.longitude ?? raw?.longitude ?? metadata?.locationFix?.longitude)
     const location = {
@@ -123,9 +254,14 @@ export default function VideoAlertsPage() {
       alert_type: raw?.alert_type || raw?.type || metadata?.primaryAlertType || 'Alert',
       priority: raw?.priority || 'low',
       status: raw?.status || 'new',
-      device_id: raw?.device_id || raw?.vehicleId || raw?.vehicle?.terminalPhone || raw?.vehicle?.vehicleId,
-      vehicleId: raw?.vehicleId || raw?.device_id || raw?.vehicle?.vehicleId,
-      vehicle_registration: raw?.vehicle_registration || raw?.vehicle?.plateNumber || null,
+      device_id: raw?.device_id || raw?.vehicleId || vehicleMeta?.terminalPhone || vehicleMeta?.vehicleId,
+      vehicleId: raw?.vehicleId || raw?.device_id || vehicleMeta?.vehicleId || vehicleMeta?.terminalPhone,
+      vehicle_registration:
+        raw?.vehicle_registration ||
+        vehicleMeta?.plateNumber ||
+        vehicleMeta?.terminalId ||
+        vehicleMeta?.vehicleId ||
+        null,
       driver_name: raw?.driver_name || null,
       location,
       metadata,
@@ -138,24 +274,40 @@ export default function VideoAlertsPage() {
     if (!alert?.id) return
     setLoadingAlertDetails(true)
     try {
-      const [alertRes, mediaRes] = await Promise.all([
-        fetch(`/api/video-server/alerts/${alert.id}`),
-        fetch(`/api/video-server/alerts/${alert.id}/media`)
+      const loadScreenshots = async () => {
+        const res = await fetch(`/api/video-server/alerts/${alert.id}/screenshots?includeFallback=true`, {
+          cache: 'no-store',
+          signal: AbortSignal.timeout(8000)
+        })
+        if (!res.ok) return null
+        const data = await res.json()
+        const screenshots =
+          (Array.isArray(data?.screenshots) ? data.screenshots : null) ||
+          (Array.isArray(data?.data?.screenshots) ? data.data.screenshots : null) ||
+          []
+        return { screenshots }
+      }
+
+      const [alertRes, screenshotPayload] = await Promise.all([
+        fetch(`/api/video-server/alerts/${alert.id}?ensureMedia=true`, {
+          cache: 'no-store',
+          signal: AbortSignal.timeout(8000)
+        }),
+        loadScreenshots()
       ])
 
       let alertPayload = alert
-      let mediaPayload = null
 
       if (alertRes.ok) {
         const data = await alertRes.json()
         alertPayload = data?.alert || data?.data || alert
       }
-      if (mediaRes.ok) {
-        const data = await mediaRes.json()
-        mediaPayload = data?.data || null
-      }
 
-      setSelectedAlert(normalizeAlert(alertPayload, mediaPayload))
+      const normalized = normalizeAlert(alertPayload, screenshotPayload)
+      const playbackWindowVideo = await resolvePlaybackWindowVideo(normalized)
+      normalized.videos = playbackWindowVideo ? [playbackWindowVideo] : []
+
+      setSelectedAlert(normalized)
     } catch (err) {
       console.error('Failed to load alert details:', err)
       setSelectedAlert(normalizeAlert(alert))
@@ -236,7 +388,7 @@ export default function VideoAlertsPage() {
         <Card className="p-8 max-w-md text-center">
           <AlertTriangle className="w-16 h-16 mx-auto mb-4 text-red-500" />
           <h2 className="text-2xl font-bold mb-2">Video Server Unavailable</h2>
-          <p className="text-gray-600 mb-6">Unable to connect to the video alert server at {videoBaseUrl}</p>
+          <p className="text-gray-600 mb-6">Unable to connect to the video alert server at {alertHubBaseUrl}</p>
           <Button onClick={() => window.location.reload()}>
             <RefreshCw className="w-4 h-4 mr-2" />
             Retry Connection
@@ -261,10 +413,10 @@ export default function VideoAlertsPage() {
           setLoading(false)
           return
         }
-        await fetch(`/api/video-server/alerts/${alertId}/resolve-with-notes`, {
+        await fetch(`/api/video-server/alerts/${alertId}/close`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ notes, resolvedBy: currentUser.id })
+          body: JSON.stringify({ closureType: 'resolved', notes, actor: currentUser.id })
         })
         setSelectedAlert(null)
         setNotes('')
@@ -407,7 +559,7 @@ export default function VideoAlertsPage() {
                           <Badge variant="outline" className="text-xs">{alert.status}</Badge>
                         </div>
                         <div className="text-sm text-gray-600">
-                          <p>Device: {alert.device_id || alert.vehicleId}</p>
+                          <p>Vehicle: {alert.vehicle_registration || alert.device_id || alert.vehicleId}</p>
                           {Number.isFinite(alert.location?.latitude) && Number.isFinite(alert.location?.longitude) && (
                             <p className="text-xs text-gray-500">
                               {alert.location.latitude.toFixed(6)}, {alert.location.longitude.toFixed(6)}

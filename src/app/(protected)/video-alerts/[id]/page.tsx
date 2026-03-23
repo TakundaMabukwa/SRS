@@ -51,6 +51,110 @@ export default function AlertDetailPage({ params }) {
   const [addingNote, setAddingNote] = useState(false);
   const [showCloseModal, setShowCloseModal] = useState(false);
   const [currentUser] = useState({ id: "user-1", name: "Current User", role: "Operator" });
+  const [resolvedVideos, setResolvedVideos] = useState([]);
+  const [videoLoading, setVideoLoading] = useState(false);
+
+  const normalizeVideoUrl = (url) => {
+    const clean = String(url || "").trim();
+    if (!clean) return "";
+    if (/^https?:\/\//i.test(clean)) return clean;
+    if (clean.startsWith("/")) return clean;
+    return `/${clean.replace(/^\/+/, "")}`;
+  };
+
+  const resolveStoredWindowVideo = async (alert) => {
+    const vehicleId = String(
+      alert?.vehicleId ||
+      alert?.device_id ||
+      alert?.metadata?.vehicle?.vehicleId ||
+      alert?.metadata?.vehicle?.terminalPhone ||
+      ""
+    ).trim();
+    const alertIdValue = String(alert?.id || "").trim();
+    const timestamp = alert?.timestamp || alert?.metadata?.locationFix?.timestamp;
+    const channel = Number(
+      alert?.channel ||
+      alert?.metadata?.channel ||
+      alert?.metadata?.resourceChannel ||
+      1
+    );
+    if (!vehicleId || !timestamp) return null;
+
+    const alertTime = new Date(timestamp);
+    if (Number.isNaN(alertTime.getTime())) return null;
+
+    const startTime = new Date(alertTime.getTime() - 30 * 1000).toISOString();
+    const endTime = new Date(alertTime.getTime() + 30 * 1000).toISOString();
+
+    const createRes = await fetch(`/api/video-server/vehicles/${encodeURIComponent(vehicleId)}/videos/window`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ channel, startTime, endTime }),
+    });
+    const createJson = await createRes.json().catch(() => ({}));
+    if (!createRes.ok || !createJson?.success) return null;
+
+    const data = createJson?.data || {};
+    if (data?.streamUrl) {
+      return {
+        key: "alert_window_live",
+        label: "Alert Window (Live Fallback)",
+        url: normalizeVideoUrl(data.streamUrl),
+      };
+    }
+
+    const jobId = String(data?.playbackJobId || "").trim();
+    if (!jobId) return null;
+
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, attempt === 0 ? 800 : 1500));
+      const statusRes = await fetch(`/api/video-server/videos/jobs/${encodeURIComponent(jobId)}`, {
+        cache: "no-store",
+      });
+      const statusJson = await statusRes.json().catch(() => ({}));
+      const job = statusJson?.data || {};
+      if (job?.status === "completed") {
+        const url = normalizeVideoUrl(
+          String(job?.persistedVideoUrl || "").trim() ||
+          (job?.persistedVideoId ? `/api/video-server/videos/${encodeURIComponent(String(job.persistedVideoId))}/file` : "") ||
+          String(job?.outputUrl || "").trim() ||
+          `/api/video-server/videos/jobs/${encodeURIComponent(jobId)}/file`
+        );
+        if (!url) return null;
+        return {
+          key: "alert_window",
+          label: "Alert Window (30s before + 30s after)",
+          url,
+        };
+      }
+      if (job?.status === "failed") return null;
+    }
+
+    if (!alertIdValue) return null;
+
+    try {
+      const cameraRes = await fetch(`/api/video-server/alerts/${encodeURIComponent(alertIdValue)}/request-report-video`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          lookbackSeconds: 30,
+          forwardSeconds: 30,
+        }),
+      });
+      const cameraJson = await cameraRes.json().catch(() => ({}));
+      if (cameraRes.ok && cameraJson?.success) {
+        return {
+          key: "camera_request",
+          label: "CAMERA REQUEST",
+          url: `/api/video-server/alerts/${encodeURIComponent(alertIdValue)}/video/camera`,
+        };
+      }
+    } catch {
+      // fall through
+    }
+
+    return null;
+  };
 
   useEffect(() => {
     if (alertId && alerts.length > 0) {
@@ -71,6 +175,32 @@ export default function AlertDetailPage({ params }) {
     
     return () => clearInterval(interval);
   }, [alertId, selectedAlert]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadVideos = async () => {
+      if (!selectedAlert) {
+        setResolvedVideos([]);
+        return;
+      }
+
+      setVideoLoading(true);
+      try {
+        const fallbackVideo = await resolveStoredWindowVideo(selectedAlert);
+        if (!cancelled) {
+          setResolvedVideos(fallbackVideo ? [fallbackVideo] : []);
+        }
+      } finally {
+        if (!cancelled) setVideoLoading(false);
+      }
+    };
+
+    void loadVideos();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedAlert]);
 
   const handleAddNote = async () => {
     if (!newNote.trim()) return;
@@ -271,35 +401,37 @@ export default function AlertDetailPage({ params }) {
                     Event Video (SD Card)
                   </h3>
                   <div className="space-y-4">
-                    {selectedAlert.metadata?.videoPath ? (
-                      <Card className="p-4">
-                        <video controls className="w-full rounded mb-3">
-                          <source src={`/api/video-server/alerts/${alertId}/video?type=camera`} type="video/mp4" />
-                          Your browser does not support video playback.
-                        </video>
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-3">
-                            <Video className="w-5 h-5 text-slate-600" />
-                            <div>
-                              <p className="font-medium text-slate-900">Camera SD Card Recording</p>
-                              <p className="text-sm text-slate-600">Event video from vehicle camera</p>
+                    {resolvedVideos.length > 0 ? (
+                      resolvedVideos.map((video) => (
+                        <Card key={video.key} className="p-4">
+                          <video controls className="w-full rounded mb-3">
+                            <source src={video.url} type="video/mp4" />
+                            Your browser does not support video playback.
+                          </video>
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-3">
+                              <Video className="w-5 h-5 text-slate-600" />
+                              <div>
+                                <p className="font-medium text-slate-900">{video.label}</p>
+                                <p className="text-sm text-slate-600">Playback resolved from alert media or stored video window</p>
+                              </div>
                             </div>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => window.open(video.url, "_blank")}
+                            >
+                              <Download className="w-4 h-4 mr-2" />
+                              Download
+                            </Button>
                           </div>
-                          <Button 
-                            variant="outline" 
-                            size="sm"
-                            onClick={() => window.open(`/api/video-server/alerts/${alertId}/video?type=camera&download=true`, '_blank')}
-                          >
-                            <Download className="w-4 h-4 mr-2" />
-                            Download
-                          </Button>
-                        </div>
-                      </Card>
+                        </Card>
+                      ))
                     ) : (
                       <div className="text-center py-12 text-slate-500">
                         <Video className="w-12 h-12 mx-auto mb-3 opacity-20" />
-                        <p>Video is being retrieved from camera SD card...</p>
-                        <p className="text-sm mt-2">This may take a few moments</p>
+                        <p>{videoLoading ? "Resolving playback from stored video..." : "No event video is available yet for this alert."}</p>
+                        <p className="text-sm mt-2">We fall back to vehicle + channel + alert time window when direct alert evidence is missing.</p>
                       </div>
                     )}
                   </div>

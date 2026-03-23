@@ -1,15 +1,5 @@
 import { NextRequest } from 'next/server'
-
-const RAW_VIDEO_SERVER_URL =
-  process.env.VIDEO_BASE_URL ||
-  process.env.NEXT_PUBLIC_VIDEO_BASE_URL ||
-  'http://localhost:3000'
-
-const VIDEO_SERVER_URL = (() => {
-  const trimmed = RAW_VIDEO_SERVER_URL.trim().replace(/\/+$/, '')
-  // Allow env values with or without /api suffix.
-  return trimmed.replace(/\/api$/i, '')
-})()
+import { resolveVideoServerProxyBase } from '@/lib/backend-hubs'
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
 
@@ -20,7 +10,8 @@ export async function GET(
   const { path: pathArray } = await params
   const path = pathArray.join('/')
   const searchParams = request.nextUrl.searchParams.toString()
-  const url = `${VIDEO_SERVER_URL}/api/${path}${searchParams ? `?${searchParams}` : ''}`
+  const target = resolveVideoServerProxyBase(pathArray)
+  const url = `${target.baseUrl}/api/${path}${searchParams ? `?${searchParams}` : ''}`
 
   try {
     const forwardedHeaders: Record<string, string> = {}
@@ -70,8 +61,15 @@ export async function GET(
       headers: passHeaders
     })
   } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
     return Response.json(
-      { success: false, error: 'Failed to fetch from video server' },
+      {
+        success: false,
+        message: `Failed to fetch from ${target.name}`,
+        error: message,
+        target: target.name,
+        targetUrl: url
+      },
       { status: 500 }
     )
   }
@@ -83,7 +81,8 @@ export async function POST(
 ) {
   const { path: pathArray } = await params
   const path = pathArray.join('/')
-  const url = `${VIDEO_SERVER_URL}/api/${path}`
+  const target = resolveVideoServerProxyBase(pathArray)
+  const url = `${target.baseUrl}/api/${path}`
   const body = await request.json()
 
   try {
@@ -98,8 +97,15 @@ export async function POST(
     const data = await response.json()
     return Response.json(data, { status: response.status })
   } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
     return Response.json(
-      { success: false, error: 'Failed to post to video server' },
+      {
+        success: false,
+        message: `Failed to post to ${target.name}`,
+        error: message,
+        target: target.name,
+        targetUrl: url
+      },
       { status: 500 }
     )
   }
