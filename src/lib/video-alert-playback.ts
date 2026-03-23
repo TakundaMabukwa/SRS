@@ -8,6 +8,13 @@ export type AlertPlaybackVideo = {
 
 const DEFAULT_VIDEO_PROXY_BASE = "/api/video-server";
 
+function timeoutSignal(timeoutMs: number) {
+  if (typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function") {
+    return AbortSignal.timeout(timeoutMs);
+  }
+  return undefined;
+}
+
 export function normalizeBackendMediaUrl(url: string, videoProxyBase = DEFAULT_VIDEO_PROXY_BASE) {
   const value = String(url || "").trim();
   if (!value) return "";
@@ -70,7 +77,7 @@ async function pollPlaybackJob(jobId: string, videoProxyBase = DEFAULT_VIDEO_PRO
     await new Promise((resolve) => setTimeout(resolve, attempt === 0 ? 500 : 1500));
     const statusRes = await fetch(`${videoProxyBase}/videos/jobs/${encodeURIComponent(jobId)}`, {
       cache: "no-store",
-      signal: AbortSignal.timeout(5000),
+      signal: timeoutSignal(5000),
     });
     const statusJson = await statusRes.json().catch(() => ({}));
     const job = statusJson?.data || {};
@@ -96,7 +103,7 @@ export async function resolveAlertPlaybackVideos(alertId: string, videoProxyBase
 
   const videosRes = await fetch(`${videoProxyBase}/alerts/${encodeURIComponent(id)}/videos?ensureMedia=true`, {
     cache: "no-store",
-    signal: AbortSignal.timeout(7000),
+    signal: timeoutSignal(7000),
   });
   const videosJson = videosRes.ok ? await videosRes.json().catch(() => ({})) : {};
   const videosPayload = videosJson?.data || videosJson || {};

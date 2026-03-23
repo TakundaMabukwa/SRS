@@ -67,6 +67,11 @@ export default function AlertDetailPage({ params }) {
     return `/${clean.replace(/^\/+/, "")}`;
   };
 
+  const safeFormatDate = (value, pattern, fallback = "N/A") => {
+    const date = value instanceof Date ? value : new Date(value);
+    return Number.isNaN(date.getTime()) ? fallback : format(date, pattern);
+  };
+
   const normalizeScreenshotUrl = (url) => {
     const clean = String(url || "").trim();
     if (!clean) return "";
@@ -421,7 +426,7 @@ export default function AlertDetailPage({ params }) {
                   )}
                 </div>
                 <p className="text-sm text-slate-600">
-                  Alert ID: {selectedAlert.id} • {format(new Date(selectedAlert.timestamp), "PPpp")}
+                  Alert ID: {selectedAlert.id} • {safeFormatDate(selectedAlertDisplayTimestamp || selectedAlert.timestamp, "PPpp")}
                 </p>
               </div>
             </div>
@@ -501,7 +506,7 @@ export default function AlertDetailPage({ params }) {
                               {screenshot.camera_name}
                             </div>
                             <div className="absolute bottom-2 right-2 bg-black/80 text-white px-3 py-1 rounded text-xs">
-                              {format(new Date(screenshot.timestamp), "HH:mm:ss")}
+                              {safeFormatDate(screenshot.timestamp, "HH:mm:ss")}
                             </div>
                           </div>
                           <div className="p-2 border-t flex justify-between items-center">
@@ -610,7 +615,7 @@ export default function AlertDetailPage({ params }) {
                             </div>
                             <p className="text-sm text-slate-600">{entry.details}</p>
                             <p className="text-xs text-slate-400 mt-1">
-                              {format(new Date(entry.timestamp), "PPpp")}
+                              {safeFormatDate(entry.timestamp, "PPpp")}
                             </p>
                           </div>
                         </div>
@@ -677,7 +682,7 @@ export default function AlertDetailPage({ params }) {
                   <div>
                     <p className="text-slate-600">Alert Time</p>
                     <p className="font-medium text-slate-900">
-                      {selectedAlertDisplayTimestamp ? format(new Date(String(selectedAlertDisplayTimestamp)), "PPpp") : "N/A"}
+                      {selectedAlertDisplayTimestamp ? safeFormatDate(String(selectedAlertDisplayTimestamp), "PPpp") : "N/A"}
                     </p>
                   </div>
                 </div>
@@ -717,7 +722,7 @@ export default function AlertDetailPage({ params }) {
                       <div className="flex items-center justify-between mb-2">
                         <span className="font-medium text-sm text-slate-900">{note.user_name}</span>
                         <span className="text-xs text-slate-500">
-                          {format(new Date(note.created_at), "MMM dd, HH:mm")}
+                          {safeFormatDate(note.created_at, "MMM dd, HH:mm")}
                         </span>
                       </div>
                       <p className="text-sm text-slate-700">{note.content}</p>
