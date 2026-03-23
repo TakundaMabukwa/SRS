@@ -74,10 +74,28 @@ function mapAlertVideosPayload(videosPayload: any, videoProxyBase = DEFAULT_VIDE
   return out;
 }
 
-async function pollPlaybackJob(jobId: string, videoProxyBase = DEFAULT_VIDEO_PROXY_BASE) {
+function buildJobStatusUrl(jobId: string, videoProxyBase = DEFAULT_VIDEO_PROXY_BASE, playbackJobUrl?: string) {
+  const absoluteJobFileUrl = String(playbackJobUrl || "").trim();
+  if (absoluteJobFileUrl) {
+    return absoluteJobFileUrl.replace(/\/file(?:\?.*)?$/i, "");
+  }
+  return `${videoProxyBase}/videos/jobs/${encodeURIComponent(jobId)}`;
+}
+
+function buildJobFileUrl(jobId: string, videoProxyBase = DEFAULT_VIDEO_PROXY_BASE, playbackJobUrl?: string) {
+  const absoluteJobFileUrl = String(playbackJobUrl || "").trim();
+  if (absoluteJobFileUrl) {
+    return absoluteJobFileUrl;
+  }
+  return `${videoProxyBase}/videos/jobs/${encodeURIComponent(jobId)}/file`;
+}
+
+async function pollPlaybackJob(jobId: string, videoProxyBase = DEFAULT_VIDEO_PROXY_BASE, playbackJobUrl?: string) {
+  const statusUrl = buildJobStatusUrl(jobId, videoProxyBase, playbackJobUrl);
+  const fallbackFileUrl = buildJobFileUrl(jobId, videoProxyBase, playbackJobUrl);
   for (let attempt = 0; attempt < 40; attempt += 1) {
     await new Promise((resolve) => setTimeout(resolve, attempt === 0 ? 500 : 1500));
-    const statusRes = await fetch(`${videoProxyBase}/videos/jobs/${encodeURIComponent(jobId)}`, {
+    const statusRes = await fetch(statusUrl, {
       cache: "no-store",
       signal: timeoutSignal(5000),
     });
@@ -88,7 +106,7 @@ async function pollPlaybackJob(jobId: string, videoProxyBase = DEFAULT_VIDEO_PRO
         String(job?.persistedVideoUrl || "").trim() ||
           (job?.persistedVideoId ? `${videoProxyBase}/videos/${encodeURIComponent(String(job.persistedVideoId))}/file` : "") ||
           String(job?.outputUrl || "").trim() ||
-          `${videoProxyBase}/videos/jobs/${encodeURIComponent(jobId)}/file`,
+          fallbackFileUrl,
         videoProxyBase
       );
     }
@@ -162,11 +180,12 @@ async function resolvePlaybackWindowForAlert(alert: any, videoProxyBase = DEFAUL
     ];
   }
 
+  const playbackJobUrl = normalizeBackendMediaUrl(String(data?.playbackJobUrl || "").trim(), videoProxyBase);
   const directUrl = normalizeBackendMediaUrl(
     String(data?.persistedVideoUrl || "").trim() ||
       (data?.persistedVideoId ? `${videoProxyBase}/videos/${encodeURIComponent(String(data.persistedVideoId))}/file` : "") ||
       String(data?.outputUrl || "").trim() ||
-      String(data?.playbackJobUrl || "").trim(),
+      playbackJobUrl,
     videoProxyBase
   );
   if (directUrl && !/\/videos\/jobs\/JOB-LOCAL-/i.test(directUrl)) {
@@ -182,7 +201,7 @@ async function resolvePlaybackWindowForAlert(alert: any, videoProxyBase = DEFAUL
   const jobId = String(data?.playbackJobId || "").trim();
   if (!jobId) return [];
 
-  const resolvedUrl = await pollPlaybackJob(jobId, videoProxyBase);
+  const resolvedUrl = await pollPlaybackJob(jobId, videoProxyBase, playbackJobUrl);
   return [
     {
       key: `job_${jobId}`,
@@ -248,7 +267,7 @@ export async function resolveAlertPlaybackVideos(alertSource: AlertPlaybackSourc
   const jobId = String(requestData?.playbackJobId || "").trim();
   const playbackJobUrl = normalizeBackendMediaUrl(String(requestData?.playbackJobUrl || ""), videoProxyBase);
   if (jobId) {
-    const resolvedUrl = await pollPlaybackJob(jobId, videoProxyBase);
+    const resolvedUrl = await pollPlaybackJob(jobId, videoProxyBase, playbackJobUrl);
     return [
       {
         key: `job_${jobId}`,
