@@ -531,7 +531,6 @@ export default function AlertDetailPage({ params }) {
                     Event Video
                   </h3>
                   <div className="space-y-4">
-<<<<<<< HEAD
                     {loadingEventVideos ? (
                       <div className="text-center py-12 text-slate-500">
                         <RefreshCw className="w-12 h-12 mx-auto mb-3 opacity-50 animate-spin" />
