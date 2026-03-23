@@ -49,6 +49,7 @@ import {
   Camera,
   ArrowLeft,
   XCircle,
+  RefreshCw,
 } from "lucide-react";
 import { getDashboardStats } from "@/lib/stats/dashboard";
 import { createClient } from "@/lib/supabase/client";
