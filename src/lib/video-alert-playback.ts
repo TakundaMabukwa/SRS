@@ -9,12 +9,33 @@ export type AlertPlaybackVideo = {
 type AlertPlaybackSource = string | { [key: string]: any };
 
 const DEFAULT_VIDEO_PROXY_BASE = "/api/video-server";
+const DIRECT_VIDEO_HUB_BASE = String(
+  process.env.NEXT_PUBLIC_VIDEO_HUB_BASE_URL ||
+    process.env.NEXT_PUBLIC_VIDEO_BASE_URL ||
+    ""
+).trim().replace(/\/+$/, "");
+
+function normalizeApiBase(baseUrl: string) {
+  const clean = String(baseUrl || "").trim().replace(/\/+$/, "");
+  if (!clean) return "";
+  if (/\/api(?:\/video-server)?$/i.test(clean)) return clean.replace(/\/video-server$/i, "");
+  return `${clean}/api`;
+}
 
 function timeoutSignal(timeoutMs: number) {
   if (typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function") {
     return AbortSignal.timeout(timeoutMs);
   }
   return undefined;
+}
+
+function getPlaybackRequestBases(videoProxyBase = DEFAULT_VIDEO_PROXY_BASE) {
+  const bases = [String(videoProxyBase || "").trim()];
+  const directApiBase = normalizeApiBase(DIRECT_VIDEO_HUB_BASE);
+  if (directApiBase && !bases.includes(directApiBase)) {
+    bases.push(directApiBase);
+  }
+  return bases.filter(Boolean);
 }
 
 export function normalizeBackendMediaUrl(url: string, videoProxyBase = DEFAULT_VIDEO_PROXY_BASE) {
@@ -31,47 +52,73 @@ export function normalizeBackendMediaUrl(url: string, videoProxyBase = DEFAULT_V
 
 export function getAlertDisplayTimestamp(alert: any) {
   return (
-    alert?.timestampLocal ||
-    alert?.timestamp_local ||
-    alert?.alertTimestampLocal ||
-    alert?.alert_timestamp_local ||
     alert?.timestamp ||
     alert?.alertTimestamp ||
     alert?.alert_timestamp ||
     alert?.created_at ||
+    alert?.timestampLocal ||
+    alert?.timestamp_local ||
+    alert?.alertTimestampLocal ||
+    alert?.alert_timestamp_local ||
     null
   );
 }
 
-function mapAlertVideosPayload(videosPayload: any, videoProxyBase = DEFAULT_VIDEO_PROXY_BASE): AlertPlaybackVideo[] {
-  const out: AlertPlaybackVideo[] = [];
-  const seen = new Set<string>();
-  const add = (label: string, url: any, key: string) => {
-    const normalized = normalizeBackendMediaUrl(String(url || ""), videoProxyBase);
-    if (!normalized || seen.has(normalized)) return;
-    seen.add(normalized);
-    out.push({ key, label, url: normalized });
+export function getAlertPlaybackTimestamp(alert: any) {
+  return (
+    alert?.timestamp ||
+    alert?.alertTimestamp ||
+    alert?.alert_timestamp ||
+    alert?.metadata?.locationFix?.timestamp ||
+    alert?.created_at ||
+    alert?.timestampLocal ||
+    alert?.timestamp_local ||
+    alert?.alertTimestampLocal ||
+    alert?.alert_timestamp_local ||
+    null
+  );
+}
+
+type RawAlertTimestampParts = {
+  year: number;
+  month: number;
+  day: number;
+  hour: number;
+  minute: number;
+  second: number;
+};
+
+function parseRawAlertTimestampParts(value: unknown): RawAlertTimestampParts | null {
+  const raw = String(value || "").trim();
+  if (!raw) return null;
+  const match = raw.match(/^(\d{4})[-/](\d{2})[-/](\d{2})[T\s](\d{2}):(\d{2})(?::(\d{2}))?/);
+  if (!match) return null;
+  return {
+    year: Number(match[1]),
+    month: Number(match[2]),
+    day: Number(match[3]),
+    hour: Number(match[4]),
+    minute: Number(match[5]),
+    second: Number(match[6] || 0),
   };
+}
 
-  const videos = videosPayload?.videos || {};
-  add("Pre-Incident Video", videos?.pre_event?.raw_url || videos?.pre_event?.url || videos?.pre_event?.path, "pre_event");
-  add("Post-Incident Video", videos?.post_event?.raw_url || videos?.post_event?.url || videos?.post_event?.path, "post_event");
-  add("Camera Video", videos?.camera_sd?.raw_url || videos?.camera_sd?.url || videos?.camera_sd?.path, "camera_sd");
-  add("Camera Pre Video", videos?.camera_sd_pre?.raw_url || videos?.camera_sd_pre?.url || videos?.camera_sd_pre?.path, "camera_sd_pre");
-  add("Camera Post Video", videos?.camera_sd_post?.raw_url || videos?.camera_sd_post?.url || videos?.camera_sd_post?.path, "camera_sd_post");
+export function formatRawAlertTimestamp(
+  value: unknown,
+  style: "datetime" | "date" | "time" = "datetime"
+) {
+  const parts = parseRawAlertTimestampParts(value);
+  if (!parts) return String(value || "").trim();
 
-  const databaseRecords = Array.isArray(videos?.database_records) ? videos.database_records : [];
-  databaseRecords.forEach((record: any, index: number) => {
-    add(
-      record?.label ||
-        record?.title ||
-        (record?.video_type ? String(record.video_type).replace(/_/g, " ").toUpperCase() : `Stored Clip ${index + 1}`),
-      record?.url || record?.storage_url || record?.signed_url || record?.download_url || record?.video_url || record?.path,
-      record?.id || `database_record_${index + 1}`
-    );
-  });
+  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const monthLabel = months[Math.max(0, Math.min(11, parts.month - 1))] || "";
+  const day = String(parts.day).padStart(2, "0");
+  const hour = String(parts.hour).padStart(2, "0");
+  const minute = String(parts.minute).padStart(2, "0");
 
-  return out;
+  if (style === "date") return `${monthLabel} ${day}`;
+  if (style === "time") return `${hour}:${minute}`;
+  return `${monthLabel} ${day}, ${hour}:${minute}`;
 }
 
 function buildJobStatusUrl(jobId: string, videoProxyBase = DEFAULT_VIDEO_PROXY_BASE, playbackJobUrl?: string) {
@@ -145,7 +192,7 @@ function getAlertChannel(alert: any) {
 
 async function resolvePlaybackWindowForAlert(alert: any, videoProxyBase = DEFAULT_VIDEO_PROXY_BASE): Promise<AlertPlaybackVideo[]> {
   const vehicleId = getAlertVehicleId(alert);
-  const timestamp = getAlertDisplayTimestamp(alert) || alert?.metadata?.locationFix?.timestamp;
+  const timestamp = getAlertPlaybackTimestamp(alert);
   const channel = getAlertChannel(alert);
   if (!vehicleId || !timestamp) return [];
 
@@ -155,136 +202,77 @@ async function resolvePlaybackWindowForAlert(alert: any, videoProxyBase = DEFAUL
   const startIso = new Date(alertTime.getTime() - 30 * 1000).toISOString();
   const endIso = new Date(alertTime.getTime() + 30 * 1000).toISOString();
 
-  const res = await fetch(`${videoProxyBase}/vehicles/${encodeURIComponent(vehicleId)}/videos/window`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      channel,
-      startTime: startIso,
-      endTime: endIso,
-    }),
-  });
-  const json = await res.json().catch(() => ({}));
-  if (!res.ok || !json?.success) {
-    throw new Error(json?.message || `HTTP ${res.status}`);
+  let lastError: Error | null = null;
+
+  for (const playbackBase of getPlaybackRequestBases(videoProxyBase)) {
+    try {
+      const res = await fetch(`${playbackBase}/vehicles/${encodeURIComponent(vehicleId)}/videos/window`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          channel,
+          startTime: startIso,
+          endTime: endIso,
+        }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json?.success) {
+        throw new Error(json?.message || `HTTP ${res.status}`);
+      }
+
+      const data = json?.data || {};
+      if (data?.playbackSource === "live_fallback" && data?.streamUrl) {
+        return [
+          {
+            key: `live_fallback_${vehicleId}_${channel}`,
+            label: `Alert-time Live Fallback CH${channel}`,
+            url: normalizeBackendMediaUrl(String(data.streamUrl), playbackBase),
+          },
+        ];
+      }
+
+      const playbackJobUrl = normalizeBackendMediaUrl(String(data?.playbackJobUrl || "").trim(), playbackBase);
+      const directUrl = normalizeBackendMediaUrl(
+        String(data?.persistedVideoUrl || "").trim() ||
+          (data?.persistedVideoId ? `${playbackBase}/videos/${encodeURIComponent(String(data.persistedVideoId))}/file` : "") ||
+          String(data?.outputUrl || "").trim() ||
+          playbackJobUrl,
+        playbackBase
+      );
+      if (directUrl && !/\/videos\/jobs\/JOB-LOCAL-/i.test(directUrl)) {
+        return [
+          {
+            key: `window_${vehicleId}_${channel}`,
+            label: `Alert-time Playback CH${channel}`,
+            url: directUrl,
+          },
+        ];
+      }
+
+      const jobId = String(data?.playbackJobId || "").trim();
+      if (!jobId) return [];
+
+      const resolvedUrl = await pollPlaybackJob(jobId, playbackBase, playbackJobUrl);
+      return [
+        {
+          key: `job_${jobId}`,
+          label: `Alert-time Playback CH${channel}`,
+          url: resolvedUrl,
+        },
+      ];
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+    }
   }
 
-  const data = json?.data || {};
-  if (data?.playbackSource === "live_fallback" && data?.streamUrl) {
-    return [
-      {
-        key: `live_fallback_${vehicleId}_${channel}`,
-        label: `Alert-time Live Fallback CH${channel}`,
-        url: normalizeBackendMediaUrl(String(data.streamUrl), videoProxyBase),
-      },
-    ];
-  }
-
-  const playbackJobUrl = normalizeBackendMediaUrl(String(data?.playbackJobUrl || "").trim(), videoProxyBase);
-  const directUrl = normalizeBackendMediaUrl(
-    String(data?.persistedVideoUrl || "").trim() ||
-      (data?.persistedVideoId ? `${videoProxyBase}/videos/${encodeURIComponent(String(data.persistedVideoId))}/file` : "") ||
-      String(data?.outputUrl || "").trim() ||
-      playbackJobUrl,
-    videoProxyBase
-  );
-  if (directUrl && !/\/videos\/jobs\/JOB-LOCAL-/i.test(directUrl)) {
-    return [
-      {
-        key: `window_${vehicleId}_${channel}`,
-        label: `Alert-time Playback CH${channel}`,
-        url: directUrl,
-      },
-    ];
-  }
-
-  const jobId = String(data?.playbackJobId || "").trim();
-  if (!jobId) return [];
-
-  const resolvedUrl = await pollPlaybackJob(jobId, videoProxyBase, playbackJobUrl);
-  return [
-    {
-      key: `job_${jobId}`,
-      label: `Alert-time Playback CH${channel}`,
-      url: resolvedUrl,
-    },
-  ];
+  if (lastError) throw lastError;
+  return [];
 }
 
 export async function resolveAlertPlaybackVideos(alertSource: AlertPlaybackSource, videoProxyBase = DEFAULT_VIDEO_PROXY_BASE): Promise<AlertPlaybackVideo[]> {
   const alert = typeof alertSource === "object" && alertSource !== null ? alertSource : null;
   const id = String(alert?.id || alertSource || "").trim();
-  if (!id) return [];
+  if (!id || !alert) return [];
 
-  if (alert) {
-    try {
-      const playbackWindowVideos = await resolvePlaybackWindowForAlert(alert, videoProxyBase);
-      if (playbackWindowVideos.length > 0) {
-        return playbackWindowVideos;
-      }
-    } catch {
-      // Fall back to alert-centric resolution below.
-    }
-  }
-
-  const videosRes = await fetch(`${videoProxyBase}/alerts/${encodeURIComponent(id)}/videos?ensureMedia=true`, {
-    cache: "no-store",
-    signal: timeoutSignal(7000),
-  });
-  const videosJson = videosRes.ok ? await videosRes.json().catch(() => ({})) : {};
-  const videosPayload = videosJson?.data || videosJson || {};
-  const immediateVideos = mapAlertVideosPayload(videosPayload, videoProxyBase);
-  if (immediateVideos.length > 0) {
-    return immediateVideos;
-  }
-
-  const requestRes = await fetch(`${videoProxyBase}/alerts/${encodeURIComponent(id)}/request-report-video`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      lookbackSeconds: 30,
-      forwardSeconds: 30,
-      queryResources: true,
-      requestDownload: false,
-    }),
-  });
-  const requestJson = await requestRes.json().catch(() => ({}));
-  if (!requestRes.ok || !requestJson?.success) {
-    throw new Error(requestJson?.message || `HTTP ${requestRes.status}`);
-  }
-
-  const requestData = requestJson?.data || {};
-  if (requestData?.playbackSource === "live_fallback" && requestData?.streamUrl) {
-    return [
-      {
-        key: "live_fallback",
-        label: "Alert-time Live Fallback",
-        url: normalizeBackendMediaUrl(String(requestData.streamUrl), videoProxyBase),
-      },
-    ];
-  }
-
-  const jobId = String(requestData?.playbackJobId || "").trim();
-  const playbackJobUrl = normalizeBackendMediaUrl(String(requestData?.playbackJobUrl || ""), videoProxyBase);
-  if (jobId) {
-    const resolvedUrl = await pollPlaybackJob(jobId, videoProxyBase, playbackJobUrl);
-    return [
-      {
-        key: `job_${jobId}`,
-        label: "Alert-time Playback",
-        url: resolvedUrl,
-      },
-    ];
-  }
-  if (playbackJobUrl) {
-    return [
-      {
-        key: "playback_job",
-        label: "Alert-time Playback",
-        url: playbackJobUrl,
-      },
-    ];
-  }
-
-  return [];
+  return resolvePlaybackWindowForAlert(alert, videoProxyBase);
 }

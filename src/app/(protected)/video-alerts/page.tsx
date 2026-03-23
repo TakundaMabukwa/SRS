@@ -24,7 +24,7 @@ import {
   ExternalLink
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { getAlertDisplayTimestamp, resolveAlertPlaybackVideos } from '@/lib/video-alert-playback'
+import { formatRawAlertTimestamp, getAlertDisplayTimestamp, resolveAlertPlaybackVideos } from '@/lib/video-alert-playback'
 
 export default function VideoAlertsPage() {
   const router = useRouter()
@@ -620,7 +620,7 @@ export default function VideoAlertsPage() {
                           <p className="text-xs text-gray-400">
                             {(() => {
                               const displayTs = getAlertDisplayTimestamp(alert)
-                              return displayTs ? new Date(displayTs).toLocaleString() : 'N/A'
+                              return displayTs ? formatRawAlertTimestamp(displayTs, "datetime") : 'N/A'
                             })()}
                           </p>
                         </div>

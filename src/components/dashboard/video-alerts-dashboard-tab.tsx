@@ -34,6 +34,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { format, differenceInHours } from "date-fns";
+import { formatRawAlertTimestamp, getAlertDisplayTimestamp } from "@/lib/video-alert-playback";
 
 type VideoAlertsDashboardTabProps = {
   onOpenAlertDetail?: (alert: any, trip?: any) => Promise<any> | any;
@@ -579,7 +580,7 @@ export default function VideoAlertsDashboardTab({
               {String(alert?.status || "new")}
             </div>
             <div className="mt-1 text-[11px] leading-4 text-slate-500">
-              {alert?.timestamp ? format(new Date(alert.timestamp), "MMM dd, HH:mm") : "Unknown time"}
+              {formatRawAlertTimestamp(getAlertDisplayTimestamp(alert), "datetime") || "Unknown time"}
             </div>
           </div>
           <Badge variant="outline" className={cn("shrink-0 capitalize text-[10px] font-semibold", getSeverityColor(getAlertLevel(alert)))}>
@@ -648,8 +649,8 @@ export default function VideoAlertsDashboardTab({
           </div>
           <div>
             <div className="text-[10px] uppercase tracking-wide text-slate-400">Time</div>
-            <div className="text-slate-900">{format(new Date(alert.timestamp), "MMM dd")}</div>
-            <div className="text-slate-500">{format(new Date(alert.timestamp), "HH:mm")}</div>
+            <div className="text-slate-900">{formatRawAlertTimestamp(getAlertDisplayTimestamp(alert), "date")}</div>
+            <div className="text-slate-500">{formatRawAlertTimestamp(getAlertDisplayTimestamp(alert), "time")}</div>
           </div>
         </div>
 
@@ -705,7 +706,7 @@ export default function VideoAlertsDashboardTab({
         </div>
         <div className="min-w-0 text-[11px] text-slate-600">
           {Number(alert?.count || 1) > 1 ? `x${alert.count}` : "x1"}
-          <div className="text-[10px] text-slate-400">{format(new Date(alert.timestamp), "HH:mm")}</div>
+          <div className="text-[10px] text-slate-400">{formatRawAlertTimestamp(getAlertDisplayTimestamp(alert), "time")}</div>
         </div>
         <div className="flex justify-end">
           <Button

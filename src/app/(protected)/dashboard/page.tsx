@@ -220,7 +220,7 @@ function UniversalVideoPlayer({
         autoPlay={autoPlay}
         muted={autoPlay}
         className={className}
-        src={isHlsUrl ? undefined : activeUrl}
+        src={!activeUrl || isHlsUrl ? undefined : activeUrl}
         onLoadedMetadata={() => {
           onPlayableChange?.(true);
           tryAutoplay();
@@ -3523,39 +3523,6 @@ export default function Dashboard() {
     selectedAlertPlaybackVideos.forEach((video) => {
       pushIf(video.key, video.label, video.url);
     });
-    const mediaVideos = Array.isArray(selectedAlert?.media?.videos) ? selectedAlert.media.videos : [];
-    mediaVideos.forEach((video: any, idx: number) => {
-      pushIf(video?.key || `media_${idx}`, video?.label || video?.camera || `Video ${idx + 1}`, video?.url);
-    });
-    if (selectedAlertVideoRequestState?.jobStatus === "completed" && selectedAlertVideoRequestState?.jobId) {
-      pushIf(
-        "alert_window",
-        "Alert Window (30s before + 30s after)",
-        selectedAlertVideoRequestState?.outputUrl || buildPlaybackJobFileUrl(String(selectedAlertVideoRequestState.jobId)),
-        [buildPlaybackJobFileUrl(String(selectedAlertVideoRequestState.jobId))]
-      );
-    }
-    pushIf("pre_event", "Pre-Incident (30s before)", selectedAlert?.videos?.pre_event || selectedAlert?.preIncidentVideoUrl);
-    pushIf("post_event", "Post-Incident (30s after)", selectedAlert?.videos?.post_event || selectedAlert?.postIncidentVideoUrl);
-    const fallbackAlertId = String(selectedAlert?.id || "").trim();
-    const preReady = !!(selectedAlert?.preIncidentReady || selectedAlert?.has_pre_event);
-    const postReady = !!(selectedAlert?.postIncidentReady || selectedAlert?.has_post_event);
-    if (entries.length === 0 && fallbackAlertId) {
-      if (preReady) pushIf("pre_event_fallback", "Pre-Incident (30s before)", buildAlertVideoUrl(fallbackAlertId, "pre"), buildAlertVideoUrlCandidates(fallbackAlertId, "pre"));
-      if (postReady) pushIf("post_event_fallback", "Post-Incident (30s after)", buildAlertVideoUrl(fallbackAlertId, "post"), buildAlertVideoUrlCandidates(fallbackAlertId, "post"));
-    }
-    if (fallbackAlertId) {
-      for (const entry of entries) {
-        const key = String(entry.key || "").toLowerCase();
-        if (key.includes("pre")) {
-          entry.fallbackUrls = buildAlertVideoUrlCandidates(fallbackAlertId, "pre").filter((u) => u !== entry.url);
-        } else if (key.includes("post")) {
-          entry.fallbackUrls = buildAlertVideoUrlCandidates(fallbackAlertId, "post").filter((u) => u !== entry.url);
-        } else if (key.includes("camera")) {
-          entry.fallbackUrls = buildAlertVideoUrlCandidates(fallbackAlertId, "camera").filter((u) => u !== entry.url);
-        }
-      }
-    }
     return entries;
   })();
   const preEventVideo = selectedAlertVideoList.find((v) => String(v.key || "").includes("pre_event"));

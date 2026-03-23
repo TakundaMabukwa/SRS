@@ -56,16 +56,6 @@ export default function AlertDetailPage({ params }) {
   const [currentUser] = useState({ id: "user-1", name: "Current User", role: "Operator" });
   const [resolvedScreenshots, setResolvedScreenshots] = useState([]);
   const [screenshotsLoading, setScreenshotsLoading] = useState(false);
-  const [resolvedVideos, setResolvedVideos] = useState([]);
-  const [videoLoading, setVideoLoading] = useState(false);
-
-  const normalizeVideoUrl = (url) => {
-    const clean = String(url || "").trim();
-    if (!clean) return "";
-    if (/^https?:\/\//i.test(clean)) return clean;
-    if (clean.startsWith("/")) return clean;
-    return `/${clean.replace(/^\/+/, "")}`;
-  };
 
   const safeFormatDate = (value, pattern, fallback = "N/A") => {
     const date = value instanceof Date ? value : new Date(value);
@@ -98,109 +88,6 @@ export default function AlertDetailPage({ params }) {
         };
       })
       .filter(Boolean);
-
-  const resolveStoredWindowVideo = async (alert) => {
-    const vehicleId = String(
-      alert?.vehicleId ||
-      alert?.device_id ||
-      alert?.metadata?.vehicle?.vehicleId ||
-      alert?.metadata?.vehicle?.terminalPhone ||
-      ""
-    ).trim();
-    const alertIdValue = String(alert?.id || "").trim();
-    const timestamp = alert?.timestamp || alert?.metadata?.locationFix?.timestamp;
-    const channel = Number(
-      alert?.channel ||
-      alert?.metadata?.channel ||
-      alert?.metadata?.resourceChannel ||
-      1
-    );
-    if (!vehicleId || !timestamp) return null;
-
-    const alertTime = new Date(timestamp);
-    if (Number.isNaN(alertTime.getTime())) return null;
-
-    const startTime = new Date(alertTime.getTime() - 30 * 1000).toISOString();
-    const endTime = new Date(alertTime.getTime() + 30 * 1000).toISOString();
-
-    const createRes = await fetch(`/api/video-server/vehicles/${encodeURIComponent(vehicleId)}/videos/window`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ channel, startTime, endTime }),
-    });
-    const createJson = await createRes.json().catch(() => ({}));
-    if (!createRes.ok || !createJson?.success) return null;
-
-    const data = createJson?.data || {};
-    if (data?.streamUrl) {
-      return {
-        key: "alert_window_live",
-        label: "Alert Window (Live Fallback)",
-        url: normalizeVideoUrl(data.streamUrl),
-      };
-    }
-
-    const jobId = String(data?.playbackJobId || "").trim();
-    if (!jobId) return null;
-
-    for (let attempt = 0; attempt < 40; attempt += 1) {
-      await new Promise((resolve) => setTimeout(resolve, attempt === 0 ? 800 : 1500));
-      const statusRes = await fetch(`/api/video-server/videos/jobs/${encodeURIComponent(jobId)}`, {
-        cache: "no-store",
-      });
-      const statusJson = await statusRes.json().catch(() => ({}));
-      const job = statusJson?.data || {};
-      if (job?.status === "completed") {
-        const url = normalizeVideoUrl(
-          String(job?.persistedVideoUrl || "").trim() ||
-          (job?.persistedVideoId ? `/api/video-server/videos/${encodeURIComponent(String(job.persistedVideoId))}/file` : "") ||
-          String(job?.outputUrl || "").trim() ||
-          `/api/video-server/videos/jobs/${encodeURIComponent(jobId)}/file`
-        );
-        if (!url) return null;
-        return {
-          key: "alert_window",
-          label: "Alert Window (30s before + 30s after)",
-          url,
-        };
-      }
-      if (job?.status === "failed") return null;
-    }
-
-    if (!alertIdValue) return null;
-
-    try {
-      await fetch(`/api/video-server/alerts/${encodeURIComponent(alertIdValue)}/collect-evidence`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ensureScreenshots: true,
-          ensureVideo: true,
-        }),
-      }).catch(() => null);
-
-      const cameraRes = await fetch(`/api/video-server/alerts/${encodeURIComponent(alertIdValue)}/request-report-video`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          lookbackSeconds: 30,
-          forwardSeconds: 30,
-        }),
-      });
-      const cameraJson = await cameraRes.json().catch(() => ({}));
-      if (cameraRes.ok && cameraJson?.success) {
-        return {
-          key: "camera_request",
-          label: "CAMERA REQUEST",
-          url: `/api/video-server/alerts/${encodeURIComponent(alertIdValue)}/video/camera`,
-        };
-      }
-    } catch {
-      // fall through
-    }
-
-    return null;
-  };
 
   const fetchAlertScreenshots = useCallback(async (forceRequest = false) => {
     if (!alertId) return [];
@@ -273,32 +160,6 @@ export default function AlertDetailPage({ params }) {
     }
     void fetchAlertScreenshots();
   }, [selectedAlert, fetchAlertScreenshots]);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    const loadVideos = async () => {
-      if (!selectedAlert) {
-        setResolvedVideos([]);
-        return;
-      }
-
-      setVideoLoading(true);
-      try {
-        const fallbackVideo = await resolveStoredWindowVideo(selectedAlert);
-        if (!cancelled) {
-          setResolvedVideos(fallbackVideo ? [fallbackVideo] : []);
-        }
-      } finally {
-        if (!cancelled) setVideoLoading(false);
-      }
-    };
-
-    void loadVideos();
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedAlert]);
 
   useEffect(() => {
     let cancelled = false;
@@ -577,11 +438,9 @@ export default function AlertDetailPage({ params }) {
                     ) : (
                       <div className="text-center py-12 text-slate-500">
                         <Video className="w-12 h-12 mx-auto mb-3 opacity-20" />
-                        <p>{videoLoading ? "Resolving playback from stored video..." : "No alert-time playback available."}</p>
+                        <p>No alert-time playback available.</p>
                         <p className="text-sm mt-2">
-                          {videoLoading
-                            ? "We fall back to vehicle + channel + alert time window when direct alert evidence is missing."
-                            : "Try again once the timestamp window has been recorded."}
+                          Try again once the timestamp window has been recorded.
                         </p>
                       </div>
                     )}
