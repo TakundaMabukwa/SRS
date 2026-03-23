@@ -3708,7 +3708,6 @@ export default function Dashboard() {
     opts?: { silent?: boolean; requestIfMissing?: boolean }
   ) => {
     const silent = !!opts?.silent;
-    const requestIfMissing = opts?.requestIfMissing !== false;
     const firstArray = (...values: any[]) => {
       for (const value of values) {
         if (Array.isArray(value)) return value;
@@ -3772,32 +3771,11 @@ export default function Dashboard() {
       const vehicleKey = getVehicleKeyLocal(baseAlert);
       const vehicleKeyParam = encodeURIComponent(vehicleKey || "");
 
-      const now = Date.now();
-      const heavyBackoffUntil = alertMediaFetchBackoffRef.current[alertId] || 0;
-      const shouldFetchHeavyMedia = !silent && now >= heavyBackoffUntil;
-
       const detailJson = await fetchJsonWithTimeout(`${videoProxyBase}/alerts/${alertId}?ensureMedia=true`, 5000);
-      const [mediaResp, videosResp, screenshotsResp] = shouldFetchHeavyMedia
-        ? await Promise.all([
-            fetchJsonWithMeta(`${videoProxyBase}/alerts/${alertId}/media?ensureMedia=true`, 5000),
-            fetchJsonWithMeta(`${videoProxyBase}/alerts/${alertId}/videos?ensureMedia=true`, 5000),
-            fetchJsonWithMeta(`${videoProxyBase}/alerts/${alertId}/screenshots?includeFallback=true`, 4500),
-          ])
-        : [
-            { ok: false, status: 0, data: null as any },
-            { ok: false, status: 0, data: null as any },
-            { ok: false, status: 0, data: null as any },
-          ];
-      if (
-        shouldFetchHeavyMedia &&
-        [mediaResp.status, videosResp.status, screenshotsResp.status].some((status) => status >= 500)
-      ) {
-        // Avoid hammering broken media endpoints while alert details still render.
-        alertMediaFetchBackoffRef.current[alertId] = Date.now() + 60_000;
-      }
+      const mediaResp = await fetchJsonWithMeta(`${videoProxyBase}/alerts/${alertId}/media?ensureMedia=true`, 5000);
       const mediaJson = mediaResp.data;
-      const videosJson = videosResp.data;
-      const screenshotsJson = screenshotsResp.data;
+      const videosJson = null;
+      const screenshotsJson = null;
 
       const detailAlert = detailJson?.alert || mediaJson?.data?.alert || {};
       const screenshotsFromAlert = Array.isArray(detailAlert?.screenshots) ? detailAlert.screenshots : [];
@@ -4005,15 +3983,6 @@ export default function Dashboard() {
       }
 
       setSelectedAlert((prev: any) => ({ ...prev, ...merged }));
-      if (!silent) {
-        void requestAlertWindowCapture({
-          ...baseAlert,
-          ...detailAlert,
-          vehicleId: getVehicleKeyLocal({ ...baseAlert, ...detailAlert }) || baseAlert?.vehicleId,
-          timestamp: detailAlert?.timestamp || baseAlert?.timestamp,
-          channel: detailAlert?.channel || baseAlert?.channel || 1,
-        });
-      }
 
       // Phase 2: load heavier history/timeline details without blocking first paint.
       // Skip this on silent polling refreshes to keep alert detail fast.
@@ -4105,7 +4074,7 @@ export default function Dashboard() {
         setAlertRealtimeLoading(false);
       }
     }
-  }, [EVENT_VIDEO_READY_MIN_SECONDS, buildAlertVideoUrl, getAlertCoordinates, requestAlertWindowCapture, toAbsoluteVideoUrl]);
+  }, [EVENT_VIDEO_READY_MIN_SECONDS, buildAlertVideoUrl, getAlertCoordinates, toAbsoluteVideoUrl]);
 
   useEffect(() => {
     if (!alertDetailModalOpen || !selectedAlert?.id) return;
