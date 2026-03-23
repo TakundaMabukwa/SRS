@@ -32,21 +32,39 @@ export default function AlertBellNotification() {
 
   const fetchNewAlerts = async () => {
     try {
+      let nextAlerts = [];
+
       const res = await fetch('/api/video-server/alerts?status=new&limit=10');
       if (res.ok) {
         const data = await res.json();
-        if (data.success && data.alerts) {
-          const newCount = data.alerts.length;
-          if (newCount > prevCountRef.current && prevCountRef.current > 0) {
-            const criticalAlerts = data.alerts.filter(a => a.priority === 'critical');
-            if (criticalAlerts.length > 0) {
-              new Audio('/alert-sound.mp3').play().catch(() => {});
-            }
-          }
-          prevCountRef.current = newCount;
-          setAlerts(data.alerts);
+        if (data.success && Array.isArray(data.alerts)) {
+          nextAlerts = data.alerts;
         }
       }
+
+      if (nextAlerts.length === 0) {
+        const activeRes = await fetch('/api/video-server/alerts/active');
+        if (activeRes.ok) {
+          const activeData = await activeRes.json();
+          nextAlerts = Array.isArray(activeData?.alerts)
+            ? activeData.alerts
+            : Array.isArray(activeData?.data?.alerts)
+              ? activeData.data.alerts
+              : Array.isArray(activeData?.data)
+                ? activeData.data
+                : [];
+        }
+      }
+
+      const newCount = nextAlerts.length;
+      if (newCount > prevCountRef.current && prevCountRef.current > 0) {
+        const criticalAlerts = nextAlerts.filter(a => a.priority === 'critical');
+        if (criticalAlerts.length > 0) {
+          new Audio('/alert-sound.mp3').play().catch(() => {});
+        }
+      }
+      prevCountRef.current = newCount;
+      setAlerts(nextAlerts);
     } catch (err) {
       console.error('Failed to fetch alerts:', err);
     }

@@ -24,6 +24,7 @@ import {
   ExternalLink
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { getAlertDisplayTimestamp, resolveAlertPlaybackVideos } from '@/lib/video-alert-playback'
 
 export default function VideoAlertsPage() {
   const router = useRouter()
@@ -313,8 +314,21 @@ export default function VideoAlertsPage() {
       }
 
       const normalized = normalizeAlert(alertPayload, screenshotPayload)
-      const playbackWindowVideo = await resolvePlaybackWindowVideo(normalized)
-      normalized.videos = playbackWindowVideo ? [playbackWindowVideo] : []
+      if ((normalized.videos?.length || 0) === 0) {
+        try {
+          const playbackVideos = await resolveAlertPlaybackVideos(normalized.id)
+          if (playbackVideos.length > 0) {
+            normalized.videos = playbackVideos
+          } else {
+            const playbackWindowVideo = await resolvePlaybackWindowVideo(normalized)
+            normalized.videos = playbackWindowVideo ? [playbackWindowVideo] : []
+          }
+        } catch (playbackErr) {
+          console.error('Failed to resolve alert playback:', playbackErr)
+          const playbackWindowVideo = await resolvePlaybackWindowVideo(normalized)
+          normalized.videos = playbackWindowVideo ? [playbackWindowVideo] : []
+        }
+      }
 
       setSelectedAlert(normalized)
     } catch (err) {
@@ -327,22 +341,38 @@ export default function VideoAlertsPage() {
 
   const fetchAlerts = async () => {
     try {
+      let alertRows = []
+
       const res = await fetch('/api/video-server/alerts', { signal: AbortSignal.timeout(10000) })
       if (res.ok) {
         const data = await res.json()
-        if (data.success && data.alerts) {
-          const grouped = { critical: [], high: [], medium: [], low: [] }
-          data.alerts.forEach((rawAlert) => {
-            const alert = normalizeAlert(rawAlert)
-            const priority = alert.priority || 'low'
-            if (grouped[priority]) grouped[priority].push(alert)
-          })
-          setAlerts(grouped)
-          setApiError(false)
-          return
+        if (data.success && Array.isArray(data.alerts)) {
+          alertRows = data.alerts
         }
       }
-      throw new Error('API failed')
+
+      if (alertRows.length === 0) {
+        const activeRes = await fetch('/api/video-server/alerts/active', { signal: AbortSignal.timeout(10000) })
+        if (activeRes.ok) {
+          const activeData = await activeRes.json()
+          alertRows = Array.isArray(activeData?.alerts)
+            ? activeData.alerts
+            : Array.isArray(activeData?.data?.alerts)
+              ? activeData.data.alerts
+              : Array.isArray(activeData?.data)
+                ? activeData.data
+                : []
+        }
+      }
+
+      const grouped = { critical: [], high: [], medium: [], low: [] }
+      alertRows.forEach((rawAlert) => {
+        const alert = normalizeAlert(rawAlert)
+        const priority = alert.priority || 'low'
+        if (grouped[priority]) grouped[priority].push(alert)
+      })
+      setAlerts(grouped)
+      setApiError(false)
     } catch (err) {
       console.error('Failed to fetch alerts:', err)
       setApiError(true)
@@ -587,7 +617,12 @@ export default function VideoAlertsPage() {
                               )}
                             </div>
                           )}
-                          <p className="text-xs text-gray-400">{new Date(alert.timestamp).toLocaleString()}</p>
+                          <p className="text-xs text-gray-400">
+                            {(() => {
+                              const displayTs = getAlertDisplayTimestamp(alert)
+                              return displayTs ? new Date(displayTs).toLocaleString() : 'N/A'
+                            })()}
+                          </p>
                         </div>
                       </div>
                     ))}
@@ -636,7 +671,7 @@ export default function VideoAlertsPage() {
                       <Card className="p-4">
                         <h3 className="font-semibold mb-3 flex items-center gap-2">
                           <Video className="w-4 h-4" />
-                          Videos
+                          Alert-Time Video
                         </h3>
                         <div className="space-y-3">
                           {selectedAlert.videos.map((video, idx) => (
@@ -652,6 +687,18 @@ export default function VideoAlertsPage() {
                             </div>
                           ))}
                         </div>
+                      </Card>
+                    )}
+
+                    {selectedAlert.videos?.length === 0 && !loadingAlertDetails && (
+                      <Card className="p-4">
+                        <h3 className="font-semibold mb-3 flex items-center gap-2">
+                          <Video className="w-4 h-4" />
+                          Alert-Time Video
+                        </h3>
+                        <p className="text-sm text-gray-500">
+                          No timestamp-matched playback was available for this alert yet.
+                        </p>
                       </Card>
                     )}
 

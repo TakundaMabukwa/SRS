@@ -87,6 +87,7 @@ import CriminalReportModal from '@/components/video-alerts/criminal-report-modal
 import DispatchReportModal from '@/components/video-alerts/dispatch-report-modal';
 import IncidentReportTemplateModal from '@/components/video-alerts/incident-report-template-modal';
 import { useVideoWebSocket } from "@/hooks/use-video-websocket";
+import { getAlertDisplayTimestamp as getSharedAlertDisplayTimestamp, resolveAlertPlaybackVideos } from "@/lib/video-alert-playback";
 
 const VideoAlertsDashboardTab = dynamic(
   () => import("@/components/dashboard/video-alerts-dashboard-tab"),
@@ -2818,6 +2819,9 @@ export default function Dashboard() {
   const [alertActionSuccess, setAlertActionSuccess] = useState("");
   const [videoPreview, setVideoPreview] = useState<{ url: string; label: string } | null>(null);
   const [videoPlaybackFailures, setVideoPlaybackFailures] = useState<Record<string, boolean>>({});
+  const [selectedAlertPlaybackVideos, setSelectedAlertPlaybackVideos] = useState<Array<{ key: string; label: string; url: string }>>([]);
+  const [selectedAlertPlaybackLoading, setSelectedAlertPlaybackLoading] = useState(false);
+  const [selectedAlertPlaybackError, setSelectedAlertPlaybackError] = useState("");
   const alertVideoRequestStateRef = useRef<
     Record<
       string,
@@ -2934,6 +2938,7 @@ export default function Dashboard() {
     ? `${selectedAlertCoordinates.latitude.toFixed(6)},${selectedAlertCoordinates.longitude.toFixed(6)}`
     : "";
   const selectedAlertDisplayTs =
+    getSharedAlertDisplayTimestamp(selectedAlert) ||
     selectedAlert?.screenshot_timestamps?.[0] ||
     selectedAlert?.media?.screenshots?.[0]?.timestamp ||
     selectedAlert?.timestamp ||
@@ -3514,6 +3519,9 @@ export default function Dashboard() {
         entries.push({ key, label, url: normalized, fallbackUrls: Array.isArray(fallbackUrls) ? fallbackUrls : [] });
       }
     };
+    selectedAlertPlaybackVideos.forEach((video) => {
+      pushIf(video.key, video.label, video.url);
+    });
     const mediaVideos = Array.isArray(selectedAlert?.media?.videos) ? selectedAlert.media.videos : [];
     mediaVideos.forEach((video: any, idx: number) => {
       pushIf(video?.key || `media_${idx}`, video?.label || video?.camera || `Video ${idx + 1}`, video?.url);
@@ -3567,6 +3575,13 @@ export default function Dashboard() {
     if (key.includes("pre_event") || key.includes("post_event") || key.includes("camera_sd") || key.includes("alert_window")) return false;
     return true;
   });
+  const primaryAlertVideo =
+    alertWindowVideo ||
+    preEventVideo ||
+    postEventVideo ||
+    cameraSdVideo ||
+    genericEventVideos[0] ||
+    null;
   const shouldShowOnlySdCard =
     !!cameraSdVideo &&
     prePostVideos.length > 0 &&
@@ -3604,6 +3619,42 @@ export default function Dashboard() {
       setAlertScreenshotsExpanded(false);
     }
   }, [alertDetailModalOpen, selectedAlert?.id]);
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadSelectedAlertPlayback() {
+      if (!alertDetailModalOpen || !selectedAlert?.id) {
+        setSelectedAlertPlaybackVideos([]);
+        setSelectedAlertPlaybackError("");
+        setSelectedAlertPlaybackLoading(false);
+        return;
+      }
+
+      setSelectedAlertPlaybackLoading(true);
+      setSelectedAlertPlaybackError("");
+      try {
+        const videos = await resolveAlertPlaybackVideos(String(selectedAlert.id), videoProxyBase);
+        if (!cancelled) {
+          setSelectedAlertPlaybackVideos(videos);
+        }
+      } catch (error: any) {
+        if (!cancelled) {
+          setSelectedAlertPlaybackVideos([]);
+          setSelectedAlertPlaybackError(error?.message || "Failed to load alert-time playback.");
+        }
+      } finally {
+        if (!cancelled) {
+          setSelectedAlertPlaybackLoading(false);
+        }
+      }
+    }
+
+    void loadSelectedAlertPlayback();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [alertDetailModalOpen, selectedAlert?.id, videoProxyBase]);
   useEffect(() => {
     if (!alertDetailModalOpen || !selectedAlert?.id) return;
     const existingNotes =
@@ -6258,17 +6309,23 @@ export default function Dashboard() {
                           ) : null}
                         </div>
                         <div className="space-y-4">
-                          {alertRealtimeLoading && !alertWindowVideo ? (
+                          {selectedAlertPlaybackLoading && !primaryAlertVideo ? (
+                            <div className="text-center py-12 text-slate-500">
+                              <RefreshCw className="w-12 h-12 mx-auto mb-3 opacity-50 animate-spin" />
+                              <p>Loading alert-time playback...</p>
+                              <p className="text-sm mt-2">Using the same timestamp-window playback flow as the playback tab.</p>
+                            </div>
+                          ) : alertRealtimeLoading && !primaryAlertVideo ? (
                             <div className="grid grid-cols-1 gap-4">
                               <Card className="p-4 border-slate-200 shadow-sm bg-slate-950 text-slate-100">
                                 <div className="aspect-video w-full rounded mb-3 border border-slate-700 bg-slate-800 animate-pulse" />
                               </Card>
                             </div>
-                          ) : alertWindowVideo ? (
+                          ) : primaryAlertVideo ? (
                             <Card className="p-4 border-slate-200 shadow-sm bg-slate-950 text-slate-100">
                               <UniversalVideoPlayer
-                                url={alertWindowVideo.url}
-                                fallbackUrls={alertWindowVideo.fallbackUrls || []}
+                                url={primaryAlertVideo.url}
+                                fallbackUrls={primaryAlertVideo.fallbackUrls || []}
                                 autoPlay={true}
                                 className="w-full rounded mb-3 border border-slate-700"
                               />
@@ -6276,7 +6333,7 @@ export default function Dashboard() {
                                 <div className="flex items-center gap-3">
                                   <Video className="w-5 h-5 text-cyan-300" />
                                   <div>
-                                    <p className="font-medium text-white">{alertWindowVideo.label || "Alert Window Video"}</p>
+                                    <p className="font-medium text-white">{primaryAlertVideo.label || "Alert Window Video"}</p>
                                     <p className="text-xs text-slate-300">Stored MP4 clip for this vehicle, channel, and alert time range.</p>
                                   </div>
                                 </div>
@@ -6285,11 +6342,11 @@ export default function Dashboard() {
                                     variant="outline"
                                     size="sm"
                                     className="border-cyan-400/40 bg-slate-900 text-cyan-200 hover:bg-slate-800"
-                                    onClick={() => setVideoPreview({ url: alertWindowVideo.url, label: alertWindowVideo.label || "Alert Window Video" })}
+                                    onClick={() => setVideoPreview({ url: primaryAlertVideo.url, label: primaryAlertVideo.label || "Alert Window Video" })}
                                   >
                                     Preview
                                   </Button>
-                                  <Button variant="outline" size="sm" onClick={() => window.open(alertWindowVideo.url, "_blank")}>
+                                  <Button variant="outline" size="sm" onClick={() => window.open(primaryAlertVideo.url, "_blank")}>
                                     <Download className="w-4 h-4 mr-2" />
                                     Download
                                   </Button>
@@ -6298,9 +6355,14 @@ export default function Dashboard() {
                             </Card>
                           ) : (
                             <div className="text-center py-12 text-slate-500">
-                              {selectedAlertVideoRequestState?.autoRequesting || selectedAlertVideoRequestState?.jobStatus === "queued" || selectedAlertVideoRequestState?.jobStatus === "running"
-                                ? "Preparing alert video from stored footage..."
-                                : "Alert video is not ready yet for this alert."}
+                              <p>
+                                {selectedAlertVideoRequestState?.autoRequesting || selectedAlertVideoRequestState?.jobStatus === "queued" || selectedAlertVideoRequestState?.jobStatus === "running"
+                                  ? "Preparing alert video from stored footage..."
+                                  : "Alert video is not ready yet for this alert."}
+                              </p>
+                              {selectedAlertPlaybackError ? (
+                                <p className="mt-2 text-sm text-rose-600">{selectedAlertPlaybackError}</p>
+                              ) : null}
                             </div>
                           )}
                         </div>

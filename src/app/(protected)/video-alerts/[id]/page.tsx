@@ -31,6 +31,7 @@ import {
 import { cn } from "@/lib/utils";
 import { format } from "date-fns";
 import CloseAlertModal from "@/components/modals/close-alert-modal";
+import { getAlertDisplayTimestamp, resolveAlertPlaybackVideos } from "@/lib/video-alert-playback";
 
 export default function AlertDetailPage({ params }) {
   const unwrappedParams = use(params);
@@ -49,6 +50,9 @@ export default function AlertDetailPage({ params }) {
   const [newNote, setNewNote] = useState("");
   const [addingNote, setAddingNote] = useState(false);
   const [showCloseModal, setShowCloseModal] = useState(false);
+  const [eventVideos, setEventVideos] = useState<any[]>([]);
+  const [loadingEventVideos, setLoadingEventVideos] = useState(false);
+  const [eventVideoError, setEventVideoError] = useState("");
   const [currentUser] = useState({ id: "user-1", name: "Current User", role: "Operator" });
   const [resolvedScreenshots, setResolvedScreenshots] = useState([]);
   const [screenshotsLoading, setScreenshotsLoading] = useState(false);
@@ -291,6 +295,42 @@ export default function AlertDetailPage({ params }) {
     };
   }, [selectedAlert]);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadEventVideos() {
+      if (!selectedAlert?.id) {
+        setEventVideos([]);
+        setEventVideoError("");
+        return;
+      }
+
+      setLoadingEventVideos(true);
+      setEventVideoError("");
+      try {
+        const videos = await resolveAlertPlaybackVideos(String(selectedAlert.id));
+        if (!cancelled) {
+          setEventVideos(videos);
+        }
+      } catch (error: any) {
+        if (!cancelled) {
+          setEventVideos([]);
+          setEventVideoError(error?.message || "Failed to load alert-time playback.");
+        }
+      } finally {
+        if (!cancelled) {
+          setLoadingEventVideos(false);
+        }
+      }
+    }
+
+    void loadEventVideos();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedAlert?.id]);
+
   const handleAddNote = async () => {
     if (!newNote.trim()) return;
     
@@ -350,6 +390,7 @@ export default function AlertDetailPage({ params }) {
 
   const severityConfig = getSeverityConfig(selectedAlert.severity);
   const SeverityIcon = severityConfig.icon;
+  const selectedAlertDisplayTimestamp = getAlertDisplayTimestamp(selectedAlert);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 pb-20">
@@ -487,22 +528,29 @@ export default function AlertDetailPage({ params }) {
               <TabsContent value="videos" className="mt-4">
                 <Card className="p-4">
                   <h3 className="text-lg font-semibold text-slate-900 mb-4">
-                    Event Video (SD Card)
+                    Event Video
                   </h3>
                   <div className="space-y-4">
-                    {resolvedVideos.length > 0 ? (
-                      resolvedVideos.map((video) => (
-                        <Card key={video.key} className="p-4">
-                          <video controls className="w-full rounded mb-3">
-                            <source src={video.url} type="video/mp4" />
+<<<<<<< HEAD
+                    {loadingEventVideos ? (
+                      <div className="text-center py-12 text-slate-500">
+                        <RefreshCw className="w-12 h-12 mx-auto mb-3 opacity-50 animate-spin" />
+                        <p>Loading alert-time playback...</p>
+                        <p className="text-sm mt-2">Using the same timestamp-window playback flow as the playback tab.</p>
+                      </div>
+                    ) : eventVideos.length > 0 ? (
+                      eventVideos.map((video, index) => (
+                        <Card key={video.key || index} className="p-4">
+                          <video controls className="w-full rounded mb-3 bg-black">
+                            <source src={video.url} />
                             Your browser does not support video playback.
                           </video>
                           <div className="flex items-center justify-between">
                             <div className="flex items-center gap-3">
                               <Video className="w-5 h-5 text-slate-600" />
                               <div>
-                                <p className="font-medium text-slate-900">{video.label}</p>
-                                <p className="text-sm text-slate-600">Playback resolved from alert media or stored video window</p>
+                                <p className="font-medium text-slate-900">{video.label || `Event Video ${index + 1}`}</p>
+                                <p className="text-sm text-slate-600">Timestamp-matched playback for this alert</p>
                               </div>
                             </div>
                             <Button
@@ -511,16 +559,26 @@ export default function AlertDetailPage({ params }) {
                               onClick={() => window.open(video.url, "_blank")}
                             >
                               <Download className="w-4 h-4 mr-2" />
-                              Download
+                              Open
                             </Button>
                           </div>
                         </Card>
                       ))
+                    ) : eventVideoError ? (
+                      <div className="text-center py-12 text-slate-500">
+                        <Video className="w-12 h-12 mx-auto mb-3 opacity-20" />
+                        <p>{eventVideoError}</p>
+                        <p className="text-sm mt-2">No timestamp-matched playback was ready for this alert.</p>
+                      </div>
                     ) : (
                       <div className="text-center py-12 text-slate-500">
                         <Video className="w-12 h-12 mx-auto mb-3 opacity-20" />
-                        <p>{videoLoading ? "Resolving playback from stored video..." : "No event video is available yet for this alert."}</p>
-                        <p className="text-sm mt-2">We fall back to vehicle + channel + alert time window when direct alert evidence is missing.</p>
+                        <p>{videoLoading ? "Resolving playback from stored video..." : "No alert-time playback available."}</p>
+                        <p className="text-sm mt-2">
+                          {videoLoading
+                            ? "We fall back to vehicle + channel + alert time window when direct alert evidence is missing."
+                            : "Try again once the timestamp window has been recorded."}
+                        </p>
                       </div>
                     )}
                   </div>
@@ -611,6 +669,16 @@ export default function AlertDetailPage({ params }) {
                     <p className="text-slate-600">Alert Type</p>
                     <p className="font-medium text-slate-900">
                       {selectedAlert.alert_type?.replace(/_/g, " ").toUpperCase() || "N/A"}
+                    </p>
+                  </div>
+                </div>
+                <Separator />
+                <div className="flex items-start gap-2">
+                  <Clock className="w-4 h-4 text-slate-500 mt-0.5" />
+                  <div>
+                    <p className="text-slate-600">Alert Time</p>
+                    <p className="font-medium text-slate-900">
+                      {selectedAlertDisplayTimestamp ? format(new Date(String(selectedAlertDisplayTimestamp)), "PPpp") : "N/A"}
                     </p>
                   </div>
                 </div>
