@@ -97,7 +97,7 @@ export async function CreateUser(formData: FormData) {
         permissions: permissions,
         energyrite: false,
         cost_code: "",
-        company: "EPS Courier Services"
+        company: "SRS"
     });
 
     if (insertError) {
@@ -154,7 +154,7 @@ export async function CreateUser(formData: FormData) {
             phone,
             password: tempPassword,
             role: "Driver",
-            company: "EPS Courier Services"
+            company: "SRS"
         });
         
         const emailStatus = emailResult.success ? 'Email sent' : 'Email failed';
@@ -168,7 +168,7 @@ export async function CreateUser(formData: FormData) {
         phone,
         password: tempPassword,
         role,
-        company: "EPS Courier Services",
+        company: "SRS",
         cost_code: "",
         site_id: ""
     });

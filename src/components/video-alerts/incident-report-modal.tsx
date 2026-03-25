@@ -4,18 +4,16 @@ import { useMemo, useState } from 'react'
 import Image from 'next/image'
 import { Button } from '@/components/ui/button'
 import { Printer, X } from 'lucide-react'
-
-interface ReportAlertDetails {
-  id?: string
-  type?: string
-  severity?: string
-  timestamp?: string
-  location?: { latitude?: number; longitude?: number; address?: string } | string
-  screenshots?: Array<{ url: string; timestamp?: string }>
-  videos?: Array<{ key?: string; label?: string; url?: string }>
-}
-type ScreenshotInput = { url?: string; storage_url?: string; signed_url?: string; image_url?: string; timestamp?: string }
-type VideoInput = { key?: string; label?: string; url?: string; src?: string; path?: string }
+import EvidenceAnnexure from '@/components/video-alerts/evidence-annexure'
+import {
+  ReportAlertDetails,
+  formatReportDate,
+  formatReportDateTime,
+  formatReportTime,
+  normalizeReportScreenshots,
+  normalizeReportVideos,
+  resolveReportLocationText,
+} from '@/components/video-alerts/report-support'
 
 interface IncidentReportModalProps {
   isOpen: boolean
@@ -46,42 +44,14 @@ export default function IncidentReportModal({ isOpen, onClose, onSaved, driverIn
   const [designation, setDesignation] = useState('')
 
   const timestamp = alertDetails?.timestamp || driverInfo.timestamp
-  const dateValue = timestamp ? new Date(timestamp).toISOString().slice(0, 10) : ''
-  const timeValue = timestamp ? new Date(timestamp).toISOString().slice(11, 16) : ''
-
-  const locationText = useMemo(() => {
-    if (typeof alertDetails?.location === 'string') return alertDetails.location
-    if (alertDetails?.location?.latitude !== undefined && alertDetails?.location?.longitude !== undefined) {
-      return `${alertDetails.location.latitude}, ${alertDetails.location.longitude}`
-    }
-    return driverInfo.location || 'Unknown location'
-  }, [alertDetails?.location, driverInfo.location])
-  const annexureScreenshots = useMemo(() => {
-    const input = Array.isArray(alertDetails?.screenshots) ? (alertDetails.screenshots as ScreenshotInput[]) : []
-    const out: Array<{ url: string; timestamp?: string }> = []
-    const seen = new Set<string>()
-    for (const shot of input) {
-      const url = String(shot?.url || shot?.storage_url || shot?.signed_url || shot?.image_url || '').trim()
-      if (!url || (!/^https?:\/\//i.test(url) && !url.startsWith('/'))) continue
-      if (seen.has(url)) continue
-      seen.add(url)
-      out.push({ url, timestamp: shot?.timestamp })
-    }
-    return out
-  }, [alertDetails?.screenshots])
-  const annexureVideos = useMemo(() => {
-    const input = Array.isArray(alertDetails?.videos) ? (alertDetails.videos as VideoInput[]) : []
-    const out: Array<{ key?: string; label?: string; url?: string }> = []
-    const seen = new Set<string>()
-    for (const v of input) {
-      const url = String(v?.url || v?.src || v?.path || '').trim()
-      if (!url || (!/^https?:\/\//i.test(url) && !url.startsWith('/'))) continue
-      if (seen.has(url)) continue
-      seen.add(url)
-      out.push({ key: v?.key, label: v?.label, url })
-    }
-    return out
-  }, [alertDetails?.videos])
+  const dateValue = formatReportDate(timestamp)
+  const timeValue = formatReportTime(timestamp)
+  const locationText = useMemo(
+    () => resolveReportLocationText(alertDetails?.location, driverInfo.location),
+    [alertDetails?.location, driverInfo.location]
+  )
+  const annexureScreenshots = useMemo(() => normalizeReportScreenshots(alertDetails?.screenshots), [alertDetails?.screenshots])
+  const annexureVideos = useMemo(() => normalizeReportVideos(alertDetails?.videos), [alertDetails?.videos])
 
   const handlePrint = () => window.print()
 
@@ -138,7 +108,7 @@ export default function IncidentReportModal({ isOpen, onClose, onSaved, driverIn
     <div className="fixed inset-0 z-50 bg-black/60 p-3 md:p-6">
       <div className="mx-auto h-full w-full max-w-[1100px] overflow-hidden rounded-xl border-2 border-blue-900 bg-slate-100 shadow-2xl flex flex-col">
         <div className="border-b border-blue-900 bg-gradient-to-r from-blue-950 via-blue-900 to-sky-700 px-4 py-3 text-white flex items-center justify-between">
-          <h2 className="text-base font-semibold">Incident Report Template</h2>
+          <h2 className="text-base font-semibold">Incident Report</h2>
           <div className="flex gap-2">
             <Button size="sm" onClick={handleSave} disabled={saving}>{saving ? 'Saving...' : 'Save Report'}</Button>
             <Button size="sm" variant="outline" onClick={handlePrint}><Printer className="w-4 h-4 mr-2" />Print</Button>
@@ -155,12 +125,12 @@ export default function IncidentReportModal({ isOpen, onClose, onSaved, driverIn
                 </div>
                 <div className="col-span-6 border-r border-slate-500">
                   <div className="border-b border-slate-500 bg-slate-200 p-2 text-center text-xl font-medium text-slate-600">PREMIER LOGISTICS SOLUTIONS</div>
-                  <div className="border-b border-slate-500 bg-slate-100 p-2 text-center text-2xl font-semibold text-slate-600">Incident report template</div>
+                  <div className="border-b border-slate-500 bg-slate-100 p-2 text-center text-2xl font-semibold text-slate-600">Incident report</div>
                   <div className="p-2 text-center text-3xl font-medium text-slate-700">Meyerton</div>
                 </div>
                 <div className="col-span-3 text-xs">
                   <div className="border-b border-slate-500 p-2 text-center text-slate-600">Document Number</div>
-                  <div className="border-b border-slate-500 p-2 text-center font-semibold">Incident report template /00</div>
+                  <div className="border-b border-slate-500 p-2 text-center font-semibold">Incident report /00</div>
                   <div className="border-b border-slate-500 p-2 text-center text-slate-600">Revision Number / Date</div>
                   <div className="border-b border-slate-500 p-2 text-center font-semibold">00 / 10th January 2028</div>
                   <div className="border-b border-slate-500 p-2 text-center text-slate-600">Revised by</div>
@@ -169,7 +139,7 @@ export default function IncidentReportModal({ isOpen, onClose, onSaved, driverIn
               </div>
             </div>
 
-            <h3 className="text-center text-3xl font-semibold uppercase tracking-wide text-blue-900 underline">Incident Report Template</h3>
+            <h3 className="text-center text-3xl font-semibold uppercase tracking-wide text-blue-900 underline">Incident Report</h3>
 
             <div className="grid grid-cols-12 border border-slate-500">
               <div className="col-span-5 border-r border-slate-500 p-2 font-semibold text-slate-700 underline">Date:</div>
@@ -202,7 +172,7 @@ export default function IncidentReportModal({ isOpen, onClose, onSaved, driverIn
             </div>
             <div className="grid grid-cols-12 border border-slate-500">
               <div className="col-span-6 border-r border-slate-500 p-2 font-semibold text-slate-700 underline">Date and Time of Incident:</div>
-              <div className="col-span-6 p-2">{timestamp ? new Date(timestamp).toLocaleString('en-GB') : ''}</div>
+              <div className="col-span-6 p-2">{formatReportDateTime(timestamp)}</div>
             </div>
             <div className="grid grid-cols-12 border border-slate-500">
               <div className="col-span-6 border-r border-slate-500 p-2 font-semibold text-slate-700 underline">Fleet/ Vehicle Number:</div>
@@ -249,40 +219,13 @@ export default function IncidentReportModal({ isOpen, onClose, onSaved, driverIn
               <div className="col-span-6 p-1"><input className="h-10 w-full border border-slate-500 px-3" value={designation} onChange={(e) => setDesignation(e.target.value)} /></div>
             </div>
 
-            <div className="space-y-2 border border-slate-500 p-3">
-              <p className="font-semibold text-slate-800">Annexure A (Picture/Video Evidence)</p>
-              <div className="grid grid-cols-2 gap-2 border border-slate-500 p-2 text-xs">
-                <div><span className="font-semibold">Alert ID:</span> {alertDetails?.id || 'N/A'}</div>
-                <div><span className="font-semibold">Type:</span> {alertDetails?.type || 'N/A'}</div>
-                <div><span className="font-semibold">Severity:</span> {alertDetails?.severity || 'N/A'}</div>
-                <div><span className="font-semibold">Location:</span> {locationText}</div>
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                {annexureScreenshots.map((shot, idx) => (
-                  <div key={`${shot.url}-${idx}`} className="border border-slate-500 p-2">
-                    <div className="text-xs font-semibold mb-1">Screenshot {idx + 1}</div>
-                    <img src={shot.url} alt={`Screenshot ${idx + 1}`} className="w-full h-36 object-cover border border-slate-500" />
-                  </div>
-                ))}
-                {annexureVideos.map((video, idx) => (
-                  <div key={`${video.url}-${idx}`} className="border border-slate-500 p-2">
-                    <div className="text-xs font-semibold mb-1">{video.label || `Video ${idx + 1}`}</div>
-                    {video.url ? (
-                      <video controls className="w-full h-36 bg-black border border-slate-500">
-                        <source src={video.url} />
-                      </video>
-                    ) : (
-                      <div className="h-36 border border-slate-500 flex items-center justify-center text-xs text-slate-500">No video URL</div>
-                    )}
-                  </div>
-                ))}
-                {annexureScreenshots.length === 0 && annexureVideos.length === 0 ? (
-                  <div className="col-span-2 border border-slate-500 p-4 text-center text-xs text-slate-600">
-                    No evidence media attached on this alert.
-                  </div>
-                ) : null}
-              </div>
-            </div>
+            <EvidenceAnnexure
+              alertDetails={alertDetails}
+              driverInfo={driverInfo}
+              locationText={locationText}
+              screenshots={annexureScreenshots}
+              videos={annexureVideos}
+            />
           </div>
         </div>
       </div>

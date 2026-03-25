@@ -67,6 +67,7 @@ export default function VideoAlertsDashboardTab({
     if (!incoming || typeof incoming !== "object") return null;
 
     const vehicleMeta = incoming?.metadata?.vehicle || incoming?.vehicle || {};
+    const displayTimestamp = getAlertDisplayTimestamp(incoming) || incoming.timestamp || incoming.created_at || incoming.alert_timestamp || new Date().toISOString();
     const id = String(incoming.id || incoming.alert_id || incoming.alertId || "").trim();
     const title = String(incoming.title || incoming.type || incoming.alert_type || "Alert").trim();
     const severity = String(incoming.severity || incoming.priority || "low").toLowerCase();
@@ -86,7 +87,7 @@ export default function VideoAlertsDashboardTab({
 
     return {
       ...incoming,
-      id: id || `${vehicle}-${title}-${incoming.timestamp || incoming.created_at || Date.now()}`,
+      id: id || `${vehicle}-${title}-${displayTimestamp || Date.now()}`,
       title,
       alert_type: incoming.alert_type || incoming.type || title.toLowerCase().replace(/\s+/g, "_"),
       severity,
@@ -94,7 +95,8 @@ export default function VideoAlertsDashboardTab({
       status: String(incoming.status || "new").toLowerCase(),
       vehicle_registration: vehicle,
       driver_name: incoming.driver_name || incoming.driver || incoming?.metadata?.driverName || "Unknown",
-      timestamp: incoming.timestamp || incoming.created_at || incoming.alert_timestamp || new Date().toISOString(),
+      timestamp: displayTimestamp,
+      lastOccurrenceTimestamp: displayTimestamp,
     };
   }, []);
 
@@ -106,7 +108,7 @@ export default function VideoAlertsDashboardTab({
       byId.set(String(normalized.id), { ...(byId.get(String(normalized.id)) || {}), ...normalized });
     }
     return Array.from(byId.values()).sort(
-      (a: any, b: any) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+      (a: any, b: any) => new Date(getAlertDisplayTimestamp(b) || b.timestamp || 0).getTime() - new Date(getAlertDisplayTimestamp(a) || a.timestamp || 0).getTime()
     );
   }, [normalizeAlert]);
 
@@ -648,7 +650,7 @@ export default function VideoAlertsDashboardTab({
             <div className="truncate text-slate-500">{alert.driver_name || "Unknown"}</div>
           </div>
           <div>
-            <div className="text-[10px] uppercase tracking-wide text-slate-400">Time</div>
+            <div className="text-[10px] uppercase tracking-wide text-slate-400">Last Occurrence</div>
             <div className="text-slate-900">{formatRawAlertTimestamp(getAlertDisplayTimestamp(alert), "date")}</div>
             <div className="text-slate-500">{formatRawAlertTimestamp(getAlertDisplayTimestamp(alert), "time")}</div>
           </div>

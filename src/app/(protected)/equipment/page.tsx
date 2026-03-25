@@ -63,7 +63,7 @@ export default function EquipmentPage() {
 
   // Form state for Add dialog
   const [isAddOpen, setIsAddOpen] = useState(false)
-  const [company, setCompany] = useState('EPS COURIER SERVICES')
+  const [company, setCompany] = useState('SRS')
   const [reg, setReg] = useState('')
   const [skylinkProIp, setSkylinkProIp] = useState('')
   const [keypad, setKeypad] = useState('')
@@ -76,7 +76,7 @@ export default function EquipmentPage() {
   const [searchTerm, setSearchTerm] = useState('')
 
   const resetForm = () => {
-    setCompany('EPS COURIER SERVICES')
+    setCompany('SRS')
     setReg('')
     setSkylinkProIp('')
     setKeypad('')

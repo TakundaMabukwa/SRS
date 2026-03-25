@@ -47,7 +47,7 @@ export async function resetUserPassword(userId: string, email: string) {
             phone: driverData.cell_number || userData.phone,
             password: newPassword,
             role: "Driver",
-            company: "EPS Courier Services"
+            company: "SRS"
         });
 
         return { 
@@ -74,7 +74,7 @@ export async function resetUserPassword(userId: string, email: string) {
             phone: userData?.phone,
             password: newPassword,
             role: "User",
-            company: "EPS Courier Services"
+            company: "SRS"
         });
 
         return { 

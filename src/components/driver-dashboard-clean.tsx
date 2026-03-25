@@ -584,7 +584,7 @@ export default function DriverDashboard() {
               <div className="space-y-6">
                 {/* Header */}
                 <div className="bg-gradient-to-r from-sky-100 via-blue-50 to-cyan-50 shadow-lg p-6 border border-blue-200 rounded-lg text-slate-800">
-                  <h1 className="font-bold text-2xl text-center">EPS Courier Services - Executive Dashboard</h1>
+                  <h1 className="font-bold text-2xl text-center">SRS - Executive Dashboard</h1>
                 </div>
 
                  {/* Material UI Charts */}

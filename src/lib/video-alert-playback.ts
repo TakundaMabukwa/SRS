@@ -9,6 +9,8 @@ export type AlertPlaybackVideo = {
 type AlertPlaybackSource = string | { [key: string]: any };
 
 const DEFAULT_VIDEO_PROXY_BASE = "/api/video-server";
+const ALERT_PLAYBACK_WINDOW_BEFORE_MS = 6 * 1000;
+const ALERT_PLAYBACK_WINDOW_AFTER_MS = 6 * 1000;
 const DIRECT_VIDEO_HUB_BASE = String(
   process.env.NEXT_PUBLIC_VIDEO_HUB_BASE_URL ||
     process.env.NEXT_PUBLIC_VIDEO_BASE_URL ||
@@ -50,35 +52,6 @@ export function normalizeBackendMediaUrl(url: string, videoProxyBase = DEFAULT_V
   return `${videoProxyBase}/${value.replace(/^\/+/, "")}`;
 }
 
-export function getAlertDisplayTimestamp(alert: any) {
-  return (
-    alert?.timestamp ||
-    alert?.alertTimestamp ||
-    alert?.alert_timestamp ||
-    alert?.created_at ||
-    alert?.timestampLocal ||
-    alert?.timestamp_local ||
-    alert?.alertTimestampLocal ||
-    alert?.alert_timestamp_local ||
-    null
-  );
-}
-
-export function getAlertPlaybackTimestamp(alert: any) {
-  return (
-    alert?.timestamp ||
-    alert?.alertTimestamp ||
-    alert?.alert_timestamp ||
-    alert?.metadata?.locationFix?.timestamp ||
-    alert?.created_at ||
-    alert?.timestampLocal ||
-    alert?.timestamp_local ||
-    alert?.alertTimestampLocal ||
-    alert?.alert_timestamp_local ||
-    null
-  );
-}
-
 type RawAlertTimestampParts = {
   year: number;
   month: number;
@@ -101,6 +74,90 @@ function parseRawAlertTimestampParts(value: unknown): RawAlertTimestampParts | n
     minute: Number(match[5]),
     second: Number(match[6] || 0),
   };
+}
+
+function getRawAlertTimestampValue(value: unknown) {
+  return String(value || "").trim();
+}
+
+function timestampToComparableMs(value: unknown) {
+  const raw = getRawAlertTimestampValue(value);
+  if (!raw) return Number.NaN;
+
+  const parsedRaw = parseRawAlertTimestampParts(raw);
+  if (parsedRaw) {
+    return Date.UTC(
+      parsedRaw.year,
+      Math.max(0, parsedRaw.month - 1),
+      parsedRaw.day,
+      parsedRaw.hour,
+      parsedRaw.minute,
+      parsedRaw.second,
+      0
+    );
+  }
+
+  const nativeMs = new Date(raw).getTime();
+  return Number.isFinite(nativeMs) ? nativeMs : Number.NaN;
+}
+
+function collectAlertTimestampCandidates(alert: any) {
+  const metadata = alert?.metadata || {};
+  const vendorExtensions = Array.isArray(metadata?.vendorExtensions) ? metadata.vendorExtensions : [];
+
+  return [
+    alert?.lastOccurrenceTimestamp,
+    alert?.last_occurrence_timestamp,
+    alert?.lastOccurrenceAt,
+    alert?.last_occurrence_at,
+    alert?.lastOccurrence,
+    alert?.last_occurrence,
+    alert?.latestTimestamp,
+    alert?.latest_timestamp,
+    alert?.timestamp,
+    alert?.alertTimestamp,
+    alert?.alert_timestamp,
+    alert?.created_at,
+    alert?.timestampLocal,
+    alert?.timestamp_local,
+    alert?.alertTimestampLocal,
+    alert?.alert_timestamp_local,
+    metadata?.timestamp,
+    metadata?.eventTimestamp,
+    metadata?.event_timestamp,
+    metadata?.resourceEndTime,
+    metadata?.resource_end_time,
+    metadata?.resourceStartTime,
+    metadata?.resource_start_time,
+    metadata?.sourceTimestamp,
+    metadata?.source_timestamp,
+    metadata?.locationFix?.timestamp,
+    ...vendorExtensions.map((entry: any) => entry?.sourceTimestamp),
+  ]
+    .map(getRawAlertTimestampValue)
+    .filter(Boolean);
+}
+
+export function getAlertDisplayTimestamp(alert: any) {
+  const candidates = collectAlertTimestampCandidates(alert);
+  if (candidates.length === 0) return null;
+
+  let latestValue = candidates[0];
+  let latestMs = timestampToComparableMs(latestValue);
+
+  for (const candidate of candidates.slice(1)) {
+    const candidateMs = timestampToComparableMs(candidate);
+    if (Number.isFinite(candidateMs) && (!Number.isFinite(latestMs) || candidateMs > latestMs)) {
+      latestValue = candidate;
+      latestMs = candidateMs;
+    }
+  }
+
+  return latestValue || null;
+}
+
+export function getAlertPlaybackTimestamp(alert: any) {
+  return getAlertDisplayTimestamp(alert);
 }
 
 export function formatRawAlertTimestamp(
@@ -199,8 +256,8 @@ async function resolvePlaybackWindowForAlert(alert: any, videoProxyBase = DEFAUL
   const alertTime = new Date(timestamp);
   if (Number.isNaN(alertTime.getTime())) return [];
 
-  const startIso = new Date(alertTime.getTime() - 30 * 1000).toISOString();
-  const endIso = new Date(alertTime.getTime() + 30 * 1000).toISOString();
+  const startIso = new Date(alertTime.getTime() - ALERT_PLAYBACK_WINDOW_BEFORE_MS).toISOString();
+  const endIso = new Date(alertTime.getTime() + ALERT_PLAYBACK_WINDOW_AFTER_MS).toISOString();
 
   let lastError: Error | null = null;
 

@@ -4,18 +4,13 @@ import { useEffect, useMemo, useState } from 'react'
 import Image from 'next/image'
 import { Button } from '@/components/ui/button'
 import { Printer, X } from 'lucide-react'
-
-interface AlertDetails {
-  id?: string
-  type?: string
-  severity?: string
-  timestamp?: string
-  location?: { latitude?: number; longitude?: number; address?: string } | string
-  screenshots?: Array<{ url: string; timestamp?: string }>
-  videos?: Array<{ key?: string; label?: string; url?: string }>
-}
-type ScreenshotInput = { url?: string; storage_url?: string; signed_url?: string; image_url?: string; timestamp?: string }
-type VideoInput = { key?: string; label?: string; url?: string; src?: string; path?: string }
+import EvidenceAnnexure from '@/components/video-alerts/evidence-annexure'
+import {
+  ReportAlertDetails as AlertDetails,
+  normalizeReportScreenshots,
+  normalizeReportVideos,
+  resolveReportLocationText,
+} from '@/components/video-alerts/report-support'
 
 interface SpeedingModalProps {
   isOpen: boolean
@@ -60,13 +55,10 @@ export default function NCRSpeedingModal({ isOpen, onClose, onSaved, driverInfo,
     []
   )
 
-  const locationText = useMemo(() => {
-    if (typeof alertDetails?.location === 'string') return alertDetails.location
-    if (alertDetails?.location?.latitude !== undefined && alertDetails?.location?.longitude !== undefined) {
-      return `${alertDetails.location.latitude}, ${alertDetails.location.longitude}`
-    }
-    return driverInfo.location || 'Unknown location'
-  }, [alertDetails?.location, driverInfo.location])
+  const locationText = useMemo(
+    () => resolveReportLocationText(alertDetails?.location, driverInfo.location),
+    [alertDetails?.location, driverInfo.location]
+  )
   useEffect(() => {
     if (!isOpen) return
     try {
@@ -99,32 +91,8 @@ export default function NCRSpeedingModal({ isOpen, onClose, onSaved, driverInfo,
         ? 'bg-green-200 text-green-900 font-semibold'
         : 'hover:bg-slate-100',
     ].join(' ')
-  const annexureScreenshots = useMemo(() => {
-    const input = Array.isArray(alertDetails?.screenshots) ? (alertDetails.screenshots as ScreenshotInput[]) : []
-    const out: Array<{ url: string; timestamp?: string }> = []
-    const seen = new Set<string>()
-    for (const shot of input) {
-      const url = String(shot?.url || shot?.storage_url || shot?.signed_url || shot?.image_url || '').trim()
-      if (!url || (!/^https?:\/\//i.test(url) && !url.startsWith('/'))) continue
-      if (seen.has(url)) continue
-      seen.add(url)
-      out.push({ url, timestamp: shot?.timestamp })
-    }
-    return out
-  }, [alertDetails?.screenshots])
-  const annexureVideos = useMemo(() => {
-    const input = Array.isArray(alertDetails?.videos) ? (alertDetails.videos as VideoInput[]) : []
-    const out: Array<{ key?: string; label?: string; url?: string }> = []
-    const seen = new Set<string>()
-    for (const v of input) {
-      const url = String(v?.url || v?.src || v?.path || '').trim()
-      if (!url || (!/^https?:\/\//i.test(url) && !url.startsWith('/'))) continue
-      if (seen.has(url)) continue
-      seen.add(url)
-      out.push({ key: v?.key, label: v?.label, url })
-    }
-    return out
-  }, [alertDetails?.videos])
+  const annexureScreenshots = useMemo(() => normalizeReportScreenshots(alertDetails?.screenshots), [alertDetails?.screenshots])
+  const annexureVideos = useMemo(() => normalizeReportVideos(alertDetails?.videos), [alertDetails?.videos])
 
   const handlePrint = () => window.print()
 
@@ -337,42 +305,14 @@ export default function NCRSpeedingModal({ isOpen, onClose, onSaved, driverInfo,
             </div>
 
             <div className="p-3 text-sm border-b border-black">
-              <div className="font-bold text-lg mb-2">Annexture A (Picture/Video Evidence)</div>
-              <div className="mb-3 grid grid-cols-2 gap-2 border border-black p-2 text-xs">
-                <div><span className="font-semibold">Alert ID:</span> {alertDetails?.id || 'N/A'}</div>
-                <div><span className="font-semibold">Type:</span> {alertDetails?.type || 'N/A'}</div>
-                <div><span className="font-semibold">Severity:</span> {alertDetails?.severity || 'N/A'}</div>
-                <div><span className="font-semibold">Location:</span> {locationText}</div>
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                {annexureScreenshots.map((shot, idx) => (
-                  <div key={`${shot.url}-${idx}`} className="border border-black p-2">
-                    <div className="text-xs font-semibold mb-1">Screenshot {idx + 1}</div>
-                    <img src={shot.url} alt={`Evidence ${idx + 1}`} className="w-full h-40 object-cover border border-black" />
-                    <div className="text-[11px] mt-1">{shot.timestamp ? new Date(shot.timestamp).toLocaleString('en-GB') : ''}</div>
-                  </div>
-                ))}
-                {annexureVideos.map((video, idx) => (
-                  <div key={`${video.url}-${idx}`} className="border border-black p-2">
-                    <div className="text-xs font-semibold mb-1">{video.label || `Video ${idx + 1}`}</div>
-                    {video.url ? (
-                      <>
-                        <video controls className="w-full h-40 bg-black border border-black">
-                          <source src={video.url} />
-                        </video>
-                        <div className="text-[11px] mt-1 break-all">{video.url}</div>
-                      </>
-                    ) : (
-                      <div className="h-40 border border-black flex items-center justify-center text-xs text-slate-500">No video URL</div>
-                    )}
-                  </div>
-                ))}
-                {annexureScreenshots.length === 0 && annexureVideos.length === 0 ? (
-                  <div className="col-span-2 border border-black p-4 text-center text-xs text-slate-600">
-                    No evidence media attached on this alert.
-                  </div>
-                ) : null}
-              </div>
+              <EvidenceAnnexure
+                title="Annexure A (Picture/Video Evidence)"
+                alertDetails={alertDetails}
+                driverInfo={driverInfo}
+                locationText={locationText}
+                screenshots={annexureScreenshots}
+                videos={annexureVideos}
+              />
             </div>
 
             <div className="grid grid-cols-4 text-sm">

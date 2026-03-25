@@ -4,16 +4,13 @@ import { useMemo, useState } from 'react'
 import Image from 'next/image'
 import { Button } from '@/components/ui/button'
 import { Printer, X } from 'lucide-react'
-
-interface ReportAlertDetails {
-  id?: string
-  type?: string
-  severity?: string
-  timestamp?: string
-  location?: { latitude?: number; longitude?: number; address?: string } | string
-  screenshots?: Array<{ url: string; timestamp?: string }>
-  videos?: Array<{ key?: string; label?: string; url?: string }>
-}
+import EvidenceAnnexure from '@/components/video-alerts/evidence-annexure'
+import {
+  ReportAlertDetails,
+  normalizeReportScreenshots,
+  normalizeReportVideos,
+  resolveReportLocationText,
+} from '@/components/video-alerts/report-support'
 
 interface DispatchReportModalProps {
   isOpen: boolean
@@ -66,14 +63,12 @@ export default function DispatchReportModal({
   const dateOfDispatch = toDateValue(timestamp)
   const timeStoodDown = ''
 
-  const locationText = useMemo(() => {
-    if (typeof alertDetails?.location === 'string') return alertDetails.location
-    if (alertDetails?.location?.address) return alertDetails.location.address
-    if (alertDetails?.location?.latitude !== undefined && alertDetails?.location?.longitude !== undefined) {
-      return `${alertDetails.location.latitude}, ${alertDetails.location.longitude}`
-    }
-    return driverInfo.location || 'Unknown location'
-  }, [alertDetails?.location, driverInfo.location])
+  const locationText = useMemo(
+    () => resolveReportLocationText(alertDetails?.location, driverInfo.location),
+    [alertDetails?.location, driverInfo.location]
+  )
+  const annexureScreenshots = useMemo(() => normalizeReportScreenshots(alertDetails?.screenshots), [alertDetails?.screenshots])
+  const annexureVideos = useMemo(() => normalizeReportVideos(alertDetails?.videos), [alertDetails?.videos])
 
   const cityText = useMemo(() => {
     const base = driverInfo.location || (typeof alertDetails?.location === 'string' ? alertDetails.location : '')
@@ -239,6 +234,14 @@ export default function DispatchReportModal({
                   </div>
                 </div>
               </div>
+
+              <EvidenceAnnexure
+                alertDetails={alertDetails}
+                driverInfo={driverInfo}
+                locationText={locationText}
+                screenshots={annexureScreenshots}
+                videos={annexureVideos}
+              />
             </div>
           </div>
         </div>

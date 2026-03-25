@@ -40,7 +40,7 @@ export default function AuthLayout({ children }: AuthLayoutProps) {
 
         {/* Footer */}
         <div className="mt-6 text-center text-xs text-[#7A7D85]">
-          © 2025 EPS Courier Services. All rights reserved.
+          © 2025 Sotario Risk Solutions. All rights reserved.
         </div>
       </div>
 
