@@ -249,6 +249,7 @@ function getAlertChannel(alert: any) {
 
 async function resolvePlaybackWindowForAlert(alert: any, videoProxyBase = DEFAULT_VIDEO_PROXY_BASE): Promise<AlertPlaybackVideo[]> {
   const vehicleId = getAlertVehicleId(alert);
+  const alertId = String(alert?.id || "").trim();
   const timestamp = getAlertPlaybackTimestamp(alert);
   const channel = getAlertChannel(alert);
   if (!vehicleId || !timestamp) return [];
@@ -319,6 +320,71 @@ async function resolvePlaybackWindowForAlert(alert: any, videoProxyBase = DEFAUL
       ];
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
+    }
+  }
+
+  if (alertId) {
+    for (const playbackBase of getPlaybackRequestBases(videoProxyBase)) {
+      try {
+        const res = await fetch(`${playbackBase}/alerts/${encodeURIComponent(alertId)}/request-report-video`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            lookbackSeconds: 30,
+            forwardSeconds: 30,
+            queryResources: true,
+            requestDownload: true,
+          }),
+        });
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok || !json?.success) {
+          throw new Error(json?.message || `HTTP ${res.status}`);
+        }
+
+        const data = json?.data || {};
+        const playbackJobUrl = normalizeBackendMediaUrl(String(data?.playbackJobUrl || "").trim(), playbackBase);
+        const directUrl = normalizeBackendMediaUrl(
+          String(data?.persistedVideoUrl || "").trim() ||
+            (data?.persistedVideoId ? `${playbackBase}/videos/${encodeURIComponent(String(data.persistedVideoId))}/file` : "") ||
+            String(data?.outputUrl || "").trim() ||
+            playbackJobUrl,
+          playbackBase
+        );
+        if (directUrl && !/\/videos\/jobs\/JOB-LOCAL-/i.test(directUrl)) {
+          return [
+            {
+              key: `camera_direct_${alertId}_${channel}`,
+              label: `Camera Playback CH${channel}`,
+              url: directUrl,
+            },
+          ];
+        }
+
+        const liveUrl = normalizeBackendMediaUrl(String(data?.streamUrl || "").trim(), playbackBase);
+        if (liveUrl) {
+          return [
+            {
+              key: `camera_live_${alertId}_${channel}`,
+              label: `Camera Live Fallback CH${channel}`,
+              url: liveUrl,
+            },
+          ];
+        }
+
+        const jobId = String(data?.playbackJobId || "").trim();
+        if (jobId) {
+          const resolvedUrl = await pollPlaybackJob(jobId, playbackBase, playbackJobUrl);
+          return [
+            {
+              key: `camera_job_${jobId}`,
+              label: `Camera Playback CH${channel}`,
+              url: resolvedUrl,
+            },
+          ];
+        }
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+      }
     }
   }
 
