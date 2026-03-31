@@ -52,6 +52,7 @@ export default function VideoAlertsDashboardTab({
   const videoProxyBase = "/api/video-server";
   const [searchTerm, setSearchTerm] = useState("");
   const [activeTab, setActiveTab] = useState("all"); 
+  const [showVideoOnly, setShowVideoOnly] = useState(true);
   const [levelFilter, setLevelFilter] = useState<"all" | "critical" | "high" | "medium" | "low">(
     standaloneSeverity && standaloneSeverity !== "all" ? standaloneSeverity : "all"
   );
@@ -60,8 +61,11 @@ export default function VideoAlertsDashboardTab({
   );
   const [sourceAlerts, setSourceAlerts] = useState<any[]>([]);
   const [realtimeAlerts, setRealtimeAlerts] = useState<any[]>([]);
+  const [videoAvailability, setVideoAvailability] = useState<Record<string, boolean>>({});
   const [popoutTargets, setPopoutTargets] = useState<Record<string, HTMLElement | null>>({});
   const popoutTargetsRef = useRef<Record<string, HTMLElement | null>>({});
+  const availabilityCacheRef = useRef<Map<string, any[]>>(new Map());
+  const pendingAvailabilityKeysRef = useRef<Set<string>>(new Set());
 
   const normalizeAlert = useCallback((incoming: any) => {
     if (!incoming || typeof incoming !== "object") return null;
@@ -124,6 +128,94 @@ export default function VideoAlertsDashboardTab({
       (a: any, b: any) => new Date(getAlertDisplayTimestamp(b) || b.timestamp || 0).getTime() - new Date(getAlertDisplayTimestamp(a) || a.timestamp || 0).getTime()
     );
   }, [normalizeAlert]);
+
+  const getAvailabilityDate = useCallback((alert: any) => {
+    const displayTimestamp = getAlertDisplayTimestamp(alert);
+    if (!displayTimestamp) return "";
+    const date = new Date(displayTimestamp);
+    if (Number.isNaN(date.getTime())) return "";
+    return date.toISOString().slice(0, 10);
+  }, []);
+
+  const alertHasVideoInChannels = useCallback((alert: any, channels: any[]) => {
+    const timestamp = new Date(getAlertDisplayTimestamp(alert) || "");
+    if (Number.isNaN(timestamp.getTime())) return false;
+
+    const wantedChannel = Number(alert?.channel || alert?.metadata?.channel || 1) || 1;
+    const matchingChannel = channels.find((entry: any) => Number(entry?.channel || 1) === wantedChannel);
+    const clips = Array.isArray(matchingChannel?.clips) ? matchingChannel.clips : [];
+
+    return clips.some((clip: any) => {
+      const clipStart = new Date(clip?.startTime || 0);
+      const clipEnd = new Date(clip?.endTime || clip?.startTime || 0);
+      if (Number.isNaN(clipStart.getTime()) || Number.isNaN(clipEnd.getTime())) return false;
+      return clipStart.getTime() <= timestamp.getTime() && clipEnd.getTime() >= timestamp.getTime();
+    });
+  }, []);
+
+  const refreshVideoAvailability = useCallback(async (alerts: any[]) => {
+    const normalizedAlerts = alerts
+      .map((alert) => normalizeAlert(alert))
+      .filter((alert): alert is any => Boolean(alert?.id));
+
+    const nextMap: Record<string, boolean> = {};
+    const requests: Array<Promise<void>> = [];
+
+    for (const alert of normalizedAlerts) {
+      const vehicleId = String(alert?.vehicleId || alert?.device_id || alert?.metadata?.vehicle?.vehicleId || "").trim();
+      const date = getAvailabilityDate(alert);
+      if (!vehicleId || !date) {
+        nextMap[String(alert.id)] = false;
+        continue;
+      }
+
+      const cacheKey = `${vehicleId}:${date}`;
+      const cachedChannels = availabilityCacheRef.current.get(cacheKey);
+      if (cachedChannels) {
+        nextMap[String(alert.id)] = alertHasVideoInChannels(alert, cachedChannels);
+        continue;
+      }
+
+      if (!pendingAvailabilityKeysRef.current.has(cacheKey)) {
+        pendingAvailabilityKeysRef.current.add(cacheKey);
+        requests.push(
+          fetch(`${videoProxyBase}/vehicles/${encodeURIComponent(vehicleId)}/videos/availability?date=${encodeURIComponent(date)}`, {
+            cache: "no-store",
+          })
+            .then((res) => readJsonSafely(res))
+            .then((json) => {
+              const channels = Array.isArray(json?.data?.channels) ? json.data.channels : [];
+              availabilityCacheRef.current.set(cacheKey, channels);
+            })
+            .catch(() => {
+              availabilityCacheRef.current.set(cacheKey, []);
+            })
+            .finally(() => {
+              pendingAvailabilityKeysRef.current.delete(cacheKey);
+            })
+        );
+      }
+    }
+
+    if (Object.keys(nextMap).length > 0) {
+      setVideoAvailability((prev) => ({ ...prev, ...nextMap }));
+    }
+
+    if (requests.length === 0) return;
+
+    await Promise.all(requests);
+
+    const resolvedMap: Record<string, boolean> = {};
+    for (const alert of normalizedAlerts) {
+      const vehicleId = String(alert?.vehicleId || alert?.device_id || alert?.metadata?.vehicle?.vehicleId || "").trim();
+      const date = getAvailabilityDate(alert);
+      const cacheKey = `${vehicleId}:${date}`;
+      const channels = availabilityCacheRef.current.get(cacheKey) || [];
+      resolvedMap[String(alert.id)] = vehicleId && date ? alertHasVideoInChannels(alert, channels) : false;
+    }
+
+    setVideoAvailability((prev) => ({ ...prev, ...resolvedMap }));
+  }, [alertHasVideoInChannels, getAvailabilityDate, normalizeAlert, readJsonSafely, videoProxyBase]);
 
   const fetchTripRoutingStyleAlerts = useCallback(async () => {
     try {
@@ -239,6 +331,10 @@ export default function VideoAlertsDashboardTab({
     return Array.from(groups.values()).sort((a: any, b: any) => new Date(b.latestTimestamp || b.timestamp || 0).getTime() - new Date(a.latestTimestamp || a.timestamp || 0).getTime());
   }, [mergedAlerts, normalizeAlert]);
 
+  useEffect(() => {
+    void refreshVideoAvailability(groupedAlerts);
+  }, [groupedAlerts, refreshVideoAvailability]);
+
   const formatAverageHandlingTime = useCallback((minutes: number | null) => {
     if (minutes === null || !Number.isFinite(minutes) || minutes < 0) return "n/a";
     if (minutes < 1) return "<1m";
@@ -317,6 +413,10 @@ export default function VideoAlertsDashboardTab({
 
   // Filtering
   const filteredAlerts = groupedAlerts.filter((alert: any) => {
+    if (showVideoOnly && !videoAvailability[String(alert.id)]) {
+      return false;
+    }
+
     // 1. Tab Filter
     if (activeTab === 'unattended') {
       if (!isUnattended(alert)) return false;
@@ -351,6 +451,7 @@ export default function VideoAlertsDashboardTab({
   const lowCount = calculatedStats.low_alerts || 0;
   const allOpenCount = displayStats?.total_alerts || 0;
   const closedAlertsCount = groupedAlerts.filter((alert: any) => ["closed", "resolved"].includes(String(alert?.status || "").toLowerCase())).length;
+  const videoReadyCount = groupedAlerts.filter((alert: any) => videoAvailability[String(alert.id)]).length;
 
   // Render Helpers
   const getSeverityColor = (severity: string) => {
@@ -858,6 +959,16 @@ export default function VideoAlertsDashboardTab({
               className="pl-9 bg-white"
             />
           </div>
+
+          <Button
+            variant={showVideoOnly ? "default" : "outline"}
+            size="sm"
+            onClick={() => setShowVideoOnly((prev) => !prev)}
+            title="Only show alerts with video available on the hub"
+          >
+            <Video className="mr-1 h-4 w-4" />
+            {showVideoOnly ? `Video only (${videoReadyCount})` : "Show all alerts"}
+          </Button>
           
           {!standaloneMode && (
             <Button variant="outline" size="sm" onClick={openAllSeverityPopouts} title="Open all severity lanes on other screens">
