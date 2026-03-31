@@ -3,6 +3,27 @@ import { resolveVideoServerProxyBase } from '@/lib/backend-hubs'
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
 
+function absolutizeVideoHubMediaUrls(value: any, baseUrl: string): any {
+  if (Array.isArray(value)) {
+    return value.map((entry) => absolutizeVideoHubMediaUrls(entry, baseUrl));
+  }
+  if (!value || typeof value !== 'object') {
+    if (typeof value === 'string') {
+      const raw = value.trim();
+      if (/^\/api\/(videos(?:\/jobs)?\/.+\/file|videos\/[^/]+\/file|stream\/.+|playback\/.+)/i.test(raw)) {
+        return `${baseUrl}${raw}`;
+      }
+    }
+    return value;
+  }
+
+  const output: Record<string, any> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    output[key] = absolutizeVideoHubMediaUrls(entry, baseUrl);
+  }
+  return output;
+}
+
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ path: string[] }> }
@@ -37,7 +58,10 @@ export async function GET(
 
     if (contentType.includes('application/json')) {
       const data = await response.json()
-      return Response.json(data, {
+      const normalizedData = target.name === 'videoHub'
+        ? absolutizeVideoHubMediaUrls(data, target.baseUrl)
+        : data
+      return Response.json(normalizedData, {
         status: response.status,
         headers: {
           'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
@@ -103,7 +127,10 @@ export async function POST(
     })
 
     const data = await response.json()
-    return Response.json(data, { status: response.status })
+    const normalizedData = target.name === 'videoHub'
+      ? absolutizeVideoHubMediaUrls(data, target.baseUrl)
+      : data
+    return Response.json(normalizedData, { status: response.status })
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     return Response.json(
