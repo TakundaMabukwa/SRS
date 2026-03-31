@@ -42,6 +42,8 @@ type VideoAlertsDashboardTabProps = {
   standaloneMode?: boolean;
 };
 
+const MIN_READY_VIDEO_BYTES = 500 * 1024;
+
 export default function VideoAlertsDashboardTab({
   onOpenAlertDetail,
   standaloneSeverity = null,
@@ -62,10 +64,13 @@ export default function VideoAlertsDashboardTab({
   const [sourceAlerts, setSourceAlerts] = useState<any[]>([]);
   const [realtimeAlerts, setRealtimeAlerts] = useState<any[]>([]);
   const [videoAvailability, setVideoAvailability] = useState<Record<string, boolean>>({});
+  const [exactVideoReady, setExactVideoReady] = useState<Record<string, boolean>>({});
   const [popoutTargets, setPopoutTargets] = useState<Record<string, HTMLElement | null>>({});
   const popoutTargetsRef = useRef<Record<string, HTMLElement | null>>({});
   const availabilityCacheRef = useRef<Map<string, any[]>>(new Map());
   const pendingAvailabilityKeysRef = useRef<Set<string>>(new Set());
+  const exactReadyCacheRef = useRef<Map<string, boolean>>(new Map());
+  const pendingExactReadyIdsRef = useRef<Set<string>>(new Set());
 
   const normalizeAlert = useCallback((incoming: any) => {
     if (!incoming || typeof incoming !== "object") return null;
@@ -228,6 +233,71 @@ export default function VideoAlertsDashboardTab({
     setVideoAvailability((prev) => ({ ...prev, ...resolvedMap }));
   }, [alertHasVideoInChannels, getAvailabilityDate, normalizeAlert, readJsonSafely, videoProxyBase]);
 
+  const refreshExactVideoReady = useCallback(async (alerts: any[]) => {
+    const normalizedAlerts = alerts
+      .map((alert) => normalizeAlert(alert))
+      .filter((alert): alert is any => Boolean(alert?.id))
+      .slice(0, 60);
+
+    const immediateMap: Record<string, boolean> = {};
+    const requests: Array<Promise<void>> = [];
+
+    for (const alert of normalizedAlerts) {
+      const alertId = String(alert.id || "").trim();
+      if (!alertId) continue;
+
+      if (exactReadyCacheRef.current.has(alertId)) {
+        immediateMap[alertId] = !!exactReadyCacheRef.current.get(alertId);
+        continue;
+      }
+
+      if (pendingExactReadyIdsRef.current.has(alertId)) continue;
+      pendingExactReadyIdsRef.current.add(alertId);
+
+      requests.push(
+        fetch(`${videoProxyBase}/alerts/${encodeURIComponent(alertId)}/media?ensureMedia=true`, {
+          cache: "no-store",
+        })
+          .then((res) => readJsonSafely(res))
+          .then((json) => {
+            const videos = Array.isArray(json?.data?.videos)
+              ? json.data.videos
+              : Array.isArray(json?.videos)
+                ? json.videos
+                : [];
+            const ready = videos.some((video: any) => {
+              const fileSize = Number(video?.fileSize || video?.file_size || 0);
+              const url = String(video?.url || "").trim();
+              return !!url && Number.isFinite(fileSize) && fileSize >= MIN_READY_VIDEO_BYTES;
+            });
+            exactReadyCacheRef.current.set(alertId, ready);
+          })
+          .catch(() => {
+            exactReadyCacheRef.current.set(alertId, false);
+          })
+          .finally(() => {
+            pendingExactReadyIdsRef.current.delete(alertId);
+          })
+      );
+    }
+
+    if (Object.keys(immediateMap).length > 0) {
+      setExactVideoReady((prev) => ({ ...prev, ...immediateMap }));
+    }
+
+    if (requests.length === 0) return;
+
+    await Promise.all(requests);
+
+    const resolvedMap: Record<string, boolean> = {};
+    for (const alert of normalizedAlerts) {
+      const alertId = String(alert.id || "").trim();
+      if (!alertId) continue;
+      resolvedMap[alertId] = !!exactReadyCacheRef.current.get(alertId);
+    }
+    setExactVideoReady((prev) => ({ ...prev, ...resolvedMap }));
+  }, [normalizeAlert, readJsonSafely, videoProxyBase]);
+
   const fetchTripRoutingStyleAlerts = useCallback(async () => {
     try {
       const res = await fetch(`${videoProxyBase}/alerts/active`, { cache: "no-store" });
@@ -346,6 +416,10 @@ export default function VideoAlertsDashboardTab({
     void refreshVideoAvailability(groupedAlerts);
   }, [groupedAlerts, refreshVideoAvailability]);
 
+  useEffect(() => {
+    void refreshExactVideoReady(groupedAlerts);
+  }, [groupedAlerts, refreshExactVideoReady]);
+
   const formatAverageHandlingTime = useCallback((minutes: number | null) => {
     if (minutes === null || !Number.isFinite(minutes) || minutes < 0) return "n/a";
     if (minutes < 1) return "<1m";
@@ -424,7 +498,7 @@ export default function VideoAlertsDashboardTab({
 
   // Filtering
   const filteredAlerts = groupedAlerts.filter((alert: any) => {
-    if (showVideoOnly && !videoAvailability[String(alert.id)]) {
+    if (showVideoOnly && !exactVideoReady[String(alert.id)]) {
       return false;
     }
 
@@ -455,8 +529,8 @@ export default function VideoAlertsDashboardTab({
 
     return true;
   }).sort((a: any, b: any) => {
-    const aVideo = videoAvailability[String(a.id)] ? 1 : 0;
-    const bVideo = videoAvailability[String(b.id)] ? 1 : 0;
+    const aVideo = exactVideoReady[String(a.id)] ? 1 : 0;
+    const bVideo = exactVideoReady[String(b.id)] ? 1 : 0;
     if (aVideo !== bVideo) return bVideo - aVideo;
 
     const aOpen = ["closed", "resolved"].includes(String(a?.status || "").toLowerCase()) ? 0 : 1;
@@ -474,7 +548,7 @@ export default function VideoAlertsDashboardTab({
   const lowCount = calculatedStats.low_alerts || 0;
   const allOpenCount = displayStats?.total_alerts || 0;
   const closedAlertsCount = groupedAlerts.filter((alert: any) => ["closed", "resolved"].includes(String(alert?.status || "").toLowerCase())).length;
-  const videoReadyCount = groupedAlerts.filter((alert: any) => videoAvailability[String(alert.id)]).length;
+  const videoReadyCount = groupedAlerts.filter((alert: any) => exactVideoReady[String(alert.id)]).length;
 
   // Render Helpers
   const getSeverityColor = (severity: string) => {
@@ -700,7 +774,7 @@ export default function VideoAlertsDashboardTab({
   const renderAlertBoardRow = (alert: any) => {
     const vehicleLabel = alert?.vehicle_registration || alert?.vehicleId || alert?.device_id || "N/A";
     const alertLabel = alert?.title || alert?.alert_type || alert?.type || "Alert";
-    const hasVideo = !!videoAvailability[String(alert.id)];
+    const hasVideo = !!exactVideoReady[String(alert.id)];
 
     return (
       <div key={alert.id} className="rounded-md border border-slate-200 bg-white px-2.5 py-2 shadow-sm">
@@ -771,7 +845,7 @@ export default function VideoAlertsDashboardTab({
             <div className="mt-0.5 text-[11px] leading-4 text-slate-500 capitalize">
               {(alert.alert_type || "alert").replace(/_/g, " ")}
             </div>
-            {videoAvailability[String(alert.id)] ? (
+            {exactVideoReady[String(alert.id)] ? (
               <div className="mt-1">
                 <Badge className="rounded-full border border-emerald-200 bg-emerald-50 px-1.5 py-0 text-[10px] font-semibold text-emerald-700">
                   Video Ready
