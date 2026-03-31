@@ -30,7 +30,9 @@ import {
   ShieldAlert,
   MinusCircle,
   Signal,
-  ExternalLink
+  ExternalLink,
+  Pin,
+  PinOff
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { format, differenceInHours } from "date-fns";
@@ -56,6 +58,7 @@ export default function VideoAlertsDashboardTab({
   const [activeTab, setActiveTab] = useState("all"); 
   const [showVideoOnly, setShowVideoOnly] = useState(true);
   const [showRawAlerts, setShowRawAlerts] = useState(false);
+  const [pinnedVehicleIds, setPinnedVehicleIds] = useState<string[]>([]);
   const [levelFilter, setLevelFilter] = useState<"all" | "critical" | "high" | "medium" | "low">(
     standaloneSeverity && standaloneSeverity !== "all" ? standaloneSeverity : "all"
   );
@@ -109,6 +112,44 @@ export default function VideoAlertsDashboardTab({
       lastOccurrenceTimestamp: displayTimestamp,
     };
   }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const raw = window.localStorage.getItem("dashboard:pinnedVehicleIds");
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        setPinnedVehicleIds(parsed.map((value) => String(value || "").trim()).filter(Boolean));
+      }
+    } catch {
+      // ignore malformed local storage
+    }
+  }, []);
+
+  const persistPinnedVehicleIds = useCallback((next: string[]) => {
+    setPinnedVehicleIds(next);
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem("dashboard:pinnedVehicleIds", JSON.stringify(next));
+    } catch {
+      // ignore storage write failures
+    }
+  }, []);
+
+  const togglePinnedVehicle = useCallback((vehicleId: string) => {
+    const normalized = String(vehicleId || "").trim();
+    if (!normalized) return;
+    const next = pinnedVehicleIds.includes(normalized)
+      ? pinnedVehicleIds.filter((value) => value !== normalized)
+      : [normalized, ...pinnedVehicleIds];
+    persistPinnedVehicleIds(Array.from(new Set(next)));
+  }, [persistPinnedVehicleIds, pinnedVehicleIds]);
+
+  const isPinnedVehicle = useCallback((alert: any) => {
+    const vehicleId = String(alert?.vehicleId || alert?.device_id || alert?.metadata?.vehicle?.vehicleId || "").trim();
+    return !!vehicleId && pinnedVehicleIds.includes(vehicleId);
+  }, [pinnedVehicleIds]);
 
   const readJsonSafely = useCallback(async (res: Response) => {
     const contentType = res.headers.get("content-type") || "";
@@ -534,6 +575,10 @@ export default function VideoAlertsDashboardTab({
 
     return true;
   }).sort((a: any, b: any) => {
+    const aPinned = isPinnedVehicle(a) ? 1 : 0;
+    const bPinned = isPinnedVehicle(b) ? 1 : 0;
+    if (aPinned !== bPinned) return bPinned - aPinned;
+
     const aVideo = exactVideoReady[String(a.id)] ? 1 : 0;
     const bVideo = exactVideoReady[String(b.id)] ? 1 : 0;
     if (aVideo !== bVideo) return bVideo - aVideo;
@@ -554,6 +599,9 @@ export default function VideoAlertsDashboardTab({
   const allOpenCount = displayStats?.total_alerts || 0;
   const closedAlertsCount = alertCollection.filter((alert: any) => ["closed", "resolved"].includes(String(alert?.status || "").toLowerCase())).length;
   const videoReadyCount = alertCollection.filter((alert: any) => exactVideoReady[String(alert.id)]).length;
+  const normalizedSearchVehicle = searchTerm.trim();
+  const searchCanPin = /^\d{6,}$/.test(normalizedSearchVehicle);
+  const searchPinned = searchCanPin && pinnedVehicleIds.includes(normalizedSearchVehicle);
 
   // Render Helpers
   const getSeverityColor = (severity: string) => {
@@ -780,6 +828,8 @@ export default function VideoAlertsDashboardTab({
     const vehicleLabel = alert?.vehicle_registration || alert?.vehicleId || alert?.device_id || "N/A";
     const alertLabel = alert?.title || alert?.alert_type || alert?.type || "Alert";
     const hasVideo = !!exactVideoReady[String(alert.id)];
+    const pinned = isPinnedVehicle(alert);
+    const vehicleId = String(alert?.vehicleId || alert?.device_id || alert?.metadata?.vehicle?.vehicleId || "").trim();
 
     return (
       <div key={alert.id} className="rounded-md border border-slate-200 bg-white px-2.5 py-2 shadow-sm">
@@ -789,6 +839,11 @@ export default function VideoAlertsDashboardTab({
               {alertLabel} ({vehicleLabel})
             </div>
             <div className="mt-1 flex items-center gap-1.5">
+              {pinned ? (
+                <Badge className="rounded-full border border-cyan-200 bg-cyan-50 px-1.5 py-0 text-[10px] font-semibold text-cyan-700">
+                  Pinned
+                </Badge>
+              ) : null}
               {hasVideo ? (
                 <Badge className="rounded-full border border-emerald-200 bg-emerald-50 px-1.5 py-0 text-[10px] font-semibold text-emerald-700">
                   Video Ready
@@ -811,7 +866,19 @@ export default function VideoAlertsDashboardTab({
             {getAlertLevel(alert)}
           </Badge>
         </div>
-        <div className="mt-2 flex justify-end">
+        <div className="mt-2 flex justify-between">
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-7 px-2 text-[11px]"
+            onClick={(e) => {
+              e.stopPropagation();
+              togglePinnedVehicle(vehicleId);
+            }}
+          >
+            {pinned ? <PinOff className="mr-1 h-3 w-3" /> : <Pin className="mr-1 h-3 w-3" />}
+            {pinned ? "Unpin" : "Pin vehicle"}
+          </Button>
           <Button
             size="sm"
             variant="ghost"
@@ -1093,6 +1160,18 @@ export default function VideoAlertsDashboardTab({
           >
             {showRawAlerts ? "Grouped view" : "Show raw alerts"}
           </Button>
+
+          {searchCanPin ? (
+            <Button
+              variant={searchPinned ? "default" : "outline"}
+              size="sm"
+              onClick={() => togglePinnedVehicle(normalizedSearchVehicle)}
+              title="Pin this vehicle's alerts to the top"
+            >
+              {searchPinned ? <PinOff className="mr-1 h-4 w-4" /> : <Pin className="mr-1 h-4 w-4" />}
+              {searchPinned ? "Unpin search vehicle" : "Pin search vehicle"}
+            </Button>
+          ) : null}
           
           {!standaloneMode && (
             <Button variant="outline" size="sm" onClick={openAllSeverityPopouts} title="Open all severity lanes on other screens">
