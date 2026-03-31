@@ -117,6 +117,17 @@ export default function VideoAlertsDashboardTab({
     }
   }, []);
 
+  const getGroupedAlertTimestamp = useCallback((alert: any) => {
+    return (
+      alert?.latestTimestamp ||
+      alert?.lastOccurrenceTimestamp ||
+      alert?.last_occurrence_timestamp ||
+      getAlertDisplayTimestamp(alert) ||
+      alert?.timestamp ||
+      null
+    );
+  }, []);
+
   const dedupeByIdAndSort = useCallback((items: any[]) => {
     const byId = new Map<string, any>();
     for (const item of items) {
@@ -696,7 +707,7 @@ export default function VideoAlertsDashboardTab({
               {String(alert?.status || "new")}
             </div>
             <div className="mt-1 text-[11px] leading-4 text-slate-500">
-              {formatRawAlertTimestamp(getAlertDisplayTimestamp(alert), "datetime") || "Unknown time"}
+              {formatRawAlertTimestamp(getGroupedAlertTimestamp(alert), "datetime") || "Unknown time"}
             </div>
           </div>
           <Badge variant="outline" className={cn("shrink-0 capitalize text-[10px] font-semibold", getSeverityColor(getAlertLevel(alert)))}>
@@ -765,8 +776,8 @@ export default function VideoAlertsDashboardTab({
           </div>
           <div>
             <div className="text-[10px] uppercase tracking-wide text-slate-400">Last Occurrence</div>
-            <div className="text-slate-900">{formatRawAlertTimestamp(getAlertDisplayTimestamp(alert), "date")}</div>
-            <div className="text-slate-500">{formatRawAlertTimestamp(getAlertDisplayTimestamp(alert), "time")}</div>
+            <div className="text-slate-900">{formatRawAlertTimestamp(getGroupedAlertTimestamp(alert), "date")}</div>
+            <div className="text-slate-500">{formatRawAlertTimestamp(getGroupedAlertTimestamp(alert), "time")}</div>
           </div>
         </div>
 
@@ -822,7 +833,7 @@ export default function VideoAlertsDashboardTab({
         </div>
         <div className="min-w-0 text-[11px] text-slate-600">
           {Number(alert?.count || 1) > 1 ? `x${alert.count}` : "x1"}
-          <div className="text-[10px] text-slate-400">{formatRawAlertTimestamp(getAlertDisplayTimestamp(alert), "time")}</div>
+          <div className="text-[10px] text-slate-400">{formatRawAlertTimestamp(getGroupedAlertTimestamp(alert), "time")}</div>
         </div>
         <div className="flex justify-end">
           <Button
