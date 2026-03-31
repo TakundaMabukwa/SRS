@@ -339,7 +339,7 @@ export default function VideoAlertsDashboardTab({
       });
     }
 
-    return Array.from(groups.values()).sort((a: any, b: any) => new Date(b.latestTimestamp || b.timestamp || 0).getTime() - new Date(a.latestTimestamp || a.timestamp || 0).getTime());
+    return Array.from(groups.values());
   }, [mergedAlerts, normalizeAlert]);
 
   useEffect(() => {
@@ -454,6 +454,18 @@ export default function VideoAlertsDashboardTab({
     }
 
     return true;
+  }).sort((a: any, b: any) => {
+    const aVideo = videoAvailability[String(a.id)] ? 1 : 0;
+    const bVideo = videoAvailability[String(b.id)] ? 1 : 0;
+    if (aVideo !== bVideo) return bVideo - aVideo;
+
+    const aOpen = ["closed", "resolved"].includes(String(a?.status || "").toLowerCase()) ? 0 : 1;
+    const bOpen = ["closed", "resolved"].includes(String(b?.status || "").toLowerCase()) ? 0 : 1;
+    if (aOpen !== bOpen) return bOpen - aOpen;
+
+    const aTs = new Date(getGroupedAlertTimestamp(a) || a.timestamp || 0).getTime();
+    const bTs = new Date(getGroupedAlertTimestamp(b) || b.timestamp || 0).getTime();
+    return bTs - aTs;
   });
 
   const criticalCount = calculatedStats.critical_alerts || 0;
