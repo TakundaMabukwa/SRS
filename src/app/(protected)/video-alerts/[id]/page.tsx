@@ -1,7 +1,8 @@
 "use client";
 
-import React, { useState, useEffect, use, useCallback } from "react";
+import React, { useState, useEffect, use, useCallback, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
+import Hls from "hls.js";
 import { useVideoAlerts } from "@/context/video-alerts-context/context";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
@@ -31,7 +32,76 @@ import {
 import { cn } from "@/lib/utils";
 import { format } from "date-fns";
 import CloseAlertModal from "@/components/modals/close-alert-modal";
-import { getAlertDisplayTimestamp, resolveAlertPlaybackVideos } from "@/lib/video-alert-playback";
+import { getAlertDisplayTimestamp, getAlertFirstOccurrenceTimestamp, getAlertLastOccurrenceTimestamp, getAlertPlaybackSignature, resolveAlertPlaybackVideos } from "@/lib/video-alert-playback";
+
+function AlertVideoPlayer({
+  url,
+  className = "w-full rounded mb-3 bg-black",
+}: {
+  url: string;
+  className?: string;
+}) {
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const [playbackError, setPlaybackError] = useState("");
+  const activeUrl = String(url || "").trim();
+  const isHlsUrl = /\.m3u8(?:$|\?)/i.test(activeUrl);
+
+  useEffect(() => {
+    setPlaybackError("");
+  }, [activeUrl]);
+
+  useEffect(() => {
+    const videoEl = videoRef.current;
+    if (!videoEl || !activeUrl || !isHlsUrl) return;
+
+    let hls: Hls | null = null;
+    videoEl.removeAttribute("src");
+    videoEl.load();
+
+    if (videoEl.canPlayType("application/vnd.apple.mpegurl")) {
+      videoEl.src = activeUrl;
+    } else if (Hls.isSupported()) {
+      hls = new Hls({
+        enableWorker: true,
+        lowLatencyMode: true,
+      });
+      hls.loadSource(activeUrl);
+      hls.attachMedia(videoEl);
+      hls.on(Hls.Events.ERROR, (_, data) => {
+        if (data?.fatal) {
+          setPlaybackError("HLS playback failed. Use Open for this clip.");
+        }
+      });
+    } else {
+      setPlaybackError("HLS is not supported in this browser.");
+    }
+
+    return () => {
+      if (hls) hls.destroy();
+    };
+  }, [activeUrl, isHlsUrl]);
+
+  return (
+    <div>
+      <video
+        ref={videoRef}
+        controls
+        preload="metadata"
+        playsInline
+        className={className}
+        src={!activeUrl || isHlsUrl ? undefined : activeUrl}
+        onError={() => {
+          setPlaybackError("Browser could not decode this format. Use Open for this clip.");
+        }}
+      >
+        Your browser does not support video playback.
+      </video>
+      {playbackError ? (
+        <p className="text-xs text-red-600">{playbackError}</p>
+      ) : null}
+    </div>
+  );
+}
 
 export default function AlertDetailPage({ params }) {
   const unwrappedParams = use(params);
@@ -56,6 +126,10 @@ export default function AlertDetailPage({ params }) {
   const [currentUser] = useState({ id: "user-1", name: "Current User", role: "Operator" });
   const [resolvedScreenshots, setResolvedScreenshots] = useState([]);
   const [screenshotsLoading, setScreenshotsLoading] = useState(false);
+  const alertPlaybackSignature = useMemo(
+    () => getAlertPlaybackSignature(selectedAlert),
+    [selectedAlert]
+  );
 
   const safeFormatDate = (value, pattern, fallback = "N/A") => {
     const date = value instanceof Date ? value : new Date(value);
@@ -195,7 +269,7 @@ export default function AlertDetailPage({ params }) {
     return () => {
       cancelled = true;
     };
-  }, [selectedAlert?.id]);
+  }, [alertPlaybackSignature]);
 
   const handleAddNote = async () => {
     if (!newNote.trim()) return;
@@ -257,6 +331,8 @@ export default function AlertDetailPage({ params }) {
   const severityConfig = getSeverityConfig(selectedAlert.severity);
   const SeverityIcon = severityConfig.icon;
   const selectedAlertDisplayTimestamp = getAlertDisplayTimestamp(selectedAlert);
+  const selectedAlertFirstOccurrence = getAlertFirstOccurrenceTimestamp(selectedAlert);
+  const selectedAlertLastOccurrence = getAlertLastOccurrenceTimestamp(selectedAlert);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 pb-20">
@@ -287,7 +363,10 @@ export default function AlertDetailPage({ params }) {
                   )}
                 </div>
                 <p className="text-sm text-slate-600">
-                  Alert ID: {selectedAlert.id} • {safeFormatDate(selectedAlertDisplayTimestamp || selectedAlert.timestamp, "PPpp")}
+                  Alert ID: {selectedAlert.id} • First occurrence: {safeFormatDate(selectedAlertFirstOccurrence || selectedAlert.timestamp, "PPpp")}
+                </p>
+                <p className="text-xs text-slate-500">
+                  Last occurrence: {safeFormatDate(selectedAlertLastOccurrence || selectedAlertDisplayTimestamp || selectedAlert.timestamp, "PPpp")}
                 </p>
               </div>
             </div>
@@ -406,16 +485,17 @@ export default function AlertDetailPage({ params }) {
                     ) : eventVideos.length > 0 ? (
                       eventVideos.map((video, index) => (
                         <Card key={video.key || index} className="p-4">
-                          <video controls className="w-full rounded mb-3 bg-black">
-                            <source src={video.url} />
-                            Your browser does not support video playback.
-                          </video>
+                          <AlertVideoPlayer url={video.url} />
                           <div className="flex items-center justify-between">
                             <div className="flex items-center gap-3">
                               <Video className="w-5 h-5 text-slate-600" />
                               <div>
                                 <p className="font-medium text-slate-900">{video.label || `Event Video ${index + 1}`}</p>
-                                <p className="text-sm text-slate-600">Timestamp-matched playback for this alert</p>
+                                <p className="text-sm text-slate-600">
+                                  {String(video.label || "").toLowerCase().includes("nearest available")
+                                    ? "Nearest available playback for this vehicle when exact alert-time footage is unavailable"
+                                    : "Timestamp-matched playback for this alert"}
+                                </p>
                               </div>
                             </div>
                             <Button

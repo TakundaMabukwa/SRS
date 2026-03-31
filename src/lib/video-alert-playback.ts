@@ -114,7 +114,7 @@ function timestampToComparableMs(value: unknown) {
   return Number.isFinite(nativeMs) ? nativeMs : Number.NaN;
 }
 
-function collectAlertTimestampCandidates(alert: any) {
+function collectAlertDisplayTimestampCandidates(alert: any) {
   const metadata = alert?.metadata || {};
   const vendorExtensions = Array.isArray(metadata?.vendorExtensions) ? metadata.vendorExtensions : [];
 
@@ -151,8 +151,36 @@ function collectAlertTimestampCandidates(alert: any) {
     .filter(Boolean);
 }
 
-export function getAlertDisplayTimestamp(alert: any) {
-  const candidates = collectAlertTimestampCandidates(alert);
+function collectAlertFirstOccurrenceCandidates(alert: any) {
+  const metadata = alert?.metadata || {};
+  const vendorExtensions = Array.isArray(metadata?.vendorExtensions) ? metadata.vendorExtensions : [];
+
+  return [
+    alert?.timestamp,
+    alert?.alertTimestamp,
+    alert?.alert_timestamp,
+    alert?.created_at,
+    alert?.firstOccurrenceTimestamp,
+    alert?.first_occurrence_timestamp,
+    alert?.firstOccurrenceAt,
+    alert?.first_occurrence_at,
+    metadata?.firstOccurrence,
+    metadata?.first_occurrence,
+    metadata?.timestamp,
+    metadata?.eventTimestamp,
+    metadata?.event_timestamp,
+    metadata?.resourceStartTime,
+    metadata?.resource_start_time,
+    metadata?.sourceTimestamp,
+    metadata?.source_timestamp,
+    metadata?.locationFix?.timestamp,
+    ...vendorExtensions.map((entry: any) => entry?.sourceTimestamp),
+  ]
+    .map(getRawAlertTimestampValue)
+    .filter(Boolean);
+}
+
+function pickLatestTimestamp(candidates: string[]) {
   if (candidates.length === 0) return null;
 
   let latestValue = candidates[0];
@@ -169,8 +197,56 @@ export function getAlertDisplayTimestamp(alert: any) {
   return latestValue || null;
 }
 
+function pickEarliestTimestamp(candidates: string[]) {
+  if (candidates.length === 0) return null;
+
+  let earliestValue = candidates[0];
+  let earliestMs = timestampToComparableMs(earliestValue);
+
+  for (const candidate of candidates.slice(1)) {
+    const candidateMs = timestampToComparableMs(candidate);
+    if (Number.isFinite(candidateMs) && (!Number.isFinite(earliestMs) || candidateMs < earliestMs)) {
+      earliestValue = candidate;
+      earliestMs = candidateMs;
+    }
+  }
+
+  return earliestValue || null;
+}
+
+export function getAlertDisplayTimestamp(alert: any) {
+  return pickLatestTimestamp(collectAlertDisplayTimestampCandidates(alert));
+}
+
 export function getAlertPlaybackTimestamp(alert: any) {
+  const firstOccurrence = pickEarliestTimestamp(collectAlertFirstOccurrenceCandidates(alert));
+  return firstOccurrence || getAlertDisplayTimestamp(alert);
+}
+
+export function getAlertFirstOccurrenceTimestamp(alert: any) {
+  return getAlertPlaybackTimestamp(alert);
+}
+
+export function getAlertLastOccurrenceTimestamp(alert: any) {
   return getAlertDisplayTimestamp(alert);
+}
+
+export function getAlertPlaybackSignature(alert: any) {
+  if (!alert || typeof alert !== "object") return "";
+  const playbackWindow = getAlertPlaybackWindow(alert);
+  const mediaVideos = Array.isArray(alert?.media?.videos) ? alert.media.videos : [];
+  const screenshots = Array.isArray(alert?.media?.screenshots) ? alert.media.screenshots : [];
+  return JSON.stringify({
+    id: String(alert?.id || "").trim(),
+    vehicleId: getAlertVehicleId(alert),
+    channel: getAlertChannel(alert),
+    timestamp: getAlertPlaybackTimestamp(alert) || "",
+    startIso: playbackWindow?.startIso || "",
+    endIso: playbackWindow?.endIso || "",
+    updatedAt: String(alert?.updated_at || alert?.updatedAt || "").trim(),
+    mediaVideoCount: mediaVideos.length,
+    screenshotCount: screenshots.length,
+  });
 }
 
 export function formatRawAlertTimestamp(
@@ -318,6 +394,45 @@ type AvailabilityClip = {
   endTime: string;
 };
 
+function buildBoundedPlaybackWindow(
+  clip: AvailabilityClip,
+  targetTime: Date,
+  beforeMs = ALERT_PLAYBACK_WINDOW_BEFORE_MS,
+  afterMs = ALERT_PLAYBACK_WINDOW_AFTER_MS
+) {
+  const clipStart = new Date(clip.startTime);
+  const clipEnd = new Date(clip.endTime);
+  if (Number.isNaN(clipStart.getTime()) || Number.isNaN(clipEnd.getTime())) {
+    return {
+      startTime: clip.startTime,
+      endTime: clip.endTime,
+    };
+  }
+
+  const targetMs = targetTime.getTime();
+  const safeTargetMs = Number.isFinite(targetMs)
+    ? Math.min(Math.max(targetMs, clipStart.getTime()), clipEnd.getTime())
+    : clipStart.getTime();
+
+  const desiredStart = new Date(safeTargetMs - beforeMs);
+  const desiredEnd = new Date(safeTargetMs + afterMs);
+
+  const boundedStartMs = Math.max(desiredStart.getTime(), clipStart.getTime());
+  const boundedEndMs = Math.min(desiredEnd.getTime(), clipEnd.getTime());
+
+  if (!Number.isFinite(boundedStartMs) || !Number.isFinite(boundedEndMs) || boundedEndMs <= boundedStartMs) {
+    return {
+      startTime: clip.startTime,
+      endTime: clip.endTime,
+    };
+  }
+
+  return {
+    startTime: new Date(boundedStartMs).toISOString(),
+    endTime: new Date(boundedEndMs).toISOString(),
+  };
+}
+
 async function findNearestAvailableClip(
   vehicleId: string,
   channel: number,
@@ -381,6 +496,9 @@ async function resolvePlaybackWindowForAlert(alert: any, videoProxyBase = DEFAUL
   if (!vehicleId || !playbackWindow) return [];
 
   const { startIso, endIso } = playbackWindow;
+  const targetTimestamp = getAlertPlaybackTimestamp(alert) || startIso;
+  const targetTime = new Date(targetTimestamp);
+  const safeTargetTime = Number.isNaN(targetTime.getTime()) ? new Date(startIso) : targetTime;
 
   let lastError: Error | null = null;
 
@@ -456,8 +574,9 @@ async function resolvePlaybackWindowForAlert(alert: any, videoProxyBase = DEFAUL
     return immediateStored;
   }
 
-  const fallbackClip = await findNearestAvailableClip(vehicleId, channel, new Date(startIso), videoProxyBase);
+  const fallbackClip = await findNearestAvailableClip(vehicleId, channel, safeTargetTime, videoProxyBase);
   if (fallbackClip) {
+    const boundedWindow = buildBoundedPlaybackWindow(fallbackClip, safeTargetTime);
     for (const playbackBase of getPlaybackRequestBases(videoProxyBase)) {
       try {
         const res = await fetch(`${playbackBase}/vehicles/${encodeURIComponent(vehicleId)}/videos/window`, {
@@ -465,8 +584,8 @@ async function resolvePlaybackWindowForAlert(alert: any, videoProxyBase = DEFAUL
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             channel: fallbackClip.channel,
-            startTime: fallbackClip.startTime,
-            endTime: fallbackClip.endTime,
+            startTime: boundedWindow.startTime,
+            endTime: boundedWindow.endTime,
           }),
         });
         const json = await res.json().catch(() => ({}));
@@ -487,7 +606,7 @@ async function resolvePlaybackWindowForAlert(alert: any, videoProxyBase = DEFAUL
           return [
             {
               key: `nearest_${vehicleId}_${fallbackClip.channel}`,
-              label: `Nearest Available Playback CH${fallbackClip.channel}`,
+              label: `Playback In Available Range CH${fallbackClip.channel}`,
               url: directUrl,
             },
           ];
@@ -500,7 +619,7 @@ async function resolvePlaybackWindowForAlert(alert: any, videoProxyBase = DEFAUL
         return [
           {
             key: `nearest_job_${jobId}`,
-            label: `Nearest Available Playback CH${fallbackClip.channel}`,
+            label: `Playback In Available Range CH${fallbackClip.channel}`,
             url: resolvedUrl,
           },
         ];

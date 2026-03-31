@@ -89,7 +89,7 @@ import CriminalReportModal from '@/components/video-alerts/criminal-report-modal
 import DispatchReportModal from '@/components/video-alerts/dispatch-report-modal';
 import IncidentReportTemplateModal from '@/components/video-alerts/incident-report-template-modal';
 import { useVideoWebSocket } from "@/hooks/use-video-websocket";
-import { getAlertDisplayTimestamp as getSharedAlertDisplayTimestamp, resolveAlertPlaybackVideos } from "@/lib/video-alert-playback";
+import { getAlertDisplayTimestamp as getSharedAlertDisplayTimestamp, getAlertPlaybackSignature, resolveAlertPlaybackVideos } from "@/lib/video-alert-playback";
 
 const VideoAlertsDashboardTab = dynamic(
   () => import("@/components/dashboard/video-alerts-dashboard-tab"),
@@ -3475,6 +3475,10 @@ export default function Dashboard() {
     }
   }, [buildAlertVideoUrl, buildAlertVideoUrlCandidates, toAbsoluteVideoUrl, videoProxyBase]);
   const selectedAlertVideoRequestState = selectedAlert?.videoAutoRequest || null;
+  const selectedAlertPlaybackSignature = React.useMemo(
+    () => getAlertPlaybackSignature(selectedAlert),
+    [selectedAlert]
+  );
   const selectedAlertVideoList = (() => {
     const entries: Array<{ key: string; label: string; url: string; fallbackUrls?: string[] }> = [];
     const pushIf = (key: string, label: string, url?: string, fallbackUrls?: string[]) => {
@@ -3587,7 +3591,7 @@ export default function Dashboard() {
     return () => {
       cancelled = true;
     };
-  }, [alertDetailModalOpen, selectedAlert?.id, videoProxyBase]);
+  }, [alertDetailModalOpen, selectedAlertPlaybackSignature, videoProxyBase]);
   useEffect(() => {
     if (!alertDetailModalOpen || !selectedAlert?.id) return;
     const existingNotes =

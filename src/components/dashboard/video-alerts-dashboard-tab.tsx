@@ -36,7 +36,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { format, differenceInHours } from "date-fns";
-import { formatRawAlertTimestamp, getAlertDisplayTimestamp } from "@/lib/video-alert-playback";
+import { formatRawAlertTimestamp, getAlertDisplayTimestamp, getAlertFirstOccurrenceTimestamp, getAlertLastOccurrenceTimestamp } from "@/lib/video-alert-playback";
 
 type VideoAlertsDashboardTabProps = {
   onOpenAlertDetail?: (alert: any, trip?: any) => Promise<any> | any;
@@ -45,6 +45,7 @@ type VideoAlertsDashboardTabProps = {
 };
 
 const MIN_READY_VIDEO_BYTES = 500 * 1024;
+const MAX_EXACT_READY_CHECKS = 12;
 
 export default function VideoAlertsDashboardTab({
   onOpenAlertDetail,
@@ -81,7 +82,8 @@ export default function VideoAlertsDashboardTab({
     if (!incoming || typeof incoming !== "object") return null;
 
     const vehicleMeta = incoming?.metadata?.vehicle || incoming?.vehicle || {};
-    const displayTimestamp = getAlertDisplayTimestamp(incoming) || incoming.timestamp || incoming.created_at || incoming.alert_timestamp || new Date().toISOString();
+    const firstOccurrenceTimestamp = getAlertFirstOccurrenceTimestamp(incoming) || incoming.timestamp || incoming.created_at || incoming.alert_timestamp || new Date().toISOString();
+    const lastOccurrenceTimestamp = getAlertLastOccurrenceTimestamp(incoming) || firstOccurrenceTimestamp;
     const id = String(incoming.id || incoming.alert_id || incoming.alertId || "").trim();
     const title = String(incoming.title || incoming.type || incoming.alert_type || "Alert").trim();
     const severity = String(incoming.severity || incoming.priority || "low").toLowerCase();
@@ -109,8 +111,10 @@ export default function VideoAlertsDashboardTab({
       status: String(incoming.status || "new").toLowerCase(),
       vehicle_registration: vehicle,
       driver_name: incoming.driver_name || incoming.driver || incoming?.metadata?.driverName || "Unknown",
-      timestamp: displayTimestamp,
-      lastOccurrenceTimestamp: displayTimestamp,
+      timestamp: firstOccurrenceTimestamp,
+      lastOccurrenceTimestamp,
+      firstOccurrenceTimestamp,
+      repeated_count: Number(incoming.repeated_count || incoming.repeatedCount || 1) || 1,
     };
   }, []);
 
@@ -167,9 +171,11 @@ export default function VideoAlertsDashboardTab({
 
   const getGroupedAlertTimestamp = useCallback((alert: any) => {
     return (
-      alert?.latestTimestamp ||
       alert?.lastOccurrenceTimestamp ||
+      alert?.last_occurrence ||
       alert?.last_occurrence_timestamp ||
+      alert?.latestTimestamp ||
+      getAlertLastOccurrenceTimestamp(alert) ||
       getAlertDisplayTimestamp(alert) ||
       alert?.timestamp ||
       null
@@ -280,7 +286,20 @@ export default function VideoAlertsDashboardTab({
     const normalizedAlerts = alerts
       .map((alert) => normalizeAlert(alert))
       .filter((alert): alert is any => Boolean(alert?.id))
-      .slice(0, 60);
+      .sort((a: any, b: any) => {
+        const aPinned = isPinnedVehicle(a) ? 1 : 0;
+        const bPinned = isPinnedVehicle(b) ? 1 : 0;
+        if (aPinned !== bPinned) return bPinned - aPinned;
+
+        const aRange = videoAvailability[String(a.id)] ? 1 : 0;
+        const bRange = videoAvailability[String(b.id)] ? 1 : 0;
+        if (aRange !== bRange) return bRange - aRange;
+
+        const aTs = new Date(getGroupedAlertTimestamp(a) || a.timestamp || 0).getTime();
+        const bTs = new Date(getGroupedAlertTimestamp(b) || b.timestamp || 0).getTime();
+        return bTs - aTs;
+      })
+      .slice(0, MAX_EXACT_READY_CHECKS);
 
     const immediateMap: Record<string, boolean> = {};
     const requests: Array<Promise<void>> = [];
@@ -298,7 +317,7 @@ export default function VideoAlertsDashboardTab({
       pendingExactReadyIdsRef.current.add(alertId);
 
       requests.push(
-        fetch(`${videoProxyBase}/alerts/${encodeURIComponent(alertId)}/media?ensureMedia=true`, {
+        fetch(`${videoProxyBase}/alerts/${encodeURIComponent(alertId)}/media`, {
           cache: "no-store",
         })
           .then((res) => readJsonSafely(res))
@@ -339,7 +358,7 @@ export default function VideoAlertsDashboardTab({
       resolvedMap[alertId] = !!exactReadyCacheRef.current.get(alertId);
     }
     setExactVideoReady((prev) => ({ ...prev, ...resolvedMap }));
-  }, [normalizeAlert, readJsonSafely, videoProxyBase]);
+  }, [getGroupedAlertTimestamp, isPinnedVehicle, normalizeAlert, readJsonSafely, videoAvailability, videoProxyBase]);
 
   const fetchTripRoutingStyleAlerts = useCallback(async () => {
     try {
@@ -470,23 +489,28 @@ export default function VideoAlertsDashboardTab({
       if (!existing) {
         groups.set(groupKey, {
           ...normalized,
-          count: 1,
+          count: Number(normalized.repeated_count || 1) || 1,
           groupedIds: [normalized.id],
-          latestTimestamp: normalized.timestamp,
+          latestTimestamp: normalized.lastOccurrenceTimestamp || normalized.timestamp,
+          firstOccurrenceTimestamp: normalized.firstOccurrenceTimestamp || normalized.timestamp,
         });
         continue;
       }
 
-      const nextCount = Number(existing.count || 1) + 1;
-      const existingTs = new Date(existing.latestTimestamp || existing.timestamp || 0).getTime();
-      const currentTs = new Date(normalized.timestamp || 0).getTime();
+      const nextCount = Number(existing.count || 1) + Math.max(1, Number(normalized.repeated_count || 1) || 1);
+      const existingTs = new Date(existing.latestTimestamp || existing.lastOccurrenceTimestamp || existing.timestamp || 0).getTime();
+      const currentTs = new Date(normalized.lastOccurrenceTimestamp || normalized.timestamp || 0).getTime();
+      const existingFirstTs = new Date(existing.firstOccurrenceTimestamp || existing.timestamp || 0).getTime();
+      const currentFirstTs = new Date(normalized.firstOccurrenceTimestamp || normalized.timestamp || 0).getTime();
       const latestBase = currentTs >= existingTs ? normalized : existing;
       groups.set(groupKey, {
         ...existing,
         ...latestBase,
         count: nextCount,
         groupedIds: Array.from(new Set([...(existing.groupedIds || []), normalized.id])),
-        latestTimestamp: currentTs >= existingTs ? normalized.timestamp : existing.latestTimestamp,
+        latestTimestamp: currentTs >= existingTs ? (normalized.lastOccurrenceTimestamp || normalized.timestamp) : existing.latestTimestamp,
+        timestamp: existingFirstTs <= currentFirstTs ? (existing.firstOccurrenceTimestamp || existing.timestamp) : (normalized.firstOccurrenceTimestamp || normalized.timestamp),
+        firstOccurrenceTimestamp: existingFirstTs <= currentFirstTs ? (existing.firstOccurrenceTimestamp || existing.timestamp) : (normalized.firstOccurrenceTimestamp || normalized.timestamp),
       });
     }
 
