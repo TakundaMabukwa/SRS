@@ -16,12 +16,6 @@ const DIRECT_VIDEO_HUB_BASE = String(
     process.env.NEXT_PUBLIC_VIDEO_BASE_URL ||
     ""
 ).trim().replace(/\/+$/, "");
-const DIRECT_LISTENER_BASE = String(
-  process.env.NEXT_PUBLIC_LISTENER_BASE_URL ||
-    process.env.NEXT_PUBLIC_VIDEO_BASE_URL ||
-    process.env.NEXT_PUBLIC_VIDEO_SERVER_BASE_URL ||
-    ""
-).trim().replace(/\/+$/, "");
 
 function normalizeApiBase(baseUrl: string) {
   const clean = String(baseUrl || "").trim().replace(/\/+$/, "");
@@ -40,15 +34,6 @@ function timeoutSignal(timeoutMs: number) {
 function getPlaybackRequestBases(videoProxyBase = DEFAULT_VIDEO_PROXY_BASE) {
   const bases = [String(videoProxyBase || "").trim()];
   const directApiBase = normalizeApiBase(DIRECT_VIDEO_HUB_BASE);
-  if (directApiBase && !bases.includes(directApiBase)) {
-    bases.push(directApiBase);
-  }
-  return bases.filter(Boolean);
-}
-
-function getListenerRequestBases(videoProxyBase = DEFAULT_VIDEO_PROXY_BASE) {
-  const bases = [String(videoProxyBase || "").trim()];
-  const directApiBase = normalizeApiBase(DIRECT_LISTENER_BASE);
   if (directApiBase && !bases.includes(directApiBase)) {
     bases.push(directApiBase);
   }
@@ -299,43 +284,6 @@ function getAlertPlaybackWindow(alert: any) {
   };
 }
 
-async function requestCameraPlaybackForWindow(
-  vehicleId: string,
-  channel: number,
-  startIso: string,
-  endIso: string,
-  videoProxyBase = DEFAULT_VIDEO_PROXY_BASE
-) {
-  let lastError: Error | null = null;
-
-  for (const listenerBase of getListenerRequestBases(videoProxyBase)) {
-    try {
-      const res = await fetch(`${listenerBase}/vehicles/${encodeURIComponent(vehicleId)}/request-video`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          channel,
-          startTime: startIso,
-          endTime: endIso,
-          mode: "stream",
-          queryResources: true,
-          recordPlayback: true,
-        }),
-      });
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok || !json?.success) {
-        throw new Error(json?.message || `HTTP ${res.status}`);
-      }
-      return json?.data || {};
-    } catch (error) {
-      lastError = error instanceof Error ? error : new Error(String(error));
-    }
-  }
-
-  if (lastError) throw lastError;
-  return null;
-}
-
 async function resolvePlaybackWindowForAlert(alert: any, videoProxyBase = DEFAULT_VIDEO_PROXY_BASE): Promise<AlertPlaybackVideo[]> {
   const vehicleId = getAlertVehicleId(alert);
   const channel = getAlertChannel(alert);
@@ -416,24 +364,6 @@ async function resolvePlaybackWindowForAlert(alert: any, videoProxyBase = DEFAUL
   const immediateStored = await tryStoredWindow();
   if (immediateStored.length > 0) {
     return immediateStored;
-  }
-
-  try {
-    await requestCameraPlaybackForWindow(vehicleId, channel, startIso, endIso, videoProxyBase);
-  } catch (error) {
-    lastError = error instanceof Error ? error : new Error(String(error));
-  }
-
-  for (let attempt = 0; attempt < 25; attempt += 1) {
-    await new Promise((resolve) => setTimeout(resolve, attempt === 0 ? 1000 : 2000));
-    try {
-      const polled = await tryStoredWindow();
-      if (polled.length > 0) {
-        return polled;
-      }
-    } catch {
-      // The inner path already captured lastError; keep polling.
-    }
   }
 
   if (lastError) throw lastError;

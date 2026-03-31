@@ -1638,48 +1638,11 @@ function RoutingSection({ userRole, handleViewMap, setCurrentTripForNote, setNot
     autoVideoRequestStateRef.current[alertId] = {
       ...existing,
       autoRequested: true,
-      autoRequesting: true,
+      autoRequesting: false,
       requestStartedAt: now,
       error: "",
     };
-    autoVideoRequestsInFlightRef.current += 1;
-
-    try {
-      const res = await fetch(`${videoProxyBase}/alerts/${encodeURIComponent(alertId)}/request-report-video`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          lookbackSeconds: 30,
-          forwardSeconds: 30,
-          queryResources: true,
-          requestDownload: true,
-        }),
-      });
-      const body = await res.json().catch(() => ({}));
-      if (!res.ok || !body?.success) {
-        throw new Error(body?.message || `HTTP ${res.status}`);
-      }
-
-      autoVideoRequestStateRef.current[alertId] = {
-        ...existing,
-        autoRequested: true,
-        autoRequesting: false,
-        requestStartedAt: Date.now(),
-        error: "",
-      };
-      return true;
-    } catch (err: any) {
-      autoVideoRequestStateRef.current[alertId] = {
-        ...existing,
-        autoRequested: true,
-        autoRequesting: false,
-        requestStartedAt: Date.now(),
-        error: err?.message || String(err),
-      };
-      return false;
-    } finally {
-      autoVideoRequestsInFlightRef.current = Math.max(0, autoVideoRequestsInFlightRef.current - 1);
-    }
+    return false;
   }, [videoProxyBase]);
 
   useEffect(() => {
@@ -3655,53 +3618,11 @@ export default function Dashboard() {
     alertVideoRequestStateRef.current[alertId] = {
       ...existing,
       autoRequested: true,
-      autoRequesting: true,
+      autoRequesting: false,
       requestStartedAt: now,
       error: "",
     };
-
-    try {
-      const res = await fetch(`${videoProxyBase}/alerts/${encodeURIComponent(alertId)}/request-report-video`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          lookbackSeconds: 30,
-          forwardSeconds: 30,
-          queryResources: true,
-          requestDownload: true,
-        }),
-      });
-      const body = await res.json().catch(() => ({}));
-      if (!res.ok || !body?.success) {
-        throw new Error(body?.message || `HTTP ${res.status}`);
-      }
-
-      const d = body?.data || {};
-      const next = {
-        ...existing,
-        autoRequested: true,
-        autoRequesting: false,
-        requestStartedAt: Date.now(),
-        querySent: !!d.querySent,
-        requestSent: !!d.requestSent,
-        downloadRequestSent: !!d.downloadRequestSent,
-        jobId: d.playbackJobId || null,
-        jobStatus: d.playbackJobId ? "queued" : "none",
-        error: "",
-      };
-      alertVideoRequestStateRef.current[alertId] = next;
-      return next;
-    } catch (err: any) {
-      const next = {
-        ...existing,
-        autoRequested: true,
-        autoRequesting: false,
-        requestStartedAt: Date.now(),
-        error: err?.message || String(err),
-      };
-      alertVideoRequestStateRef.current[alertId] = next;
-      return next;
-    }
+    return alertVideoRequestStateRef.current[alertId];
   }, [videoProxyBase]);
 
   const openAlertDetailRealtime = useCallback(async (
