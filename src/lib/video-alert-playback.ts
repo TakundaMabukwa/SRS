@@ -43,7 +43,20 @@ function getPlaybackRequestBases(videoProxyBase = DEFAULT_VIDEO_PROXY_BASE) {
 export function normalizeBackendMediaUrl(url: string, videoProxyBase = DEFAULT_VIDEO_PROXY_BASE) {
   const value = String(url || "").trim();
   if (!value) return "";
-  if (/^https?:\/\//i.test(value)) return value;
+  if (/^https?:\/\//i.test(value)) {
+    try {
+      const parsed = new URL(value);
+      if (DIRECT_VIDEO_HUB_BASE) {
+        const hubBase = new URL(DIRECT_VIDEO_HUB_BASE);
+        if (parsed.origin === hubBase.origin && parsed.pathname.startsWith('/api/')) {
+          return `${videoProxyBase}${parsed.pathname.slice(4)}${parsed.search || ''}`;
+        }
+      }
+      return value;
+    } catch {
+      return value;
+    }
+  }
   if (value.startsWith(`${videoProxyBase}/`)) return value;
   if (value.startsWith("/api/")) {
     return `${videoProxyBase}${value.slice(4)}`;

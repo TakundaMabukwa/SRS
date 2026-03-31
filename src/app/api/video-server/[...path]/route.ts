@@ -38,10 +38,6 @@ export async function GET(
     /\/file(?:$|\?)/i.test(lowerPath) ||
     /\.(mp4|m3u8|ts|m4s|jpg|jpeg|png|webp)(?:$|\?)/i.test(lowerPath)
 
-  if (isDirectMediaRequest) {
-    return Response.redirect(url, 307)
-  }
-
   try {
     const forwardedHeaders: Record<string, string> = {}
     const range = request.headers.get('range')
@@ -53,6 +49,29 @@ export async function GET(
       cache: 'no-store',
       next: { revalidate: 0 },
     })
+
+    if (isDirectMediaRequest) {
+      const passHeaders = new Headers()
+      const passThroughKeys = [
+        'content-type',
+        'content-length',
+        'content-disposition',
+        'cache-control',
+        'accept-ranges',
+        'content-range',
+        'etag',
+        'last-modified'
+      ]
+      passThroughKeys.forEach((key) => {
+        const value = response.headers.get(key)
+        if (value) passHeaders.set(key, value)
+      })
+
+      return new Response(response.body, {
+        status: response.status,
+        headers: passHeaders
+      })
+    }
 
     const contentType = response.headers.get('content-type') || ''
 
