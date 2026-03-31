@@ -9,8 +9,8 @@ export type AlertPlaybackVideo = {
 type AlertPlaybackSource = string | { [key: string]: any };
 
 const DEFAULT_VIDEO_PROXY_BASE = "/api/video-server";
-const ALERT_PLAYBACK_WINDOW_BEFORE_MS = 30 * 1000;
-const ALERT_PLAYBACK_WINDOW_AFTER_MS = 30 * 1000;
+const ALERT_PLAYBACK_WINDOW_BEFORE_MS = 60 * 1000;
+const ALERT_PLAYBACK_WINDOW_AFTER_MS = 60 * 1000;
 const DIRECT_VIDEO_HUB_BASE = String(
   process.env.NEXT_PUBLIC_VIDEO_HUB_BASE_URL ||
     process.env.NEXT_PUBLIC_VIDEO_BASE_URL ||
