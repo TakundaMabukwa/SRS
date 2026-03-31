@@ -67,6 +67,7 @@ export default function VideoAlertsDashboardTab({
   );
   const [sourceAlerts, setSourceAlerts] = useState<any[]>([]);
   const [realtimeAlerts, setRealtimeAlerts] = useState<any[]>([]);
+  const [pinnedHistoryAlerts, setPinnedHistoryAlerts] = useState<any[]>([]);
   const [videoAvailability, setVideoAvailability] = useState<Record<string, boolean>>({});
   const [exactVideoReady, setExactVideoReady] = useState<Record<string, boolean>>({});
   const [popoutTargets, setPopoutTargets] = useState<Record<string, HTMLElement | null>>({});
@@ -360,9 +361,46 @@ export default function VideoAlertsDashboardTab({
     }
   }, [dedupeByIdAndSort, readJsonSafely, videoProxyBase]);
 
+  const fetchPinnedVehicleHistoryAlerts = useCallback(async () => {
+    const vehicleIds = pinnedVehicleIds.filter(Boolean);
+    if (vehicleIds.length === 0) {
+      setPinnedHistoryAlerts([]);
+      return;
+    }
+
+    try {
+      const results = await Promise.all(
+        vehicleIds.map(async (vehicleId) => {
+          const res = await fetch(
+            `${videoProxyBase}/alerts/history?device_id=${encodeURIComponent(vehicleId)}&days=30&limit=20`,
+            { cache: "no-store" }
+          );
+          const json = await readJsonSafely(res);
+          return Array.isArray(json?.data) ? json.data : [];
+        })
+      );
+
+      const merged = dedupeByIdAndSort(results.flat().map((alert: any) => ({
+        ...alert,
+        vehicleId: alert?.vehicleId || alert?.device_id,
+        device_id: alert?.device_id || alert?.vehicleId,
+        title: alert?.title || alert?.alert_type || alert?.type,
+      })));
+
+      setPinnedHistoryAlerts(merged);
+    } catch (error) {
+      console.error("Failed to fetch pinned vehicle alert history:", error);
+      setPinnedHistoryAlerts([]);
+    }
+  }, [dedupeByIdAndSort, pinnedVehicleIds, readJsonSafely, videoProxyBase]);
+
   useEffect(() => {
     fetchTripRoutingStyleAlerts();
   }, [fetchTripRoutingStyleAlerts, filters]);
+
+  useEffect(() => {
+    void fetchPinnedVehicleHistoryAlerts();
+  }, [fetchPinnedVehicleHistoryAlerts]);
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -414,7 +452,8 @@ export default function VideoAlertsDashboardTab({
   const mergedAlerts = useMemo(() => dedupeByIdAndSort([
     ...realtimeAlerts,
     ...sourceAlerts,
-  ]), [dedupeByIdAndSort, realtimeAlerts, sourceAlerts]);
+    ...pinnedHistoryAlerts,
+  ]), [dedupeByIdAndSort, pinnedHistoryAlerts, realtimeAlerts, sourceAlerts]);
 
   const groupedAlerts = useMemo(() => {
     const groups = new Map<string, any>();
