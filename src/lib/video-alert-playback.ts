@@ -297,6 +297,83 @@ function getAlertPlaybackWindow(alert: any) {
   };
 }
 
+function formatAvailabilityDate(date: Date) {
+  return date.toISOString().slice(0, 10);
+}
+
+function collectAvailabilityDates(baseTime: Date) {
+  const oneDay = 24 * 60 * 60 * 1000;
+  return Array.from(
+    new Set([
+      formatAvailabilityDate(baseTime),
+      formatAvailabilityDate(new Date(baseTime.getTime() - oneDay)),
+      formatAvailabilityDate(new Date(baseTime.getTime() + oneDay)),
+    ])
+  );
+}
+
+type AvailabilityClip = {
+  channel: number;
+  startTime: string;
+  endTime: string;
+};
+
+async function findNearestAvailableClip(
+  vehicleId: string,
+  channel: number,
+  targetTime: Date,
+  videoProxyBase = DEFAULT_VIDEO_PROXY_BASE
+): Promise<AvailabilityClip | null> {
+  const targetMs = targetTime.getTime();
+  if (!vehicleId || !Number.isFinite(targetMs)) return null;
+
+  const candidates: Array<AvailabilityClip & { distanceMs: number }> = [];
+
+  for (const playbackBase of getPlaybackRequestBases(videoProxyBase)) {
+    for (const date of collectAvailabilityDates(targetTime)) {
+      try {
+        const res = await fetch(
+          `${playbackBase}/vehicles/${encodeURIComponent(vehicleId)}/videos/availability?date=${encodeURIComponent(date)}`,
+          { cache: "no-store", signal: timeoutSignal(6000) }
+        );
+        const json = await res.json().catch(() => ({}));
+        const channels = Array.isArray(json?.data?.channels) ? json.data.channels : [];
+        const targetChannel = channels.find((entry: any) => Number(entry?.channel || 0) === Number(channel));
+        const clips = Array.isArray(targetChannel?.clips) ? targetChannel.clips : [];
+
+        for (const clip of clips) {
+          const start = new Date(clip?.startTime || 0);
+          const end = new Date(clip?.endTime || clip?.startTime || 0);
+          if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) continue;
+          const distanceMs =
+            targetMs < start.getTime()
+              ? start.getTime() - targetMs
+              : targetMs > end.getTime()
+                ? targetMs - end.getTime()
+                : 0;
+          candidates.push({
+            channel: Number(targetChannel?.channel || channel) || channel,
+            startTime: start.toISOString(),
+            endTime: end.toISOString(),
+            distanceMs,
+          });
+        }
+      } catch {
+        // Try next date/base.
+      }
+    }
+  }
+
+  if (candidates.length === 0) return null;
+  candidates.sort((a, b) => a.distanceMs - b.distanceMs);
+  const best = candidates[0];
+  return {
+    channel: best.channel,
+    startTime: best.startTime,
+    endTime: best.endTime,
+  };
+}
+
 async function resolvePlaybackWindowForAlert(alert: any, videoProxyBase = DEFAULT_VIDEO_PROXY_BASE): Promise<AlertPlaybackVideo[]> {
   const vehicleId = getAlertVehicleId(alert);
   const channel = getAlertChannel(alert);
@@ -377,6 +454,60 @@ async function resolvePlaybackWindowForAlert(alert: any, videoProxyBase = DEFAUL
   const immediateStored = await tryStoredWindow();
   if (immediateStored.length > 0) {
     return immediateStored;
+  }
+
+  const fallbackClip = await findNearestAvailableClip(vehicleId, channel, new Date(startIso), videoProxyBase);
+  if (fallbackClip) {
+    for (const playbackBase of getPlaybackRequestBases(videoProxyBase)) {
+      try {
+        const res = await fetch(`${playbackBase}/vehicles/${encodeURIComponent(vehicleId)}/videos/window`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            channel: fallbackClip.channel,
+            startTime: fallbackClip.startTime,
+            endTime: fallbackClip.endTime,
+          }),
+        });
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok || !json?.success) {
+          throw new Error(json?.message || `HTTP ${res.status}`);
+        }
+
+        const data = json?.data || {};
+        const playbackJobUrl = normalizeBackendMediaUrl(String(data?.playbackJobUrl || "").trim(), playbackBase);
+        const directUrl = normalizeBackendMediaUrl(
+          String(data?.persistedVideoUrl || "").trim() ||
+            (data?.persistedVideoId ? `${playbackBase}/videos/${encodeURIComponent(String(data.persistedVideoId))}/file` : "") ||
+            String(data?.outputUrl || "").trim() ||
+            playbackJobUrl,
+          playbackBase
+        );
+        if (directUrl && !/\/videos\/jobs\/JOB-LOCAL-/i.test(directUrl)) {
+          return [
+            {
+              key: `nearest_${vehicleId}_${fallbackClip.channel}`,
+              label: `Nearest Available Playback CH${fallbackClip.channel}`,
+              url: directUrl,
+            },
+          ];
+        }
+
+        const jobId = String(data?.playbackJobId || "").trim();
+        if (!jobId) continue;
+
+        const resolvedUrl = await pollPlaybackJob(jobId, playbackBase, playbackJobUrl);
+        return [
+          {
+            key: `nearest_job_${jobId}`,
+            label: `Nearest Available Playback CH${fallbackClip.channel}`,
+            url: resolvedUrl,
+          },
+        ];
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+      }
+    }
   }
 
   if (lastError) throw lastError;
