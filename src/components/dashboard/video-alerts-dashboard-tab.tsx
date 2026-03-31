@@ -583,7 +583,8 @@ export default function VideoAlertsDashboardTab({
 
   // Filtering
   const filteredAlerts = alertCollection.filter((alert: any) => {
-    if (showVideoOnly && !exactVideoReady[String(alert.id)]) {
+    const pinned = isPinnedVehicle(alert);
+    if (showVideoOnly && !exactVideoReady[String(alert.id)] && !pinned) {
       return false;
     }
 
