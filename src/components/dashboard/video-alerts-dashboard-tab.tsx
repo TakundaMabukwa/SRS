@@ -55,6 +55,7 @@ export default function VideoAlertsDashboardTab({
   const [searchTerm, setSearchTerm] = useState("");
   const [activeTab, setActiveTab] = useState("all"); 
   const [showVideoOnly, setShowVideoOnly] = useState(true);
+  const [showRawAlerts, setShowRawAlerts] = useState(false);
   const [levelFilter, setLevelFilter] = useState<"all" | "critical" | "high" | "medium" | "low">(
     standaloneSeverity && standaloneSeverity !== "all" ? standaloneSeverity : "all"
   );
@@ -412,13 +413,17 @@ export default function VideoAlertsDashboardTab({
     return Array.from(groups.values());
   }, [mergedAlerts, normalizeAlert]);
 
-  useEffect(() => {
-    void refreshVideoAvailability(groupedAlerts);
-  }, [groupedAlerts, refreshVideoAvailability]);
+  const alertCollection = useMemo(() => (
+    showRawAlerts ? mergedAlerts : groupedAlerts
+  ), [groupedAlerts, mergedAlerts, showRawAlerts]);
 
   useEffect(() => {
-    void refreshExactVideoReady(groupedAlerts);
-  }, [groupedAlerts, refreshExactVideoReady]);
+    void refreshVideoAvailability(alertCollection);
+  }, [alertCollection, refreshVideoAvailability]);
+
+  useEffect(() => {
+    void refreshExactVideoReady(alertCollection);
+  }, [alertCollection, refreshExactVideoReady]);
 
   const formatAverageHandlingTime = useCallback((minutes: number | null) => {
     if (minutes === null || !Number.isFinite(minutes) || minutes < 0) return "n/a";
@@ -434,7 +439,7 @@ export default function VideoAlertsDashboardTab({
     const result: Record<string, string> = {};
 
     keys.forEach((key) => {
-      const closedAlerts = groupedAlerts.filter((alert: any) => {
+      const closedAlerts = alertCollection.filter((alert: any) => {
         if (getAlertLevel(alert) !== key) return false;
         return ["closed", "resolved"].includes(String(alert?.status || "").toLowerCase());
       });
@@ -456,16 +461,16 @@ export default function VideoAlertsDashboardTab({
     });
 
     return result;
-  }, [formatAverageHandlingTime, groupedAlerts]);
+  }, [alertCollection, formatAverageHandlingTime]);
 
   // Calculate statistics from alerts
   const calculatedStats = {
-    critical_alerts: groupedAlerts.filter(a => getAlertLevel(a) === 'critical' && !['closed', 'resolved'].includes(a.status)).length,
-    high_alerts: groupedAlerts.filter(a => getAlertLevel(a) === 'high' && !['closed', 'resolved'].includes(a.status)).length,
-    medium_alerts: groupedAlerts.filter(a => getAlertLevel(a) === 'medium' && !['closed', 'resolved'].includes(a.status)).length,
-    low_alerts: groupedAlerts.filter(a => getAlertLevel(a) === 'low' && !['closed', 'resolved'].includes(a.status)).length,
-    total_alerts: groupedAlerts.filter(a => !['closed', 'resolved'].includes(a.status)).length,
-    resolved_today: groupedAlerts.filter(a => {
+    critical_alerts: alertCollection.filter(a => getAlertLevel(a) === 'critical' && !['closed', 'resolved'].includes(a.status)).length,
+    high_alerts: alertCollection.filter(a => getAlertLevel(a) === 'high' && !['closed', 'resolved'].includes(a.status)).length,
+    medium_alerts: alertCollection.filter(a => getAlertLevel(a) === 'medium' && !['closed', 'resolved'].includes(a.status)).length,
+    low_alerts: alertCollection.filter(a => getAlertLevel(a) === 'low' && !['closed', 'resolved'].includes(a.status)).length,
+    total_alerts: alertCollection.filter(a => !['closed', 'resolved'].includes(a.status)).length,
+    resolved_today: alertCollection.filter(a => {
       if (!['closed', 'resolved'].includes(a.status)) return false;
       const today = new Date().toDateString();
       const resolvedDate = new Date(a.resolved_at || a.closed_at || a.updated_at).toDateString();
@@ -497,7 +502,7 @@ export default function VideoAlertsDashboardTab({
   };
 
   // Filtering
-  const filteredAlerts = groupedAlerts.filter((alert: any) => {
+  const filteredAlerts = alertCollection.filter((alert: any) => {
     if (showVideoOnly && !exactVideoReady[String(alert.id)]) {
       return false;
     }
@@ -547,8 +552,8 @@ export default function VideoAlertsDashboardTab({
   const mediumCount = calculatedStats.medium_alerts || 0;
   const lowCount = calculatedStats.low_alerts || 0;
   const allOpenCount = displayStats?.total_alerts || 0;
-  const closedAlertsCount = groupedAlerts.filter((alert: any) => ["closed", "resolved"].includes(String(alert?.status || "").toLowerCase())).length;
-  const videoReadyCount = groupedAlerts.filter((alert: any) => exactVideoReady[String(alert.id)]).length;
+  const closedAlertsCount = alertCollection.filter((alert: any) => ["closed", "resolved"].includes(String(alert?.status || "").toLowerCase())).length;
+  const videoReadyCount = alertCollection.filter((alert: any) => exactVideoReady[String(alert.id)]).length;
 
   // Render Helpers
   const getSeverityColor = (severity: string) => {
@@ -1078,6 +1083,15 @@ export default function VideoAlertsDashboardTab({
           >
             <Video className="mr-1 h-4 w-4" />
             {showVideoOnly ? `Video only (${videoReadyCount})` : "Show all alerts"}
+          </Button>
+
+          <Button
+            variant={showRawAlerts ? "default" : "outline"}
+            size="sm"
+            onClick={() => setShowRawAlerts((prev) => !prev)}
+            title="Toggle between grouped alert cards and every raw alert"
+          >
+            {showRawAlerts ? "Grouped view" : "Show raw alerts"}
           </Button>
           
           {!standaloneMode && (
