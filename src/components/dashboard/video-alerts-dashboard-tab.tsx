@@ -700,6 +700,7 @@ export default function VideoAlertsDashboardTab({
   const renderAlertBoardRow = (alert: any) => {
     const vehicleLabel = alert?.vehicle_registration || alert?.vehicleId || alert?.device_id || "N/A";
     const alertLabel = alert?.title || alert?.alert_type || alert?.type || "Alert";
+    const hasVideo = !!videoAvailability[String(alert.id)];
 
     return (
       <div key={alert.id} className="rounded-md border border-slate-200 bg-white px-2.5 py-2 shadow-sm">
@@ -709,6 +710,11 @@ export default function VideoAlertsDashboardTab({
               {alertLabel} ({vehicleLabel})
             </div>
             <div className="mt-1 flex items-center gap-1.5">
+              {hasVideo ? (
+                <Badge className="rounded-full border border-emerald-200 bg-emerald-50 px-1.5 py-0 text-[10px] font-semibold text-emerald-700">
+                  Video Ready
+                </Badge>
+              ) : null}
               {Number(alert?.count || 1) > 1 ? (
                 <Badge variant="secondary" className="rounded-full px-1.5 py-0 text-[10px] font-semibold">
                   x{alert.count}
@@ -765,6 +771,13 @@ export default function VideoAlertsDashboardTab({
             <div className="mt-0.5 text-[11px] leading-4 text-slate-500 capitalize">
               {(alert.alert_type || "alert").replace(/_/g, " ")}
             </div>
+            {videoAvailability[String(alert.id)] ? (
+              <div className="mt-1">
+                <Badge className="rounded-full border border-emerald-200 bg-emerald-50 px-1.5 py-0 text-[10px] font-semibold text-emerald-700">
+                  Video Ready
+                </Badge>
+              </div>
+            ) : null}
             <div className="mt-0.5 text-[10px] uppercase tracking-wide text-slate-400">
               {alert.status || "new"}
             </div>
