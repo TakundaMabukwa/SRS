@@ -12,6 +12,14 @@ export async function GET(
   const searchParams = request.nextUrl.searchParams.toString()
   const target = resolveVideoServerProxyBase(pathArray)
   const url = `${target.baseUrl}/api/${path}${searchParams ? `?${searchParams}` : ''}`
+  const lowerPath = `/${path}`.toLowerCase()
+  const isDirectMediaRequest =
+    /\/file(?:$|\?)/i.test(lowerPath) ||
+    /\.(mp4|m3u8|ts|m4s|jpg|jpeg|png|webp)(?:$|\?)/i.test(lowerPath)
+
+  if (isDirectMediaRequest) {
+    return Response.redirect(url, 307)
+  }
 
   try {
     const forwardedHeaders: Record<string, string> = {}

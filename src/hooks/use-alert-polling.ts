@@ -9,6 +9,19 @@ interface AlertStats {
   unattendedCount: number;
 }
 
+async function readJsonSafely(res: Response) {
+  const contentType = res.headers.get('content-type') || '';
+  const text = await res.text();
+  if (!contentType.toLowerCase().includes('application/json')) {
+    throw new Error(`Expected JSON but received ${contentType || 'unknown content type'}`);
+  }
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error('Invalid JSON response');
+  }
+}
+
 export function useAlertPolling() {
   const [stats, setStats] = useState<AlertStats>({ newCount: 0, criticalCount: 0, unattendedCount: 0 });
   const [lastAlertCount, setLastAlertCount] = useState(0);
@@ -18,7 +31,7 @@ export function useAlertPolling() {
     try {
       const res = await fetch('/api/video-server/alerts/active');
       if (res.ok) {
-        const data = await res.json();
+        const data = await readJsonSafely(res);
         if (data.success && data.alerts) {
           const newCount = data.alerts.filter((a: any) => a.status === 'new').length;
           const criticalCount = data.alerts.filter((a: any) => a.priority === 'critical').length;
@@ -44,7 +57,7 @@ export function useAlertPolling() {
     try {
       const res = await fetch('/api/video-server/alerts/unattended?minutes=30');
       if (res.ok) {
-        const data = await res.json();
+        const data = await readJsonSafely(res);
         if (data.success && data.count > 0) {
           setStats(prev => ({ ...prev, unattendedCount: data.count }));
           

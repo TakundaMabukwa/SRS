@@ -100,6 +100,19 @@ export default function VideoAlertsDashboardTab({
     };
   }, []);
 
+  const readJsonSafely = useCallback(async (res: Response) => {
+    const contentType = res.headers.get("content-type") || "";
+    const text = await res.text();
+    if (!contentType.toLowerCase().includes("application/json")) {
+      throw new Error(`Expected JSON but received ${contentType || "unknown content type"}`);
+    }
+    try {
+      return JSON.parse(text);
+    } catch {
+      throw new Error("Invalid JSON response");
+    }
+  }, []);
+
   const dedupeByIdAndSort = useCallback((items: any[]) => {
     const byId = new Map<string, any>();
     for (const item of items) {
@@ -117,7 +130,7 @@ export default function VideoAlertsDashboardTab({
       const res = await fetch(`${videoProxyBase}/alerts/active`, { cache: "no-store" });
       if (!res.ok) return;
 
-      const json = await res.json();
+      const json = await readJsonSafely(res);
       const activeList = Array.isArray(json?.alerts)
         ? json.alerts
         : Array.isArray(json?.data?.alerts)
@@ -130,7 +143,7 @@ export default function VideoAlertsDashboardTab({
     } catch (error) {
       console.error("Failed to fetch video alerts board data:", error);
     }
-  }, [dedupeByIdAndSort, videoProxyBase]);
+  }, [dedupeByIdAndSort, readJsonSafely, videoProxyBase]);
 
   useEffect(() => {
     fetchTripRoutingStyleAlerts();

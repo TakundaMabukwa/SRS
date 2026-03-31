@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 
+function cleanText(value: unknown) {
+  const text = String(value ?? '').trim();
+  return text || null;
+}
+
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
@@ -25,11 +30,21 @@ export async function GET(req: NextRequest) {
         }, { status: 400 });
       }
 
-      const supabase = createClient();
+      const supabase = await createClient();
+      if (!supabase) {
+        return NextResponse.json({
+          success: false,
+          vehicles: [],
+          message: 'Supabase client unavailable'
+        }, { status: 500 });
+      }
+
       const { data, error } = await supabase
         .from('vehiclesc')
         .select('registration_number, fleet_number, make, model, camera_serial, camera_sim_id')
-        .in('camera_sim_id', deviceIds);
+        .or(
+          `camera_sim_id.in.(${deviceIds.join(',')}),camera_serial.in.(${deviceIds.join(',')})`
+        );
 
       if (error) {
         return NextResponse.json({
@@ -39,13 +54,37 @@ export async function GET(req: NextRequest) {
         });
       }
 
-      const vehicles = (data || []).map((vehicle) => ({
-        deviceId: vehicle.camera_sim_id,
-        plate: vehicle.registration_number,
-        fleetNumber: vehicle.fleet_number,
-        make: vehicle.make,
-        model: vehicle.model,
-      }));
+      const vehicles = (data || []).flatMap((vehicle) => {
+        const rows: Array<{
+          deviceId: string | null;
+          plate: string | null;
+          fleetNumber: string | null;
+          make: string | null;
+          model: string | null;
+        }> = [];
+
+        if (vehicle.camera_sim_id && deviceIds.includes(String(vehicle.camera_sim_id))) {
+          rows.push({
+            deviceId: String(vehicle.camera_sim_id),
+            plate: cleanText(vehicle.registration_number),
+            fleetNumber: cleanText(vehicle.fleet_number),
+            make: cleanText(vehicle.make),
+            model: cleanText(vehicle.model),
+          });
+        }
+
+        if (vehicle.camera_serial && deviceIds.includes(String(vehicle.camera_serial))) {
+          rows.push({
+            deviceId: String(vehicle.camera_serial),
+            plate: cleanText(vehicle.registration_number),
+            fleetNumber: cleanText(vehicle.fleet_number),
+            make: cleanText(vehicle.make),
+            model: cleanText(vehicle.model),
+          });
+        }
+
+        return rows;
+      });
 
       return NextResponse.json({
         success: true,
@@ -61,13 +100,21 @@ export async function GET(req: NextRequest) {
       }, { status: 400 });
     }
 
-    const supabase = createClient();
+    const supabase = await createClient();
+    if (!supabase) {
+      return NextResponse.json({
+        success: false,
+        plate: null,
+        message: 'Supabase client unavailable'
+      }, { status: 500 });
+    }
     
     const { data: vehicle, error } = await supabase
       .from('vehiclesc')
       .select('registration_number, fleet_number, make, model, camera_serial, camera_sim_id')
-      .eq('camera_sim_id', deviceId)
-      .single();
+      .or(`camera_sim_id.eq.${deviceId},camera_serial.eq.${deviceId}`)
+      .limit(1)
+      .maybeSingle();
 
     if (error || !vehicle) {
       return NextResponse.json({ 
@@ -79,10 +126,10 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({ 
       success: true, 
-      plate: vehicle.registration_number,
-      fleetNumber: vehicle.fleet_number,
-      make: vehicle.make,
-      model: vehicle.model
+      plate: cleanText(vehicle.registration_number),
+      fleetNumber: cleanText(vehicle.fleet_number),
+      make: cleanText(vehicle.make),
+      model: cleanText(vehicle.model)
     });
 
   } catch (error: any) {
