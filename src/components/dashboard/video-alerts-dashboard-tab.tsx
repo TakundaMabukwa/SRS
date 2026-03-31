@@ -56,7 +56,7 @@ export default function VideoAlertsDashboardTab({
   const videoProxyBase = "/api/video-server";
   const [searchTerm, setSearchTerm] = useState("");
   const [activeTab, setActiveTab] = useState("all"); 
-  const [showVideoOnly, setShowVideoOnly] = useState(true);
+  const [showVideoOnly, setShowVideoOnly] = useState(false);
   const [showRawAlerts, setShowRawAlerts] = useState(false);
   const [pinnedVehicleIds, setPinnedVehicleIds] = useState<string[]>([]);
   const [levelFilter, setLevelFilter] = useState<"all" | "critical" | "high" | "medium" | "low">(
@@ -583,11 +583,6 @@ export default function VideoAlertsDashboardTab({
 
   // Filtering
   const filteredAlerts = alertCollection.filter((alert: any) => {
-    const pinned = isPinnedVehicle(alert);
-    if (showVideoOnly && !exactVideoReady[String(alert.id)] && !pinned) {
-      return false;
-    }
-
     // 1. Tab Filter
     if (activeTab === 'unattended') {
       if (!isUnattended(alert)) return false;
@@ -622,6 +617,10 @@ export default function VideoAlertsDashboardTab({
     const aVideo = exactVideoReady[String(a.id)] ? 1 : 0;
     const bVideo = exactVideoReady[String(b.id)] ? 1 : 0;
     if (aVideo !== bVideo) return bVideo - aVideo;
+
+    const aRange = videoAvailability[String(a.id)] ? 1 : 0;
+    const bRange = videoAvailability[String(b.id)] ? 1 : 0;
+    if (aRange !== bRange) return bRange - aRange;
 
     const aOpen = ["closed", "resolved"].includes(String(a?.status || "").toLowerCase()) ? 0 : 1;
     const bOpen = ["closed", "resolved"].includes(String(b?.status || "").toLowerCase()) ? 0 : 1;
@@ -868,6 +867,7 @@ export default function VideoAlertsDashboardTab({
     const vehicleLabel = alert?.vehicle_registration || alert?.vehicleId || alert?.device_id || "N/A";
     const alertLabel = alert?.title || alert?.alert_type || alert?.type || "Alert";
     const hasVideo = !!exactVideoReady[String(alert.id)];
+    const hasVideoInRange = !!videoAvailability[String(alert.id)];
     const pinned = isPinnedVehicle(alert);
     const vehicleId = String(alert?.vehicleId || alert?.device_id || alert?.metadata?.vehicle?.vehicleId || "").trim();
 
@@ -882,6 +882,11 @@ export default function VideoAlertsDashboardTab({
               {pinned ? (
                 <Badge className="rounded-full border border-cyan-200 bg-cyan-50 px-1.5 py-0 text-[10px] font-semibold text-cyan-700">
                   Pinned
+                </Badge>
+              ) : null}
+              {hasVideoInRange && !hasVideo ? (
+                <Badge className="rounded-full border border-sky-200 bg-sky-50 px-1.5 py-0 text-[10px] font-semibold text-sky-700">
+                  Video In Range
                 </Badge>
               ) : null}
               {hasVideo ? (
@@ -957,6 +962,13 @@ export default function VideoAlertsDashboardTab({
             <div className="mt-0.5 text-[11px] leading-4 text-slate-500 capitalize">
               {(alert.alert_type || "alert").replace(/_/g, " ")}
             </div>
+            {videoAvailability[String(alert.id)] && !exactVideoReady[String(alert.id)] ? (
+              <div className="mt-1">
+                <Badge className="rounded-full border border-sky-200 bg-sky-50 px-1.5 py-0 text-[10px] font-semibold text-sky-700">
+                  Video In Range
+                </Badge>
+              </div>
+            ) : null}
             {exactVideoReady[String(alert.id)] ? (
               <div className="mt-1">
                 <Badge className="rounded-full border border-emerald-200 bg-emerald-50 px-1.5 py-0 text-[10px] font-semibold text-emerald-700">
@@ -1186,10 +1198,10 @@ export default function VideoAlertsDashboardTab({
             variant={showVideoOnly ? "default" : "outline"}
             size="sm"
             onClick={() => setShowVideoOnly((prev) => !prev)}
-            title="Only show alerts with video available on the hub"
+            title="Highlight alerts with video on the hub without hiding other alerts"
           >
             <Video className="mr-1 h-4 w-4" />
-            {showVideoOnly ? `Video only (${videoReadyCount})` : "Show all alerts"}
+            {showVideoOnly ? `Highlight video (${videoReadyCount})` : `Show video badges (${videoReadyCount})`}
           </Button>
 
           <Button
