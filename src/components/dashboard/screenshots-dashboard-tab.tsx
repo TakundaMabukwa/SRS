@@ -417,13 +417,14 @@ export default function ScreenshotsDashboardTab({ detachable = true }: Screensho
     try {
       await fetchConnectedVehicles();
       await fetchRecentScreenshots();
+      await runCaptureCycle();
     } catch {
       setError("Unable to refresh screenshot monitor right now.");
     } finally {
       setRefreshing(false);
       setLoading(false);
     }
-  }, [fetchConnectedVehicles, fetchRecentScreenshots]);
+  }, [fetchConnectedVehicles, fetchRecentScreenshots, runCaptureCycle]);
 
   const handleWsMessage = useCallback(
     (data: { type?: string }) => {
