@@ -162,7 +162,10 @@ export default function PlaybackDashboardTab() {
 
   const vehicleDisplayLabel = useCallback((vehicle: PlaybackVehicle | null | undefined) => {
     if (!vehicle) return "N/A";
-    return vehicle.vehicleRegistration || vehicle.fleetNumber || vehicle.vehicleId;
+    if (vehicle.fleetNumber && vehicle.vehicleRegistration) {
+      return `${vehicle.fleetNumber} - ${vehicle.vehicleRegistration}`;
+    }
+    return "";
   }, []);
 
   const fetchJsonWithRetry = useCallback(async (url: string, timeoutMs: number, retries = 1) => {
@@ -228,7 +231,7 @@ export default function PlaybackDashboardTab() {
         make: details?.make || null,
         model: details?.model || null,
       };
-    });
+    }).filter((row: PlaybackVehicle) => !!(row.fleetNumber && row.vehicleRegistration));
     setVehicles(enrichedRows);
     return enrichedRows as PlaybackVehicle[];
   }, [fetchJsonWithRetry]);
@@ -293,8 +296,9 @@ export default function PlaybackDashboardTab() {
     return vehicles.filter((vehicle) =>
       [
         vehicle.vehicleId,
-        vehicle.vehicleRegistration,
         vehicle.fleetNumber,
+        vehicle.vehicleRegistration,
+        vehicleDisplayLabel(vehicle),
         vehicle.make,
         vehicle.model,
       ]
@@ -561,7 +565,7 @@ export default function PlaybackDashboardTab() {
                   setRangeSummary("");
                 }
               }}
-              placeholder="Enter vehicle ID..."
+              placeholder="Enter fleet number or registration..."
               className="h-10 w-full rounded-md border border-slate-200 bg-white pl-10 pr-3 text-sm"
             />
           </div>
@@ -590,14 +594,7 @@ export default function PlaybackDashboardTab() {
                       <tr key={vehicle.vehicleId} className={`border-t border-slate-100 ${selected ? "bg-cyan-50" : "bg-white"}`}>
                         <td className="px-3 py-3 align-top">
                           <div className="font-medium text-slate-900">{vehicleDisplayLabel(vehicle)}</div>
-                          {vehicle.vehicleRegistration || vehicle.fleetNumber ? (
-                            <>
-                              <div className="text-xs text-slate-500">{vehicle.vehicleId}</div>
-                              <div className="text-xs text-slate-500">{vehicle.clipCount} clip(s)</div>
-                            </>
-                          ) : (
-                            <div className="text-xs text-slate-500">{vehicle.clipCount} clip(s)</div>
-                          )}
+                          <div className="text-xs text-slate-500">{vehicle.clipCount} clip(s)</div>
                         </td>
                         <td className="px-3 py-3 align-top text-right">
                           <Button
@@ -637,9 +634,6 @@ export default function PlaybackDashboardTab() {
                 <div>
                   <h3 className="text-lg font-semibold text-slate-900">{vehicleDisplayLabel(selectedVehicle)}</h3>
                   <p className="text-sm text-slate-600">Choose the day, channel, and time window. Quick picks below use real stored coverage.</p>
-                  {(selectedVehicle.vehicleRegistration || selectedVehicle.fleetNumber) ? (
-                    <p className="text-xs text-slate-500">{selectedVehicle.vehicleId}</p>
-                  ) : null}
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
                   <Badge className="bg-slate-100 text-slate-700 hover:bg-slate-100">{selectedVehicle.clipCount} clip(s)</Badge>

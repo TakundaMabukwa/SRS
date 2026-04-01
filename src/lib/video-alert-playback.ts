@@ -234,8 +234,6 @@ export function getAlertLastOccurrenceTimestamp(alert: any) {
 export function getAlertPlaybackSignature(alert: any) {
   if (!alert || typeof alert !== "object") return "";
   const playbackWindow = getAlertPlaybackWindow(alert);
-  const mediaVideos = Array.isArray(alert?.media?.videos) ? alert.media.videos : [];
-  const screenshots = Array.isArray(alert?.media?.screenshots) ? alert.media.screenshots : [];
   return JSON.stringify({
     id: String(alert?.id || "").trim(),
     vehicleId: getAlertVehicleId(alert),
@@ -243,9 +241,6 @@ export function getAlertPlaybackSignature(alert: any) {
     timestamp: getAlertPlaybackTimestamp(alert) || "",
     startIso: playbackWindow?.startIso || "",
     endIso: playbackWindow?.endIso || "",
-    updatedAt: String(alert?.updated_at || alert?.updatedAt || "").trim(),
-    mediaVideoCount: mediaVideos.length,
-    screenshotCount: screenshots.length,
   });
 }
 
@@ -283,10 +278,25 @@ function buildJobFileUrl(jobId: string, videoProxyBase = DEFAULT_VIDEO_PROXY_BAS
   return `${videoProxyBase}/videos/jobs/${encodeURIComponent(jobId)}/file`;
 }
 
+function getPreferredCompletedJobUrl(
+  job: any,
+  jobId: string,
+  videoProxyBase = DEFAULT_VIDEO_PROXY_BASE,
+  playbackJobUrl?: string
+) {
+  const jobFileUrl = normalizeBackendMediaUrl(
+    String(job?.outputUrl || "").trim() ||
+      buildJobFileUrl(jobId, videoProxyBase, playbackJobUrl),
+    videoProxyBase
+  );
+  return jobFileUrl;
+}
+
 async function pollPlaybackJob(jobId: string, videoProxyBase = DEFAULT_VIDEO_PROXY_BASE, playbackJobUrl?: string) {
   const statusUrl = buildJobStatusUrl(jobId, videoProxyBase, playbackJobUrl);
-  const fallbackFileUrl = buildJobFileUrl(jobId, videoProxyBase, playbackJobUrl);
-  for (let attempt = 0; attempt < 40; attempt += 1) {
+  let lastProgressKey = "";
+  let stalledAttempts = 0;
+  for (let attempt = 0; attempt < 120; attempt += 1) {
     await new Promise((resolve) => setTimeout(resolve, attempt === 0 ? 500 : 1500));
     const statusRes = await fetch(statusUrl, {
       cache: "no-store",
@@ -295,16 +305,20 @@ async function pollPlaybackJob(jobId: string, videoProxyBase = DEFAULT_VIDEO_PRO
     const statusJson = await statusRes.json().catch(() => ({}));
     const job = statusJson?.data || {};
     if (job?.status === "completed") {
-      return normalizeBackendMediaUrl(
-        String(job?.persistedVideoUrl || "").trim() ||
-          (job?.persistedVideoId ? `${videoProxyBase}/videos/${encodeURIComponent(String(job.persistedVideoId))}/file` : "") ||
-          String(job?.outputUrl || "").trim() ||
-          fallbackFileUrl,
-        videoProxyBase
-      );
+      return getPreferredCompletedJobUrl(job, jobId, videoProxyBase, playbackJobUrl);
     }
     if (job?.status === "failed") {
       throw new Error(job?.error || "Playback generation failed.");
+    }
+    const progressKey = `${String(job?.status || "")}|${String(job?.updatedAt || job?.updated_at || "")}|${Number(job?.fileSize || 0)}`;
+    if (progressKey === lastProgressKey) {
+      stalledAttempts += 1;
+    } else {
+      lastProgressKey = progressKey;
+      stalledAttempts = 0;
+    }
+    if (stalledAttempts >= 20) {
+      throw new Error("Playback job is taking too long on the server. Please try again.");
     }
   }
   throw new Error("Playback job timed out.");
@@ -530,37 +544,18 @@ async function resolvePlaybackWindowForAlert(alert: any, videoProxyBase = DEFAUL
           ];
         }
 
+        const jobId = String(data?.playbackJobId || "").trim();
         const playbackJobUrl = normalizeBackendMediaUrl(String(data?.playbackJobUrl || "").trim(), playbackBase);
-        const directUrl = normalizeBackendMediaUrl(
-          String(data?.persistedVideoUrl || "").trim() ||
-            (data?.persistedVideoId ? `${playbackBase}/videos/${encodeURIComponent(String(data.persistedVideoId))}/file` : "") ||
-            String(data?.outputUrl || "").trim() ||
-            playbackJobUrl,
-          playbackBase
-        );
-        if (directUrl && !/\/videos\/jobs\/JOB-LOCAL-/i.test(directUrl)) {
+        if (jobId) {
+          const resolvedUrl = await pollPlaybackJob(jobId, playbackBase, playbackJobUrl);
           return [
             {
-              key: `window_${vehicleId}_${channel}`,
+              key: `job_${jobId}`,
               label: `Alert-time Playback CH${channel}`,
-              url: directUrl,
+              url: resolvedUrl,
             },
           ];
         }
-
-        const jobId = String(data?.playbackJobId || "").trim();
-        if (!jobId) {
-          return [];
-        }
-
-        const resolvedUrl = await pollPlaybackJob(jobId, playbackBase, playbackJobUrl);
-        return [
-          {
-            key: `job_${jobId}`,
-            label: `Alert-time Playback CH${channel}`,
-            url: resolvedUrl,
-          },
-        ];
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
       }
@@ -594,35 +589,18 @@ async function resolvePlaybackWindowForAlert(alert: any, videoProxyBase = DEFAUL
         }
 
         const data = json?.data || {};
+        const jobId = String(data?.playbackJobId || "").trim();
         const playbackJobUrl = normalizeBackendMediaUrl(String(data?.playbackJobUrl || "").trim(), playbackBase);
-        const directUrl = normalizeBackendMediaUrl(
-          String(data?.persistedVideoUrl || "").trim() ||
-            (data?.persistedVideoId ? `${playbackBase}/videos/${encodeURIComponent(String(data.persistedVideoId))}/file` : "") ||
-            String(data?.outputUrl || "").trim() ||
-            playbackJobUrl,
-          playbackBase
-        );
-        if (directUrl && !/\/videos\/jobs\/JOB-LOCAL-/i.test(directUrl)) {
+        if (jobId) {
+          const resolvedUrl = await pollPlaybackJob(jobId, playbackBase, playbackJobUrl);
           return [
             {
-              key: `nearest_${vehicleId}_${fallbackClip.channel}`,
+              key: `nearest_job_${jobId}`,
               label: `Playback In Available Range CH${fallbackClip.channel}`,
-              url: directUrl,
+              url: resolvedUrl,
             },
           ];
         }
-
-        const jobId = String(data?.playbackJobId || "").trim();
-        if (!jobId) continue;
-
-        const resolvedUrl = await pollPlaybackJob(jobId, playbackBase, playbackJobUrl);
-        return [
-          {
-            key: `nearest_job_${jobId}`,
-            label: `Playback In Available Range CH${fallbackClip.channel}`,
-            url: resolvedUrl,
-          },
-        ];
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
       }

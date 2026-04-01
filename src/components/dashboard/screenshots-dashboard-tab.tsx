@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Camera, RefreshCw, Download, MonitorPlay, Shield, RadioTower, Activity, ExternalLink } from "lucide-react";
 import { useVideoWebSocket } from "@/hooks/use-video-websocket";
+import { createClient } from "@/lib/supabase/client";
 
 type ChannelInfo = {
   logicalChannel?: number;
@@ -18,6 +19,9 @@ type ConnectedVehicle = {
   phone?: string;
   channels?: ChannelInfo[];
   connected?: boolean;
+  registration?: string;
+  fleetNumber?: string;
+  displayLabel?: string;
 };
 
 type ScreenshotItem = {
@@ -41,6 +45,7 @@ type VehicleChannelCard = {
 
 type VehicleGroupCard = {
   vehicleId: string;
+  displayLabel: string;
   channels: VehicleChannelCard[];
 };
 
@@ -108,6 +113,7 @@ type ScreenshotsDashboardTabProps = {
 };
 
 export default function ScreenshotsDashboardTab({ detachable = true }: ScreenshotsDashboardTabProps) {
+  const supabase = createClient();
   const [vehicles, setVehicles] = useState<ConnectedVehicle[]>([]);
   const [screenshots, setScreenshots] = useState<ScreenshotItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -150,10 +156,52 @@ export default function ScreenshotsDashboardTab({ detachable = true }: Screensho
     }
     const data = await response.json();
     const connectedVehicles = Array.isArray(data) ? data : [];
-    vehiclesRef.current = connectedVehicles;
-    setVehicles(connectedVehicles);
-    return connectedVehicles as ConnectedVehicle[];
-  }, []);
+    const cameraIds = Array.from(
+      new Set(
+        connectedVehicles
+          .map((vehicle: ConnectedVehicle) => String(vehicle.phone || vehicle.id || "").trim())
+          .filter(Boolean)
+      )
+    );
+    let vehicleLookup = new Map<string, { registration: string; fleetNumber: string }>();
+    if (cameraIds.length > 0) {
+      const { data: vehicleRows } = await supabase
+        .from("vehiclesc")
+        .select("registration_number, fleet_number, camera_sim_id, camera_serial")
+        .or(`camera_sim_id.in.(${cameraIds.join(",")}),camera_serial.in.(${cameraIds.join(",")})`);
+      vehicleLookup = new Map();
+      for (const row of vehicleRows || []) {
+        const registration = String(row?.registration_number || "").trim();
+        const fleetNumber = String(row?.fleet_number || "").trim();
+        const keys = [row?.camera_sim_id, row?.camera_serial]
+          .map((value) => String(value || "").trim())
+          .filter(Boolean);
+        for (const key of keys) {
+          if (registration && fleetNumber && !vehicleLookup.has(key)) {
+            vehicleLookup.set(key, { registration, fleetNumber });
+          }
+        }
+      }
+    }
+    const enrichedVehicles = connectedVehicles
+      .map((vehicle: ConnectedVehicle) => {
+        const key = String(vehicle.phone || vehicle.id || "").trim();
+        const details = vehicleLookup.get(key);
+        if (!details?.registration || !details?.fleetNumber) {
+          return null;
+        }
+        return {
+          ...vehicle,
+          registration: details.registration,
+          fleetNumber: details.fleetNumber,
+          displayLabel: `${details.fleetNumber} - ${details.registration}`,
+        };
+      })
+      .filter(Boolean) as ConnectedVehicle[];
+    vehiclesRef.current = enrichedVehicles;
+    setVehicles(enrichedVehicles);
+    return enrichedVehicles as ConnectedVehicle[];
+  }, [supabase]);
 
   const fetchRecentScreenshots = useCallback(async () => {
     try {
@@ -376,10 +424,11 @@ export default function ScreenshotsDashboardTab({ detachable = true }: Screensho
 
         return {
           vehicleId,
+          displayLabel: String(vehicle.displayLabel || "").trim(),
           channels: visibleChannels,
         };
       })
-      .filter((card) => card.vehicleId.length > 0 && card.channels.length > 0);
+      .filter((card) => card.vehicleId.length > 0 && card.displayLabel.length > 0 && card.channels.length > 0);
   }, [connectedVehicles, screenshots]);
 
   const liveCount = useMemo(() => {
@@ -475,7 +524,7 @@ export default function ScreenshotsDashboardTab({ detachable = true }: Screensho
                 className="overflow-hidden border-slate-300 bg-slate-950 text-slate-100"
               >
                 <div className="flex items-center justify-between border-b border-slate-800 px-3 py-2">
-                  <p className="text-sm font-semibold">{card.vehicleId}</p>
+                  <p className="text-sm font-semibold">{card.displayLabel}</p>
                   <Badge className="bg-slate-700 text-slate-100 hover:bg-slate-700">
                     <Activity className="mr-1 h-3 w-3" />
                     {card.channels.length} channels

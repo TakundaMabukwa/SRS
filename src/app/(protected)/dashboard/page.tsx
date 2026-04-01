@@ -1338,7 +1338,7 @@ function RoutingSection({ userRole, handleViewMap, setCurrentTripForNote, setNot
 
     const now = Date.now()
     const backoffUntil = alertHydrationMediaBackoffRef.current[alertId] || 0
-    const allowHeavy = now >= backoffUntil
+    const allowHeavy = now >= backoffUntil && !alertDetailModalOpen
     const [mediaRes, videosRes, screenshotsRes] = allowHeavy
       ? await Promise.all([
           fetch(`${videoProxyBase}/alerts/${alertId}/media?ensureMedia=true`, {
@@ -1506,7 +1506,7 @@ function RoutingSection({ userRole, handleViewMap, setCurrentTripForNote, setNot
         cameraVideoReady: false,
       };
     }
-  }, [extractVehicleKey, fetchAlertMediaById, mapAlertVideoState, normalizeId, normalizeScreenshotRecord]);
+  }, [alertDetailModalOpen, extractVehicleKey, fetchAlertMediaById, mapAlertVideoState, normalizeId, normalizeScreenshotRecord]);
 
   const fetchGroupedAlerts = useCallback(async () => {
     try {
@@ -3255,8 +3255,6 @@ export default function Dashboard() {
               const statusBody = await statusRes.json().catch(() => ({}));
               const job = statusBody?.data || {};
               const preferredOutputUrl =
-                toAbsoluteVideoUrl(job?.persistedVideoUrl) ||
-                (job?.persistedVideoId ? toAbsoluteVideoUrl(`${videoProxyBase}/videos/${encodeURIComponent(String(job.persistedVideoId))}/file`) : "") ||
                 toAbsoluteVideoUrl(job?.outputUrl) ||
                 buildPlaybackJobFileUrl(jobId);
               alertVideoRequestStateRef.current[alertId] = {
@@ -3372,28 +3370,17 @@ export default function Dashboard() {
 
     setTimelinePlaybackLoading((prev) => ({ ...prev, [alertId]: true }));
     try {
-      const [detailRes, mediaRes, videosRes] = await Promise.all([
-        fetch(`${videoProxyBase}/alerts/${encodeURIComponent(alertId)}?ensureMedia=true`, {
-          cache: "no-store",
-          signal: AbortSignal.timeout(5000),
-        }),
-        fetch(`${videoProxyBase}/alerts/${encodeURIComponent(alertId)}/media?ensureMedia=true`, {
-          cache: "no-store",
-          signal: AbortSignal.timeout(5000),
-        }),
-        fetch(`${videoProxyBase}/alerts/${encodeURIComponent(alertId)}/videos?ensureMedia=true`, {
+      const [detailRes] = await Promise.all([
+        fetch(`${videoProxyBase}/alerts/${encodeURIComponent(alertId)}`, {
           cache: "no-store",
           signal: AbortSignal.timeout(5000),
         }),
       ]);
 
       const detailJson = detailRes.ok ? await detailRes.json() : null;
-      const mediaJson = mediaRes.ok ? await mediaRes.json() : null;
-      const videosJson = videosRes.ok ? await videosRes.json() : null;
-      const detailAlert = detailJson?.alert || mediaJson?.data?.alert || {};
-      const mediaPayload = mediaJson?.data || mediaJson || {};
-      const clipUrls = mediaPayload?.clipUrls || {};
-      const videosPayload = videosJson?.videos || {};
+      const detailAlert = detailJson?.alert || {};
+      const clipUrls = {};
+      const videosPayload = {};
       const metadataClips = detailAlert?.metadata?.videoClips || {};
 
       const preDuration = Number(videosPayload?.pre_event?.duration ?? metadataClips?.preDuration ?? 0);
@@ -3698,9 +3685,8 @@ export default function Dashboard() {
       const vehicleKey = getVehicleKeyLocal(baseAlert);
       const vehicleKeyParam = encodeURIComponent(vehicleKey || "");
 
-      const detailJson = await fetchJsonWithTimeout(`${videoProxyBase}/alerts/${alertId}?ensureMedia=true`, 5000);
-      const mediaResp = await fetchJsonWithMeta(`${videoProxyBase}/alerts/${alertId}/media?ensureMedia=true`, 5000);
-      const mediaJson = mediaResp.data;
+      const detailJson = await fetchJsonWithTimeout(`${videoProxyBase}/alerts/${alertId}`, 5000);
+      const mediaJson = null;
       const videosJson = null;
       const screenshotsJson = null;
 
@@ -4003,32 +3989,6 @@ export default function Dashboard() {
     }
   }, [EVENT_VIDEO_READY_MIN_SECONDS, buildAlertVideoUrl, getAlertCoordinates, toAbsoluteVideoUrl]);
 
-  useEffect(() => {
-    if (!alertDetailModalOpen || !selectedAlert?.id) return;
-
-    let cancelled = false;
-    let timer: ReturnType<typeof setTimeout> | null = null;
-
-    const tick = async () => {
-      if (cancelled) return;
-      const refreshed = await openAlertDetailRealtime(selectedAlert, null, {
-        silent: true,
-        requestIfMissing: true,
-      });
-      if (cancelled) return;
-
-      const preReady = !!(refreshed?.preIncidentReady || refreshed?.has_pre_event || refreshed?.videos?.pre_event);
-      const postReady = !!(refreshed?.postIncidentReady || refreshed?.has_post_event || refreshed?.videos?.post_event);
-      const nextDelayMs = preReady && postReady ? 15000 : 3000;
-      timer = setTimeout(tick, nextDelayMs);
-    };
-
-    timer = setTimeout(tick, 1200);
-    return () => {
-      cancelled = true;
-      if (timer) clearTimeout(timer);
-    };
-  }, [alertDetailModalOpen, selectedAlert?.id, openAlertDetailRealtime]);
   useEffect(() => {
     const getCookie = (name: string) => {
       const value = `; ${document.cookie}`;
@@ -4357,7 +4317,7 @@ export default function Dashboard() {
         )}
 
         {activeTab === "video-alerts" && (
-          <VideoAlertsDashboardTab onOpenAlertDetail={openAlertDetailRealtime} />
+          <VideoAlertsDashboardTab onOpenAlertDetail={openAlertDetailRealtime} suspendBackgroundWork={alertDetailModalOpen} />
         )}
 
         {activeTab === "screenshots" && (

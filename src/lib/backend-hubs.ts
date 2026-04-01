@@ -91,12 +91,18 @@ export function resolveVideoServerProxyBase(pathArray: string[]) {
     first === "alerts" ||
     first === "dashboard" ||
     first === "screenshots" ||
-    first === "images" ||
     first === "drivers" ||
     first === "speeding";
 
   if (isAlertPath) {
     return { name: "alertHub", baseUrl: getAlertHubBaseUrl() };
+  }
+
+  const isScreenshotPath =
+    first === "images";
+
+  if (isScreenshotPath) {
+    return { name: "listener", baseUrl: getListenerBaseUrl() };
   }
 
   return { name: "listener", baseUrl: getListenerBaseUrl() };

@@ -34,6 +34,8 @@ interface ConnectedVehicle {
   phone?: string;
   channels: VehicleChannel[];
   registration?: string;
+  fleetNumber?: string;
+  displayLabel?: string;
   connected?: boolean;
   activeStreams?: number[];
 }
@@ -91,26 +93,40 @@ export default function LiveStreamTab() {
             )
           );
           const vehicleLookup = new Map<string, string>();
+          const vehicleFleetLookup = new Map<string, string>();
           if (cameraIds.length > 0) {
             const { data: vehicleRows } = await supabase
               .from("vehiclesc")
-              .select("registration_number, camera_sim_id")
-              .in("camera_sim_id", cameraIds);
+              .select("registration_number, fleet_number, camera_sim_id, camera_serial")
+              .or(`camera_sim_id.in.(${cameraIds.join(",")}),camera_serial.in.(${cameraIds.join(",")})`);
             for (const row of vehicleRows || []) {
-              const key = String(row?.camera_sim_id || "").trim();
               const registration = String(row?.registration_number || "").trim();
-              if (key && registration && !vehicleLookup.has(key)) {
-                vehicleLookup.set(key, registration);
+              const fleetNumber = String(row?.fleet_number || "").trim();
+              const keys = [row?.camera_sim_id, row?.camera_serial]
+                .map((value) => String(value || "").trim())
+                .filter(Boolean);
+              for (const key of keys) {
+                if (registration && !vehicleLookup.has(key)) {
+                  vehicleLookup.set(key, registration);
+                }
+                if (fleetNumber && !vehicleFleetLookup.has(key)) {
+                  vehicleFleetLookup.set(key, fleetNumber);
+                }
               }
             }
           }
           const vehiclesWithReg = connectedVehicles.map((vehicle: ConnectedVehicle) => {
             const key = String(vehicle.phone || vehicle.id || "").trim();
+            const registration = vehicleLookup.get(key) || "";
+            const fleetNumber = vehicleFleetLookup.get(key) || "";
+            const displayLabel = registration && fleetNumber ? `${fleetNumber} - ${registration}` : "";
             return {
               ...vehicle,
-              registration: vehicleLookup.get(key) || vehicle.registration || vehicle.name || vehicle.id,
+              registration,
+              fleetNumber,
+              displayLabel,
             };
-          });
+          }).filter((vehicle: ConnectedVehicle) => !!vehicle.displayLabel);
           setVehicles(vehiclesWithReg);
         } else {
           setVehicles([]);
@@ -143,8 +159,9 @@ export default function LiveStreamTab() {
   const filteredVehicles = vehicles.filter((v) =>
     (v.connected !== false) &&
     (v.id?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      v.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      v.registration?.toLowerCase().includes(searchTerm.toLowerCase()))
+      v.displayLabel?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      v.registration?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      v.fleetNumber?.toLowerCase().includes(searchTerm.toLowerCase()))
   );
 
   const liveChannelCount = filteredVehicles.reduce(
@@ -170,7 +187,7 @@ export default function LiveStreamTab() {
         vehicleId,
         fallbackVehicleIds,
         channel: channelNumber,
-        vehicleName: `${vehicle?.registration || vehicle?.name || vehicleId} - Ch ${channelNumber}`,
+        vehicleName: `${vehicle.displayLabel} - Ch ${channelNumber}`,
       };
     });
   });
@@ -411,8 +428,7 @@ export default function LiveStreamTab() {
                       <Video className="h-5 w-5" />
                     </div>
                     <div>
-                      <p className="font-bold text-slate-900">{vehicle.registration || vehicle.id}</p>
-                      <p className="font-mono text-xs text-slate-500">{vehicle.id}</p>
+                      <p className="font-bold text-slate-900">{vehicle.displayLabel}</p>
                     </div>
                   </div>
                   {vehicle.connected !== false ? (
@@ -468,8 +484,8 @@ export default function LiveStreamTab() {
                         <Badge variant="outline">Offline</Badge>
                       )}
                     </td>
-                    <td className="px-4 py-3 font-medium text-slate-900">{vehicle.registration || "-"}</td>
-                    <td className="px-4 py-3 font-mono text-xs text-slate-600">{vehicle.id}</td>
+                    <td className="px-4 py-3 font-medium text-slate-900">{vehicle.displayLabel}</td>
+                    <td className="px-4 py-3 font-mono text-xs text-slate-600">{vehicle.phone || vehicle.id}</td>
                     <td className="px-4 py-3 text-slate-600">{(vehicle.channels && vehicle.channels.length > 0) ? vehicle.channels.length : 1}</td>
                     <td className="px-4 py-3 text-center">
                       <Button

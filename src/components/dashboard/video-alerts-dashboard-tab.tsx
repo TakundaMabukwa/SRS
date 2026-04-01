@@ -42,6 +42,7 @@ type VideoAlertsDashboardTabProps = {
   onOpenAlertDetail?: (alert: any, trip?: any) => Promise<any> | any;
   standaloneSeverity?: "critical" | "high" | "medium" | "low" | "all" | null;
   standaloneMode?: boolean;
+  suspendBackgroundWork?: boolean;
 };
 
 const MIN_READY_VIDEO_BYTES = 500 * 1024;
@@ -51,6 +52,7 @@ export default function VideoAlertsDashboardTab({
   onOpenAlertDetail,
   standaloneSeverity = null,
   standaloneMode = false,
+  suspendBackgroundWork = false,
 }: VideoAlertsDashboardTabProps) {
   const router = useRouter();
   const { filters, loading } = useVideoAlerts();
@@ -84,6 +86,7 @@ export default function VideoAlertsDashboardTab({
     const vehicleMeta = incoming?.metadata?.vehicle || incoming?.vehicle || {};
     const firstOccurrenceTimestamp = getAlertFirstOccurrenceTimestamp(incoming) || incoming.timestamp || incoming.created_at || incoming.alert_timestamp || new Date().toISOString();
     const lastOccurrenceTimestamp = getAlertLastOccurrenceTimestamp(incoming) || firstOccurrenceTimestamp;
+    const displayTimestamp = getAlertDisplayTimestamp(incoming) || lastOccurrenceTimestamp || firstOccurrenceTimestamp;
     const id = String(incoming.id || incoming.alert_id || incoming.alertId || "").trim();
     const title = String(incoming.title || incoming.type || incoming.alert_type || "Alert").trim();
     const severity = String(incoming.severity || incoming.priority || "low").toLowerCase();
@@ -302,7 +305,6 @@ export default function VideoAlertsDashboardTab({
       .slice(0, MAX_EXACT_READY_CHECKS);
 
     const immediateMap: Record<string, boolean> = {};
-    const requests: Array<Promise<void>> = [];
 
     for (const alert of normalizedAlerts) {
       const alertId = String(alert.id || "").trim();
@@ -312,55 +314,18 @@ export default function VideoAlertsDashboardTab({
         immediateMap[alertId] = !!exactReadyCacheRef.current.get(alertId);
         continue;
       }
-
-      if (pendingExactReadyIdsRef.current.has(alertId)) continue;
-      pendingExactReadyIdsRef.current.add(alertId);
-
-      requests.push(
-        fetch(`${videoProxyBase}/alerts/${encodeURIComponent(alertId)}/media`, {
-          cache: "no-store",
-        })
-          .then((res) => readJsonSafely(res))
-          .then((json) => {
-            const videos = Array.isArray(json?.data?.videos)
-              ? json.data.videos
-              : Array.isArray(json?.videos)
-                ? json.videos
-                : [];
-            const ready = videos.some((video: any) => {
-              const fileSize = Number(video?.fileSize || video?.file_size || 0);
-              const url = String(video?.url || "").trim();
-              return !!url && Number.isFinite(fileSize) && fileSize >= MIN_READY_VIDEO_BYTES;
-            });
-            exactReadyCacheRef.current.set(alertId, ready);
-          })
-          .catch(() => {
-            exactReadyCacheRef.current.set(alertId, false);
-          })
-          .finally(() => {
-            pendingExactReadyIdsRef.current.delete(alertId);
-          })
-      );
+      const ready = !!videoAvailability[alertId];
+      exactReadyCacheRef.current.set(alertId, ready);
+      immediateMap[alertId] = ready;
     }
 
     if (Object.keys(immediateMap).length > 0) {
       setExactVideoReady((prev) => ({ ...prev, ...immediateMap }));
     }
-
-    if (requests.length === 0) return;
-
-    await Promise.all(requests);
-
-    const resolvedMap: Record<string, boolean> = {};
-    for (const alert of normalizedAlerts) {
-      const alertId = String(alert.id || "").trim();
-      if (!alertId) continue;
-      resolvedMap[alertId] = !!exactReadyCacheRef.current.get(alertId);
-    }
-    setExactVideoReady((prev) => ({ ...prev, ...resolvedMap }));
-  }, [getGroupedAlertTimestamp, isPinnedVehicle, normalizeAlert, readJsonSafely, videoAvailability, videoProxyBase]);
+  }, [getGroupedAlertTimestamp, isPinnedVehicle, normalizeAlert, videoAvailability]);
 
   const fetchTripRoutingStyleAlerts = useCallback(async () => {
+    if (suspendBackgroundWork) return;
     try {
       const res = await fetch(`${videoProxyBase}/alerts/active`, { cache: "no-store" });
       if (!res.ok) return;
@@ -378,7 +343,7 @@ export default function VideoAlertsDashboardTab({
     } catch (error) {
       console.error("Failed to fetch video alerts board data:", error);
     }
-  }, [dedupeByIdAndSort, readJsonSafely, videoProxyBase]);
+  }, [dedupeByIdAndSort, readJsonSafely, suspendBackgroundWork, videoProxyBase]);
 
   const fetchPinnedVehicleHistoryAlerts = useCallback(async () => {
     const vehicleIds = pinnedVehicleIds.filter(Boolean);
@@ -422,16 +387,18 @@ export default function VideoAlertsDashboardTab({
   }, [fetchPinnedVehicleHistoryAlerts]);
 
   useEffect(() => {
+    if (suspendBackgroundWork) return;
     const interval = setInterval(() => {
       fetchTripRoutingStyleAlerts();
     }, 30000);
 
     return () => clearInterval(interval);
-  }, [fetchTripRoutingStyleAlerts]);
+  }, [fetchTripRoutingStyleAlerts, suspendBackgroundWork]);
 
   const normalizeRealtimeAlert = useCallback((incoming: any) => normalizeAlert(incoming), [normalizeAlert]);
 
   const handleRealtimeMessage = useCallback((data: any) => {
+    if (suspendBackgroundWork) return;
     const eventType = String(data?.type || "").toLowerCase();
     const payloadAlert = normalizeRealtimeAlert(data?.alert || data?.data);
 
@@ -456,7 +423,7 @@ export default function VideoAlertsDashboardTab({
     ) {
       fetchTripRoutingStyleAlerts();
     }
-  }, [dedupeByIdAndSort, fetchTripRoutingStyleAlerts, normalizeRealtimeAlert]);
+  }, [dedupeByIdAndSort, fetchTripRoutingStyleAlerts, normalizeRealtimeAlert, suspendBackgroundWork]);
 
   const { connected: wsConnected } = useVideoWebSocket(handleRealtimeMessage);
 
@@ -522,12 +489,14 @@ export default function VideoAlertsDashboardTab({
   ), [groupedAlerts, mergedAlerts, showRawAlerts]);
 
   useEffect(() => {
+    if (suspendBackgroundWork) return;
     void refreshVideoAvailability(alertCollection);
-  }, [alertCollection, refreshVideoAvailability]);
+  }, [alertCollection, refreshVideoAvailability, suspendBackgroundWork]);
 
   useEffect(() => {
+    if (suspendBackgroundWork) return;
     void refreshExactVideoReady(alertCollection);
-  }, [alertCollection, refreshExactVideoReady]);
+  }, [alertCollection, refreshExactVideoReady, suspendBackgroundWork]);
 
   const formatAverageHandlingTime = useCallback((minutes: number | null) => {
     if (minutes === null || !Number.isFinite(minutes) || minutes < 0) return "n/a";
