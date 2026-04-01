@@ -11,11 +11,13 @@ type AlertPlaybackSource = string | { [key: string]: any };
 const DEFAULT_VIDEO_PROXY_BASE = "/api/video-server";
 const ALERT_PLAYBACK_WINDOW_BEFORE_MS = 60 * 1000;
 const ALERT_PLAYBACK_WINDOW_AFTER_MS = 60 * 1000;
+const PLAYBACK_CACHE_PREFIX = "alert-playback:";
 const DIRECT_VIDEO_HUB_BASE = String(
   process.env.NEXT_PUBLIC_VIDEO_HUB_BASE_URL ||
     process.env.NEXT_PUBLIC_VIDEO_BASE_URL ||
     ""
 ).trim().replace(/\/+$/, "");
+const playbackVideoCache = new Map<string, AlertPlaybackVideo[]>();
 
 function normalizeApiBase(baseUrl: string) {
   const clean = String(baseUrl || "").trim().replace(/\/+$/, "");
@@ -29,6 +31,44 @@ function timeoutSignal(timeoutMs: number) {
     return AbortSignal.timeout(timeoutMs);
   }
   return undefined;
+}
+
+function readCachedPlaybackVideos(cacheKey: string): AlertPlaybackVideo[] {
+  const normalizedKey = String(cacheKey || "").trim();
+  if (!normalizedKey) return [];
+
+  const memoryCached = playbackVideoCache.get(normalizedKey);
+  if (Array.isArray(memoryCached) && memoryCached.length > 0) {
+    return memoryCached;
+  }
+
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.sessionStorage.getItem(`${PLAYBACK_CACHE_PREFIX}${normalizedKey}`);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    const videos = Array.isArray(parsed)
+      ? parsed.filter((video) => video && typeof video.url === "string" && video.url.trim())
+      : [];
+    if (videos.length > 0) {
+      playbackVideoCache.set(normalizedKey, videos);
+    }
+    return videos;
+  } catch {
+    return [];
+  }
+}
+
+function writeCachedPlaybackVideos(cacheKey: string, videos: AlertPlaybackVideo[]) {
+  const normalizedKey = String(cacheKey || "").trim();
+  if (!normalizedKey || !Array.isArray(videos) || videos.length === 0) return;
+  playbackVideoCache.set(normalizedKey, videos);
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.setItem(`${PLAYBACK_CACHE_PREFIX}${normalizedKey}`, JSON.stringify(videos));
+  } catch {
+    // Ignore session storage write failures.
+  }
 }
 
 function getPlaybackRequestBases(videoProxyBase = DEFAULT_VIDEO_PROXY_BASE) {
@@ -46,9 +86,15 @@ export function normalizeBackendMediaUrl(url: string, videoProxyBase = DEFAULT_V
   if (/^https?:\/\//i.test(value)) {
     try {
       const parsed = new URL(value);
+      if (parsed.pathname.startsWith("/api/video-server/")) {
+        return `${videoProxyBase}${parsed.pathname.slice("/api/video-server".length)}${parsed.search || ""}`;
+      }
       if (DIRECT_VIDEO_HUB_BASE) {
         const hubBase = new URL(DIRECT_VIDEO_HUB_BASE);
         if (parsed.origin === hubBase.origin && parsed.pathname.startsWith('/api/')) {
+          if (parsed.pathname.startsWith("/api/video-server/")) {
+            return `${videoProxyBase}${parsed.pathname.slice("/api/video-server".length)}${parsed.search || ""}`;
+          }
           return `${videoProxyBase}${parsed.pathname.slice(4)}${parsed.search || ''}`;
         }
       }
@@ -63,6 +109,28 @@ export function normalizeBackendMediaUrl(url: string, videoProxyBase = DEFAULT_V
   }
   if (value.startsWith("/")) return value;
   return `${videoProxyBase}/${value.replace(/^\/+/, "")}`;
+}
+
+export function resolveMediaUrlForCurrentOrigin(url: string, videoProxyBase = DEFAULT_VIDEO_PROXY_BASE) {
+  const normalized = normalizeBackendMediaUrl(url, videoProxyBase);
+  if (!normalized) return "";
+  if (typeof window === "undefined") return normalized;
+
+  try {
+    if (/^https?:\/\//i.test(normalized)) {
+      const parsed = new URL(normalized);
+      if (parsed.pathname.startsWith("/api/video-server/")) {
+        return `${window.location.origin}${parsed.pathname}${parsed.search || ""}`;
+      }
+      return normalized;
+    }
+    if (normalized.startsWith("/api/video-server/")) {
+      return `${window.location.origin}${normalized}`;
+    }
+    return normalized;
+  } catch {
+    return normalized;
+  }
 }
 
 type RawAlertTimestampParts = {
@@ -289,7 +357,10 @@ function getPreferredCompletedJobUrl(
       buildJobFileUrl(jobId, videoProxyBase, playbackJobUrl),
     videoProxyBase
   );
-  return jobFileUrl;
+  if (!jobFileUrl) return "";
+  const stamp = encodeURIComponent(String(job?.updatedAt || job?.updated_at || job?.fileSize || "").trim());
+  if (!stamp) return jobFileUrl;
+  return `${jobFileUrl}${jobFileUrl.includes("?") ? "&" : "?"}_ts=${stamp}`;
 }
 
 async function pollPlaybackJob(jobId: string, videoProxyBase = DEFAULT_VIDEO_PROXY_BASE, playbackJobUrl?: string) {
@@ -304,6 +375,19 @@ async function pollPlaybackJob(jobId: string, videoProxyBase = DEFAULT_VIDEO_PRO
     });
     const statusJson = await statusRes.json().catch(() => ({}));
     const job = statusJson?.data || {};
+    if (attempt === 0 || job?.status === "completed" || job?.status === "failed") {
+      console.info("[AlertPlayback] Job status", {
+        jobId,
+        attempt,
+        statusUrl,
+        playbackJobUrl,
+        status: job?.status || "unknown",
+        fileReady: !!job?.fileReady,
+        fileSize: Number(job?.fileSize || 0),
+        updatedAt: job?.updatedAt || job?.updated_at || "",
+        outputUrl: job?.outputUrl || "",
+      });
+    }
     if (job?.status === "completed") {
       return getPreferredCompletedJobUrl(job, jobId, videoProxyBase, playbackJobUrl);
     }
@@ -385,6 +469,18 @@ function getAlertPlaybackWindow(alert: any) {
     startIso: start.toISOString(),
     endIso: end.toISOString(),
   };
+}
+
+function getAlertPlaybackCacheKey(alert: any) {
+  if (!alert || typeof alert !== "object") return "";
+  const playbackWindow = getAlertPlaybackWindow(alert);
+  return JSON.stringify({
+    id: String(alert?.id || "").trim(),
+    vehicleId: getAlertVehicleId(alert),
+    channel: getAlertChannel(alert),
+    startIso: playbackWindow?.startIso || "",
+    endIso: playbackWindow?.endIso || "",
+  });
 }
 
 function formatAvailabilityDate(date: Date) {
@@ -504,6 +600,12 @@ async function findNearestAvailableClip(
 }
 
 async function resolvePlaybackWindowForAlert(alert: any, videoProxyBase = DEFAULT_VIDEO_PROXY_BASE): Promise<AlertPlaybackVideo[]> {
+  const cacheKey = getAlertPlaybackCacheKey(alert);
+  const cachedVideos = readCachedPlaybackVideos(cacheKey);
+  if (cachedVideos.length > 0) {
+    return cachedVideos;
+  }
+
   const vehicleId = getAlertVehicleId(alert);
   const channel = getAlertChannel(alert);
   const playbackWindow = getAlertPlaybackWindow(alert);
@@ -535,26 +637,52 @@ async function resolvePlaybackWindowForAlert(alert: any, videoProxyBase = DEFAUL
 
         const data = json?.data || {};
         if (data?.playbackSource === "live_fallback" && data?.streamUrl) {
-          return [
+          const fallbackVideos = [
             {
               key: `live_fallback_${vehicleId}_${channel}`,
               label: `Alert-time Live Fallback CH${channel}`,
               url: normalizeBackendMediaUrl(String(data.streamUrl), playbackBase),
             },
           ];
+          console.info("[AlertPlayback] Live fallback selected", {
+            alertId: String(alert?.id || "").trim(),
+            vehicleId,
+            channel,
+            videos: fallbackVideos,
+          });
+          writeCachedPlaybackVideos(cacheKey, fallbackVideos);
+          return fallbackVideos;
         }
 
         const jobId = String(data?.playbackJobId || "").trim();
         const playbackJobUrl = normalizeBackendMediaUrl(String(data?.playbackJobUrl || "").trim(), playbackBase);
+        console.info("[AlertPlayback] Window job created", {
+          alertId: String(alert?.id || "").trim(),
+          vehicleId,
+          channel,
+          playbackBase,
+          startIso,
+          endIso,
+          jobId,
+          playbackJobUrl,
+          sourceSegments: Number(data?.sourceSegments || 0),
+        });
         if (jobId) {
           const resolvedUrl = await pollPlaybackJob(jobId, playbackBase, playbackJobUrl);
-          return [
+          const resolvedVideos = [
             {
               key: `job_${jobId}`,
               label: `Alert-time Playback CH${channel}`,
               url: resolvedUrl,
             },
           ];
+          console.info("[AlertPlayback] Window job resolved", {
+            alertId: String(alert?.id || "").trim(),
+            jobId,
+            videos: resolvedVideos,
+          });
+          writeCachedPlaybackVideos(cacheKey, resolvedVideos);
+          return resolvedVideos;
         }
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
@@ -591,15 +719,33 @@ async function resolvePlaybackWindowForAlert(alert: any, videoProxyBase = DEFAUL
         const data = json?.data || {};
         const jobId = String(data?.playbackJobId || "").trim();
         const playbackJobUrl = normalizeBackendMediaUrl(String(data?.playbackJobUrl || "").trim(), playbackBase);
+        console.info("[AlertPlayback] Availability-range job created", {
+          alertId: String(alert?.id || "").trim(),
+          vehicleId,
+          channel: fallbackClip.channel,
+          playbackBase,
+          startTime: boundedWindow.startTime,
+          endTime: boundedWindow.endTime,
+          jobId,
+          playbackJobUrl,
+          sourceSegments: Number(data?.sourceSegments || 0),
+        });
         if (jobId) {
           const resolvedUrl = await pollPlaybackJob(jobId, playbackBase, playbackJobUrl);
-          return [
+          const resolvedVideos = [
             {
               key: `nearest_job_${jobId}`,
               label: `Playback In Available Range CH${fallbackClip.channel}`,
               url: resolvedUrl,
             },
           ];
+          console.info("[AlertPlayback] Availability-range job resolved", {
+            alertId: String(alert?.id || "").trim(),
+            jobId,
+            videos: resolvedVideos,
+          });
+          writeCachedPlaybackVideos(cacheKey, resolvedVideos);
+          return resolvedVideos;
         }
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));

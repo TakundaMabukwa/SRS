@@ -89,7 +89,7 @@ import CriminalReportModal from '@/components/video-alerts/criminal-report-modal
 import DispatchReportModal from '@/components/video-alerts/dispatch-report-modal';
 import IncidentReportTemplateModal from '@/components/video-alerts/incident-report-template-modal';
 import { useVideoWebSocket } from "@/hooks/use-video-websocket";
-import { getAlertDisplayTimestamp as getSharedAlertDisplayTimestamp, getAlertPlaybackSignature, resolveAlertPlaybackVideos } from "@/lib/video-alert-playback";
+import { getAlertDisplayTimestamp as getSharedAlertDisplayTimestamp, getAlertPlaybackSignature, resolveAlertPlaybackVideos, resolveMediaUrlForCurrentOrigin } from "@/lib/video-alert-playback";
 
 const VideoAlertsDashboardTab = dynamic(
   () => import("@/components/dashboard/video-alerts-dashboard-tab"),
@@ -142,6 +142,7 @@ function UniversalVideoPlayer({
   const [sourceIndex, setSourceIndex] = useState(0);
   const activeUrl = candidateSources[sourceIndex] || "";
   const isHlsUrl = /\.m3u8(?:$|\?)/i.test(activeUrl);
+  const isJobMp4Url = /\/api\/video-server\/videos\/jobs\/[^/]+\/file/i.test(activeUrl) && !isHlsUrl;
 
   useEffect(() => {
     setPlaybackError("");
@@ -213,34 +214,56 @@ function UniversalVideoPlayer({
 
   return (
     <div className="mb-3">
-      <video
-        ref={videoRef}
-        controls
-        preload="metadata"
-        playsInline
-        autoPlay={autoPlay}
-        muted={autoPlay}
-        className={className}
-        src={!activeUrl || isHlsUrl ? undefined : activeUrl}
-        onLoadedMetadata={() => {
-          onPlayableChange?.(true);
-          tryAutoplay();
-        }}
-        onCanPlay={() => {
-          onPlayableChange?.(true);
-          tryAutoplay();
-        }}
-        onError={() => {
-          if (sourceIndex < candidateSources.length - 1) {
-            setSourceIndex((prev) => prev + 1);
-            return;
-          }
-          setPlaybackError("Browser could not decode this format. Use Open/Download for this clip.");
-          onPlayableChange?.(false);
-        }}
-      >
-        Your browser does not support video playback.
-      </video>
+      {isJobMp4Url ? (
+        <div className="space-y-2">
+          <iframe
+            key={activeUrl}
+            src={resolveMediaUrlForCurrentOrigin(activeUrl)}
+            title="Browser-native video playback"
+            className={`${className} min-h-[360px] rounded-xl border border-cyan-400/20 bg-black`}
+            allow="autoplay; fullscreen"
+          />
+          <div className="flex justify-end">
+            <Button
+              variant="outline"
+              size="sm"
+              className="border-cyan-400/40 bg-slate-900 text-cyan-200 hover:bg-slate-800"
+              onClick={() => window.open(resolveMediaUrlForCurrentOrigin(activeUrl), "_blank")}
+            >
+              Open In Browser
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <video
+          ref={videoRef}
+          controls
+          preload="metadata"
+          playsInline
+          autoPlay={autoPlay}
+          muted={autoPlay}
+          className={className}
+          src={!activeUrl || isHlsUrl ? undefined : activeUrl}
+          onLoadedMetadata={() => {
+            onPlayableChange?.(true);
+            tryAutoplay();
+          }}
+          onCanPlay={() => {
+            onPlayableChange?.(true);
+            tryAutoplay();
+          }}
+          onError={() => {
+            if (sourceIndex < candidateSources.length - 1) {
+              setSourceIndex((prev) => prev + 1);
+              return;
+            }
+            setPlaybackError("Browser could not decode this format. Use Open/Download for this clip.");
+            onPlayableChange?.(false);
+          }}
+        >
+          Your browser does not support video playback.
+        </video>
+      )}
       {candidateSources.length > 1 && (
         <p className="text-xs text-slate-400">
           Trying source {sourceIndex + 1}/{candidateSources.length}
@@ -6166,11 +6189,11 @@ export default function Dashboard() {
                                     variant="outline"
                                     size="sm"
                                     className="border-cyan-400/40 bg-slate-900 text-cyan-200 hover:bg-slate-800"
-                                    onClick={() => setVideoPreview({ url: primaryAlertVideo.url, label: primaryAlertVideo.label || "Alert Window Video" })}
+                                    onClick={() => window.open(resolveMediaUrlForCurrentOrigin(primaryAlertVideo.url), "_blank")}
                                   >
                                     Preview
                                   </Button>
-                                  <Button variant="outline" size="sm" onClick={() => window.open(primaryAlertVideo.url, "_blank")}>
+                                  <Button variant="outline" size="sm" onClick={() => window.open(resolveMediaUrlForCurrentOrigin(primaryAlertVideo.url), "_blank")}>
                                     <Download className="w-4 h-4 mr-2" />
                                     Download
                                   </Button>
@@ -6268,18 +6291,18 @@ export default function Dashboard() {
                                               <p className="text-xs text-slate-300">Alert-time playback</p>
                                             </div>
                                             <div className="flex items-center gap-2">
+                                      <Button
+                                        variant="outline"
+                                        size="sm"
+                                        className="border-cyan-400/40 bg-slate-900 text-cyan-200 hover:bg-slate-800"
+                                        onClick={() => window.open(resolveMediaUrlForCurrentOrigin(video.url), "_blank")}
+                                      >
+                                        Preview
+                                      </Button>
                                               <Button
                                                 variant="outline"
                                                 size="sm"
-                                                className="border-cyan-400/40 bg-slate-900 text-cyan-200 hover:bg-slate-800"
-                                                onClick={() => setVideoPreview({ url: video.url, label: video.label || "Timeline video" })}
-                                              >
-                                                Preview
-                                              </Button>
-                                              <Button
-                                                variant="outline"
-                                                size="sm"
-                                                onClick={() => window.open(video.url, "_blank")}
+                                                onClick={() => window.open(resolveMediaUrlForCurrentOrigin(video.url), "_blank")}
                                               >
                                                 <Download className="mr-2 h-4 w-4" />
                                                 Download
@@ -6750,7 +6773,7 @@ export default function Dashboard() {
                 className="w-full rounded border border-slate-700 bg-black"
               />
               <div className="mt-3 flex justify-end">
-                <Button variant="outline" onClick={() => window.open(videoPreview.url, "_blank")}>
+                <Button variant="outline" onClick={() => window.open(resolveMediaUrlForCurrentOrigin(videoPreview.url), "_blank")}>
                   <Download className="w-4 h-4 mr-2" />
                   Open Source
                 </Button>

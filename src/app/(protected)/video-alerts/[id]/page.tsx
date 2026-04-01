@@ -28,11 +28,12 @@ import {
   Download,
   RefreshCw,
   Flag,
+  ExternalLink,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { format } from "date-fns";
 import CloseAlertModal from "@/components/modals/close-alert-modal";
-import { getAlertDisplayTimestamp, getAlertFirstOccurrenceTimestamp, getAlertLastOccurrenceTimestamp, getAlertPlaybackSignature, resolveAlertPlaybackVideos } from "@/lib/video-alert-playback";
+import { getAlertDisplayTimestamp, getAlertFirstOccurrenceTimestamp, getAlertLastOccurrenceTimestamp, getAlertPlaybackSignature, resolveAlertPlaybackVideos, resolveMediaUrlForCurrentOrigin } from "@/lib/video-alert-playback";
 
 function AlertVideoPlayer({
   url,
@@ -45,10 +46,32 @@ function AlertVideoPlayer({
   const [playbackError, setPlaybackError] = useState("");
   const activeUrl = String(url || "").trim();
   const isHlsUrl = /\.m3u8(?:$|\?)/i.test(activeUrl);
+  const isJobMp4Url = /\/api\/video-server\/videos\/jobs\/[^/]+\/file/i.test(activeUrl) && !isHlsUrl;
 
   useEffect(() => {
     setPlaybackError("");
+    if (activeUrl) {
+      console.info("[AlertVideoPlayer] Source updated", {
+        url: activeUrl,
+        isHlsUrl,
+      });
+    }
   }, [activeUrl]);
+
+  useEffect(() => {
+    const videoEl = videoRef.current;
+    if (!videoEl || !activeUrl || isHlsUrl) return;
+    videoEl.pause();
+    videoEl.removeAttribute("src");
+    while (videoEl.firstChild) {
+      videoEl.removeChild(videoEl.firstChild);
+    }
+    const source = document.createElement("source");
+    source.src = activeUrl;
+    source.type = "video/mp4";
+    videoEl.appendChild(source);
+    videoEl.load();
+  }, [activeUrl, isHlsUrl]);
 
   useEffect(() => {
     const videoEl = videoRef.current;
@@ -83,19 +106,59 @@ function AlertVideoPlayer({
 
   return (
     <div>
-      <video
-        ref={videoRef}
-        controls
-        preload="metadata"
-        playsInline
-        className={className}
-        src={!activeUrl || isHlsUrl ? undefined : activeUrl}
-        onError={() => {
-          setPlaybackError("Browser could not decode this format. Use Open for this clip.");
-        }}
-      >
-        Your browser does not support video playback.
-      </video>
+      {isJobMp4Url ? (
+        <div className="mb-3 space-y-2">
+          <iframe
+            key={activeUrl}
+            src={resolveMediaUrlForCurrentOrigin(activeUrl)}
+            title="Browser-native video playback"
+            className={`${className} min-h-[380px] rounded-xl border border-slate-200`}
+            allow="autoplay; fullscreen"
+          />
+          <div className="flex justify-end">
+            <Button
+              variant="default"
+              size="sm"
+              onClick={() => window.open(resolveMediaUrlForCurrentOrigin(activeUrl), "_blank", "noopener,noreferrer")}
+            >
+              <ExternalLink className="mr-2 h-4 w-4" />
+              Open In Browser
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <video
+          key={activeUrl}
+          ref={videoRef}
+          controls
+          preload="metadata"
+          playsInline
+          className={className}
+          src={!activeUrl || isHlsUrl ? undefined : activeUrl}
+          onLoadedData={() => {
+            console.info("[AlertVideoPlayer] Loaded data", { url: activeUrl });
+            setPlaybackError("");
+          }}
+          onCanPlay={() => {
+            console.info("[AlertVideoPlayer] Can play", { url: activeUrl });
+            setPlaybackError("");
+          }}
+          onError={(event) => {
+            const mediaError = (event.currentTarget as HTMLVideoElement | null)?.error;
+            console.error("[AlertVideoPlayer] Video element error", {
+              url: activeUrl,
+              code: mediaError?.code,
+              message: mediaError?.message || "",
+              currentSrc: (event.currentTarget as HTMLVideoElement | null)?.currentSrc || "",
+              networkState: (event.currentTarget as HTMLVideoElement | null)?.networkState,
+              readyState: (event.currentTarget as HTMLVideoElement | null)?.readyState,
+            });
+            setPlaybackError("Browser could not decode this format. Use Open for this clip.");
+          }}
+        >
+          Your browser does not support video playback.
+        </video>
+      )}
       {playbackError ? (
         <p className="text-xs text-red-600">{playbackError}</p>
       ) : null}
@@ -249,10 +312,18 @@ export default function AlertDetailPage({ params }) {
       setEventVideoError("");
       try {
         const videos = await resolveAlertPlaybackVideos(selectedAlert);
+        console.info("[AlertDetail] Resolved event videos", {
+          alertId: selectedAlert?.id,
+          videos,
+        });
         if (!cancelled) {
           setEventVideos(videos);
         }
       } catch (error: any) {
+        console.error("[AlertDetail] Failed to resolve event videos", {
+          alertId: selectedAlert?.id,
+          message: error?.message || String(error),
+        });
         if (!cancelled) {
           setEventVideos([]);
           setEventVideoError(error?.message || "Failed to load alert-time playback.");
