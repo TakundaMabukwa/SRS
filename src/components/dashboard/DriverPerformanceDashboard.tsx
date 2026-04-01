@@ -1,13 +1,17 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Trophy, TrendingUp, AlertTriangle, Star, Search, Calendar } from 'lucide-react'
+import { Trophy, AlertTriangle, Search } from 'lucide-react'
 import { type DriverPerformanceData } from '@/lib/actions/driver-performance'
+
+type BehaviorMetric = {
+  label: string
+  value: number
+}
 
 export default function DriverPerformanceDashboard() {
   const [drivers] = useState<DriverPerformanceData[]>([
@@ -65,7 +69,17 @@ export default function DriverPerformanceDashboard() {
     return 'text-red-600'
   }
 
+  const getBehaviorScores = (driver: DriverPerformanceData): BehaviorMetric[] => {
+    const fatigue = driver.scores.fatigue || 0
 
+    return [
+      { label: 'Fatigue', value: fatigue },
+      { label: 'Seatbelt', value: driver.scores.seatbelt ?? Math.max(0, (driver.scores.smoking || 0) - 2) },
+      { label: 'Lane Deviation', value: driver.scores.laneDeviation ?? Math.max(0, (driver.scores.harshBraking || 0) - 1) },
+      { label: 'Possible Fatigue', value: driver.scores.possibleFatigue ?? Math.max(0, fatigue - 3) },
+      { label: 'Speeding', value: driver.scores.speeding || 0 },
+    ]
+  }
 
   return (
     <div className="space-y-6">
@@ -98,7 +112,7 @@ export default function DriverPerformanceDashboard() {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-        {drivers.map((driver, index) => (
+        {filteredDrivers.map((driver, index) => (
           <Card key={`${driver.driverName}-${index}`} className="hover:shadow-lg transition-shadow">
             <CardHeader className="pb-2">
               <div className="flex items-start justify-between gap-2">
@@ -132,7 +146,7 @@ export default function DriverPerformanceDashboard() {
                   <span className={getPerformanceColor(driver.scores.performanceRating)}>{driver.scores.performanceRating}%</span>
                 </div>
                 <div className="w-full bg-gray-200 rounded-full h-1.5">
-                  <div 
+                  <div
                     className="bg-blue-500 h-1.5 rounded-full transition-all duration-300"
                     style={{ width: `${driver.scores.performanceRating}%` }}
                   />
@@ -145,7 +159,7 @@ export default function DriverPerformanceDashboard() {
                   <span className={getPerformanceColor(100 - driver.scores.insuranceRiskScore)}>{driver.scores.insuranceRiskScore}</span>
                 </div>
                 <div className="w-full bg-gray-200 rounded-full h-1.5">
-                  <div 
+                  <div
                     className="bg-green-500 h-1.5 rounded-full transition-all duration-300"
                     style={{ width: `${Math.max(0, 100 - driver.scores.insuranceRiskScore)}%` }}
                   />
@@ -159,26 +173,15 @@ export default function DriverPerformanceDashboard() {
                 </Badge>
               </div>
 
-              {/* Behavior Scores */}
               <div className="space-y-1.5 pt-2 border-t">
                 <div className="text-xs font-semibold mb-2">Behavior Scores</div>
                 <div className="grid grid-cols-2 gap-2 text-xs">
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">🚭 Smoking:</span>
-                    <span className={getPerformanceColor(driver.scores.smoking || 0)}>{driver.scores.smoking}%</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">🚗 Speeding:</span>
-                    <span className={getPerformanceColor(driver.scores.speeding || 0)}>{driver.scores.speeding}%</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">🛑 Braking:</span>
-                    <span className={getPerformanceColor(driver.scores.harshBraking || 0)}>{driver.scores.harshBraking}%</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">😴 Fatigue:</span>
-                    <span className={getPerformanceColor(driver.scores.fatigue || 0)}>{driver.scores.fatigue}%</span>
-                  </div>
+                  {getBehaviorScores(driver).map((metric) => (
+                    <div key={metric.label} className="flex justify-between gap-2">
+                      <span className="text-muted-foreground">{metric.label}:</span>
+                      <span className={getPerformanceColor(metric.value)}>{metric.value}%</span>
+                    </div>
+                  ))}
                 </div>
               </div>
 
@@ -191,9 +194,6 @@ export default function DriverPerformanceDashboard() {
                     </div>
                     <Badge variant="destructive" className="text-xs px-1.5 py-0.5">{driver.violations.total}</Badge>
                   </div>
-                  <div className="text-xs text-muted-foreground">
-                    Speed: {driver.violations.speed} | Braking: {driver.violations.harshBraking} | Night: {driver.violations.nightDriving}
-                  </div>
                 </div>
               )}
             </CardContent>
@@ -201,7 +201,7 @@ export default function DriverPerformanceDashboard() {
         ))}
       </div>
 
-      {drivers.length === 0 && (
+      {filteredDrivers.length === 0 && (
         <div className="text-center py-12">
           <div className="text-muted-foreground">
             No driver performance data available

@@ -14,12 +14,20 @@ export interface DriverPerformanceData {
     harshBraking?: number
     speeding?: number
     fatigue?: number
+    seatbelt?: number
+    laneDeviation?: number
+    possibleFatigue?: number
   }
   violations: {
     total: number
     speed: number
     harshBraking: number
     nightDriving: number
+    seatbelt?: number
+    laneDeviation?: number
+    possibleFatigue?: number
+    fatigue?: number
+    speeding?: number
   }
 }
 
