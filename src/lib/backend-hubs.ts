@@ -45,25 +45,36 @@ export function resolveVideoServerProxyBase(pathArray: string[]) {
       third === "collect-evidence"
     );
 
-  const isLiveStreamPath =
-    first === "stream" ||
+  const isLiveCommandPath =
     (first === "vehicles" &&
       (third === "start-live" ||
         third === "stop-live" ||
-        third === "stream-info" ||
         third === "start-all-streams" ||
         third === "stop-all-streams" ||
         third === "query-capabilities" ||
         third === "screenshot" ||
+        third === "screenshot-at" ||
         third === "test-query-resources" ||
         third === "test-playback" ||
-        second === "connected" ||
-        second === "streams")) ||
-    joined.startsWith("stream/") ||
+        third === "switch-stream" ||
+        third === "optimize-video" ||
+        third === "config" ||
+        second === "connected")) ||
     isAlertMediaPath;
 
-  if (isLiveStreamPath) {
+  if (isLiveCommandPath) {
     return { name: "listener", baseUrl: getListenerBaseUrl() };
+  }
+
+  const isLivePlaybackPath =
+    first === "stream" ||
+    joined.startsWith("stream/") ||
+    (first === "vehicles" &&
+      (third === "stream-info" ||
+        second === "streams"));
+
+  if (isLivePlaybackPath) {
+    return { name: "videoHub", baseUrl: getVideoHubBaseUrl() };
   }
 
   const isPlaybackPath =

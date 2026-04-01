@@ -46,6 +46,7 @@ type VehicleGroupCard = {
 
 type CaptureAvailability = {
   failedAt?: number;
+  reason?: string;
   status?: number;
   succeededAt?: number;
 };
@@ -120,6 +121,19 @@ export default function ScreenshotsDashboardTab({ detachable = true }: Screensho
   const SCREENSHOT_FAILURE_COOLDOWN_MS = 90_000;
   const LIVE_SCREENSHOT_WINDOW_MS = 10 * 60 * 1000;
   const STALE_SCREENSHOT_WINDOW_MS = 30 * 60 * 1000;
+  const captureFailureSummary = useMemo(() => {
+    const reasons = Array.from(captureAvailabilityRef.current.values())
+      .map((entry) => String(entry.reason || "").trim())
+      .filter(Boolean);
+    if (!reasons.length) return null;
+    const counts = new Map<string, number>();
+    for (const reason of reasons) {
+      counts.set(reason, (counts.get(reason) || 0) + 1);
+    }
+    const [topReason, topCount] = Array.from(counts.entries()).sort((a, b) => b[1] - a[1])[0] || [];
+    if (!topReason) return null;
+    return { reason: topReason, count: topCount || 0 };
+  }, [screenshots, vehicles]);
 
   const toDisplayUrl = useCallback((raw?: string) => {
     const value = String(raw || "").trim();
@@ -189,21 +203,39 @@ export default function ScreenshotsDashboardTab({ detachable = true }: Screensho
         }),
       });
 
+      const payload = await response.json().catch(() => null);
+      const fallbackReason = String(
+        payload?.fallback?.reason ||
+        payload?.message ||
+        ""
+      ).trim();
+
       if (response.ok) {
+        const fallbackOk = payload?.fallback?.ok !== false;
+        const success = payload?.success !== false && fallbackOk;
         captureAvailabilityRef.current.set(targetKey, {
-          succeededAt: Date.now(),
-          status: 200,
+          failedAt: success ? undefined : Date.now(),
+          reason: success ? undefined : (fallbackReason || "Screenshot request did not produce an image"),
+          status: response.status,
+          succeededAt: success ? Date.now() : undefined,
         });
-        return true;
+        return success;
       }
 
       if (response.status === 404) {
         continue;
       }
+
+      captureAvailabilityRef.current.set(targetKey, {
+        failedAt: Date.now(),
+        reason: fallbackReason || `Screenshot request failed (${response.status})`,
+        status: response.status,
+      });
     }
 
     captureAvailabilityRef.current.set(targetKey, {
       failedAt: Date.now(),
+      reason: "Vehicle did not accept screenshot capture",
       status: 404,
     });
     return false;
@@ -416,6 +448,12 @@ export default function ScreenshotsDashboardTab({ detachable = true }: Screensho
       {error && (
         <Card className="border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</Card>
       )}
+      {!error && screenshots.length === 0 && captureFailureSummary && (
+        <Card className="border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+          Screenshot capture is not producing images right now. Most recent backend reason: {captureFailureSummary.reason}
+          {captureFailureSummary.count > 1 ? ` (${captureFailureSummary.count} channels)` : ""}.
+        </Card>
+      )}
 
       {loading ? (
         <Card className="p-10 text-center text-slate-600">Loading screenshot monitor...</Card>
@@ -447,6 +485,7 @@ export default function ScreenshotsDashboardTab({ detachable = true }: Screensho
                 <div className="grid grid-cols-1 gap-2 p-2 sm:grid-cols-2">
                   {card.channels.map((channelCard) => {
                     const shot = channelCard.screenshot;
+                    const availability = captureAvailabilityRef.current.get(`${card.vehicleId}:${channelCard.channel}`);
                     const ageMs = Date.now() - parseDate(shot?.timestamp);
                     const hasTimestamp = parseDate(shot?.timestamp) > 0;
                     const isLive = hasTimestamp && ageMs <= LIVE_SCREENSHOT_WINDOW_MS;
@@ -485,7 +524,7 @@ export default function ScreenshotsDashboardTab({ detachable = true }: Screensho
                             <p className="mt-1 text-[11px] text-slate-400">
                               {shot?.timestamp
                                 ? new Date(shot.timestamp).toLocaleTimeString()
-                                : "No image"}
+                                : (availability?.reason || "No image")}
                             </p>
                           </div>
                           {shot?.storage_url && (

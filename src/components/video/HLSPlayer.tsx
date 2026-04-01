@@ -162,12 +162,13 @@ export default function HLSPlayer({ vehicleId, channel, vehicleName, onStop, fal
 
         for (const candidateUrl of streamCandidates) {
           try {
-            const probeResponse = await fetch(candidateUrl, {
-              method: 'GET',
-              cache: 'no-store',
-              headers: { Range: 'bytes=0-256' },
-            });
-            if (probeResponse.ok) {
+            const probe = await fetchManifestText(candidateUrl);
+            const hasManifest =
+              probe.ok &&
+              /#extm3u/i.test(probe.text) &&
+              !/application\/json/i.test(probe.contentType) &&
+              !/<html/i.test(probe.text);
+            if (hasManifest) {
               selectedStreamUrl = candidateUrl;
               break;
             }
@@ -229,7 +230,7 @@ export default function HLSPlayer({ vehicleId, channel, vehicleName, onStop, fal
           const manifestReady = await loadManifest();
           if (!manifestReady) {
             manifestRetries += 1;
-            setStatus(`Waiting for stream... ${manifestRetries}/${maxManifestRetries}`);
+            setStatus(`Waiting for stream manifest... ${manifestRetries}/${maxManifestRetries}`);
             if (retryTimer) clearTimeout(retryTimer);
             retryTimer = setTimeout(() => {
               if (!mounted) return;
@@ -260,7 +261,7 @@ export default function HLSPlayer({ vehicleId, channel, vehicleName, onStop, fal
 
                 if (isManifestIssue && manifestRetries < maxManifestRetries) {
                   manifestRetries += 1;
-                  setStatus(`Waiting for stream... ${manifestRetries}/${maxManifestRetries}`);
+                  setStatus(`Waiting for stream manifest... ${manifestRetries}/${maxManifestRetries}`);
                   setError(false);
                   if (retryTimer) clearTimeout(retryTimer);
                   retryTimer = setTimeout(() => {

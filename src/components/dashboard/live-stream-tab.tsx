@@ -35,6 +35,7 @@ interface ConnectedVehicle {
   channels: VehicleChannel[];
   registration?: string;
   connected?: boolean;
+  activeStreams?: number[];
 }
 
 type PinnedFeed = {
@@ -417,7 +418,7 @@ export default function LiveStreamTab() {
                   {vehicle.connected !== false ? (
                     <Badge className="bg-emerald-600 text-white hover:bg-emerald-600">
                       <Wifi className="mr-1 h-3 w-3" />
-                      Live
+                      {Array.isArray(vehicle.activeStreams) && vehicle.activeStreams.length > 0 ? "Live" : "Connected"}
                     </Badge>
                   ) : (
                     <Badge variant="outline">
@@ -460,7 +461,9 @@ export default function LiveStreamTab() {
                   <tr key={vehicle.id} className="border-t hover:bg-slate-50">
                     <td className="px-4 py-3">
                       {vehicle.connected !== false ? (
-                        <Badge className="bg-emerald-600 text-white hover:bg-emerald-600">Live</Badge>
+                        <Badge className="bg-emerald-600 text-white hover:bg-emerald-600">
+                          {Array.isArray(vehicle.activeStreams) && vehicle.activeStreams.length > 0 ? "Live" : "Connected"}
+                        </Badge>
                       ) : (
                         <Badge variant="outline">Offline</Badge>
                       )}
