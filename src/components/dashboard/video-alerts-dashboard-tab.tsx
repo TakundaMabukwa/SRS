@@ -90,37 +90,43 @@ export default function VideoAlertsDashboardTab({
     const id = String(incoming.id || incoming.alert_id || incoming.alertId || "").trim();
     const title = String(incoming.title || incoming.type || incoming.alert_type || "Alert").trim();
     const severity = String(incoming.severity || incoming.priority || "low").toLowerCase();
-    const vehicle = String(
+    const registration = String(
       incoming.vehicle_registration ||
         incoming.vehicle_reg ||
         incoming.registration ||
-        incoming.fleet_number ||
+        incoming.reg ||
         vehicleMeta.plateNumber ||
-        vehicleMeta.terminalId ||
+        ""
+    ).trim();
+    const fleetNumber = String(
+      incoming.fleet_number ||
+        incoming.fleetNumber ||
+        incoming?.vehicle?.fleet_number ||
+        incoming?.metadata?.vehicle?.fleetNumber ||
+        incoming?.metadata?.vehicle?.fleet_number ||
+        ""
+    ).trim();
+    const fallbackVehicleId = String(
+      vehicleMeta.terminalId ||
         vehicleMeta.vehicleId ||
         incoming.device_id ||
         incoming.vehicleId ||
         incoming.vehicle_id ||
-        "N/A"
+        ""
     ).trim();
 
     return {
       ...incoming,
-      id: id || `${vehicle}-${title}-${displayTimestamp || Date.now()}`,
+      id: id || `${fallbackVehicleId}-${title}-${displayTimestamp || Date.now()}`,
       title,
       alert_type: incoming.alert_type || incoming.type || title.toLowerCase().replace(/\s+/g, "_"),
       severity,
       priority: severity,
       status: String(incoming.status || "new").toLowerCase(),
-      fleet_number: String(
-        incoming.fleet_number ||
-          incoming.fleetNumber ||
-          incoming?.vehicle?.fleet_number ||
-          incoming?.metadata?.vehicle?.fleetNumber ||
-          incoming?.metadata?.vehicle?.fleet_number ||
-          ""
-      ).trim(),
-      vehicle_registration: vehicle,
+      fleet_number: fleetNumber,
+      vehicle_registration: registration,
+      vehicleId: String(incoming.vehicleId || incoming.device_id || incoming.vehicle_id || vehicleMeta.vehicleId || "").trim(),
+      device_id: String(incoming.device_id || incoming.vehicleId || incoming.vehicle_id || vehicleMeta.vehicleId || "").trim(),
       driver_name: incoming.driver_name || incoming.driver || incoming?.metadata?.driverName || "Unknown",
       timestamp: firstOccurrenceTimestamp,
       lastOccurrenceTimestamp,
@@ -146,7 +152,7 @@ export default function VideoAlertsDashboardTab({
     if (fleetNumber && registration && fleetNumber.toLowerCase() !== registration.toLowerCase()) {
       return `${fleetNumber} - ${registration}`;
     }
-    return fleetNumber || registration || String(alert?.vehicleId || alert?.device_id || "N/A").trim() || "N/A";
+    return fleetNumber || registration || "";
   }, []);
 
   useEffect(() => {
@@ -477,7 +483,14 @@ export default function VideoAlertsDashboardTab({
       if (!normalized) continue;
       const level = getAlertLevel(normalized);
       const titleKey = String(normalized.title || normalized.alert_type || "Alert").trim().toLowerCase();
-      const vehicleKey = String(normalized.vehicle_registration || normalized.vehicleId || normalized.device_id || "N/A").trim().toLowerCase();
+      const vehicleKey = String(
+        normalized.fleet_number ||
+        normalized.vehicle_registration ||
+        normalized.vehicleId ||
+        normalized.device_id ||
+        normalized.id ||
+        ""
+      ).trim().toLowerCase();
       const groupKey = `${level}|${titleKey}|${vehicleKey}`;
       const existing = groups.get(groupKey);
 
@@ -971,15 +984,21 @@ export default function VideoAlertsDashboardTab({
     }
 
     return (
-        <div
+      <div
         className="rounded-md border border-slate-200 bg-white px-2.5 py-2 shadow-sm transition-colors hover:bg-slate-50"
         onClick={() => handleViewAlert(alert)}
       >
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
-            <div className="truncate text-[13px] font-semibold leading-4 text-slate-900">
-              {alert.title} ({getAlertVehicleDisplayLabel(alert)})
-            </div>
+            {(() => {
+              const vehicleLabel = getAlertVehicleDisplayLabel(alert);
+              return (
+                <div className="truncate text-[13px] font-semibold leading-4 text-slate-900">
+                  {alert.title}
+                  {vehicleLabel ? ` (${vehicleLabel})` : ""}
+                </div>
+              );
+            })()}
             <div className="mt-0.5 text-[11px] leading-4 text-slate-500 capitalize">
               {(alert.alert_type || "alert").replace(/_/g, " ")}
             </div>
@@ -1015,7 +1034,9 @@ export default function VideoAlertsDashboardTab({
         <div className="mt-2 grid grid-cols-2 gap-2 text-[11px]">
           <div>
             <div className="text-[10px] uppercase tracking-wide text-slate-400">Target</div>
-            <div className="truncate font-mono font-semibold text-slate-900">{getAlertVehicleDisplayLabel(alert)}</div>
+            {getAlertVehicleDisplayLabel(alert) ? (
+              <div className="truncate font-mono font-semibold text-slate-900">{getAlertVehicleDisplayLabel(alert)}</div>
+            ) : null}
             <div className="truncate text-slate-500">{alert.driver_name || "Unknown"}</div>
           </div>
           <div>
@@ -1066,7 +1087,9 @@ export default function VideoAlertsDashboardTab({
           <div className="truncate text-[11px] text-slate-500">{(alert.alert_type || "alert").replace(/_/g, " ")}</div>
         </div>
         <div className="min-w-0">
-          <div className="truncate font-mono font-semibold text-slate-900">{getAlertVehicleDisplayLabel(alert)}</div>
+          {getAlertVehicleDisplayLabel(alert) ? (
+            <div className="truncate font-mono font-semibold text-slate-900">{getAlertVehicleDisplayLabel(alert)}</div>
+          ) : null}
           <div className="truncate text-[11px] text-slate-500">{alert.driver_name || "Unknown"}</div>
         </div>
         <div className="min-w-0">
