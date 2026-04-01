@@ -60,8 +60,6 @@ export function resolveVideoServerProxyBase(pathArray: string[]) {
         second === "connected" ||
         second === "streams")) ||
     joined.startsWith("stream/") ||
-    first === "screenshots" ||
-    first === "images" ||
     isAlertMediaPath;
 
   if (isLiveStreamPath) {
@@ -81,6 +79,8 @@ export function resolveVideoServerProxyBase(pathArray: string[]) {
   const isAlertPath =
     first === "alerts" ||
     first === "dashboard" ||
+    first === "screenshots" ||
+    first === "images" ||
     first === "drivers" ||
     first === "speeding";
 
