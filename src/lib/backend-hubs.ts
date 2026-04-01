@@ -34,6 +34,16 @@ export function getVideoHubBaseUrl() {
 export function resolveVideoServerProxyBase(pathArray: string[]) {
   const [first = "", second = "", third = "", fourth = ""] = pathArray;
   const joined = pathArray.join("/").toLowerCase();
+  const isAlertMediaPath =
+    first === "alerts" &&
+    (
+      third === "media" ||
+      third === "screenshots" ||
+      third === "videos" ||
+      third === "video" ||
+      third === "request-report-video" ||
+      third === "collect-evidence"
+    );
 
   const isLiveStreamPath =
     first === "stream" ||
@@ -49,7 +59,10 @@ export function resolveVideoServerProxyBase(pathArray: string[]) {
         third === "test-playback" ||
         second === "connected" ||
         second === "streams")) ||
-    joined.startsWith("stream/");
+    joined.startsWith("stream/") ||
+    first === "screenshots" ||
+    first === "images" ||
+    isAlertMediaPath;
 
   if (isLiveStreamPath) {
     return { name: "listener", baseUrl: getListenerBaseUrl() };
@@ -68,8 +81,6 @@ export function resolveVideoServerProxyBase(pathArray: string[]) {
   const isAlertPath =
     first === "alerts" ||
     first === "dashboard" ||
-    first === "screenshots" ||
-    first === "images" ||
     first === "drivers" ||
     first === "speeding";
 

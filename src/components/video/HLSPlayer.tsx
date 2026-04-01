@@ -23,9 +23,47 @@ export default function HLSPlayer({ vehicleId, channel, vehicleName, onStop, fal
     let mounted = true;
     let hls: Hls | null = null;
     let manifestRetries = 0;
-    const maxManifestRetries = 8;
+    const maxManifestRetries = 15;
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
     let hlsUrlBase = '';
+    let activeVehicleId = vehicleId;
+
+    const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+    const probeStreamInfo = async (candidateId: string) => {
+      try {
+        const response = await fetch(`/api/video-server/vehicles/${encodeURIComponent(candidateId)}/stream-info?channel=${encodeURIComponent(String(channel))}`, {
+          cache: 'no-store',
+        });
+        const data = await response.json().catch(() => null);
+        if (!response.ok) return null;
+        return data?.data?.stream || data?.stream || null;
+      } catch {
+        return null;
+      }
+    };
+
+    const waitForFrames = async (candidateIds: string[]) => {
+      for (let attempt = 0; attempt < maxManifestRetries; attempt += 1) {
+        for (const candidateId of candidateIds) {
+          const stream = await probeStreamInfo(candidateId);
+          const frameCount = Number(stream?.frameCount || 0);
+          const active = !!stream?.active;
+          if (frameCount > 0 || active) {
+            activeVehicleId = candidateId;
+            return {
+              vehicleId: candidateId,
+              frameCount,
+              active,
+            };
+          }
+        }
+        if (!mounted) return null;
+        setStatus(`Waiting for camera frames... ${attempt + 1}/${maxManifestRetries}`);
+        await wait(1200);
+      }
+      return null;
+    };
 
     const loadManifest = () => {
       if (!hls) return;
@@ -41,7 +79,6 @@ export default function HLSPlayer({ vehicleId, channel, vehicleName, onStop, fal
         setStatus('Starting stream...');
         console.log(`[HLS Player] Starting ${vehicleId} ch${channel}`);
         const candidateVehicleIds = Array.from(new Set([vehicleId, ...fallbackVehicleIds].map((value) => String(value || '').trim()).filter(Boolean)));
-        let activeVehicleId = vehicleId;
         let startData: any = null;
         let started = false;
 
@@ -101,11 +138,18 @@ export default function HLSPlayer({ vehicleId, channel, vehicleName, onStop, fal
           throw new Error(startData?.error || startData?.message || 'Failed to start stream');
         }
 
-        if (!started) {
-          setStatus('Checking existing stream...');
+        const frameReady = await waitForFrames(candidateVehicleIds);
+        if (frameReady?.vehicleId) {
+          activeVehicleId = frameReady.vehicleId;
+        } else if (!started) {
+          setStatus('No frames received from camera');
+          setError(true);
+          return;
+        } else {
+          setStatus('Waiting for stream manifest...');
         }
 
-        hlsUrlBase = selectedStreamUrl;
+        hlsUrlBase = `/api/video-server/stream/${activeVehicleId}/${channel}/playlist.m3u8`;
         console.log('[HLS Player] Base URL:', hlsUrlBase);
 
         if (Hls.isSupported()) {
@@ -160,7 +204,7 @@ export default function HLSPlayer({ vehicleId, channel, vehicleName, onStop, fal
 
                 if (isManifestIssue && manifestRetries < maxManifestRetries) {
                   manifestRetries += 1;
-                  setStatus(`Waiting for stream... (${manifestRetries}/${maxManifestRetries})`);
+                  setStatus(`Waiting for stream manifest... ${manifestRetries}/${maxManifestRetries}`);
                   setError(false);
                   if (retryTimer) clearTimeout(retryTimer);
                   retryTimer = setTimeout(() => {
@@ -171,7 +215,7 @@ export default function HLSPlayer({ vehicleId, channel, vehicleName, onStop, fal
                   return;
                 }
                 if (isManifestIssue && manifestRetries >= maxManifestRetries) {
-                  setStatus('Stream Unavailable');
+                  setStatus('Stream unavailable');
                   setError(true);
                   return;
                 }

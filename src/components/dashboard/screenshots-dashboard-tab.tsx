@@ -47,6 +47,7 @@ type VehicleGroupCard = {
 type CaptureAvailability = {
   failedAt?: number;
   status?: number;
+  succeededAt?: number;
 };
 
 function isVideoChannel(channel: ChannelInfo): boolean {
@@ -117,6 +118,8 @@ export default function ScreenshotsDashboardTab({ detachable = true }: Screensho
   const lastWsRefreshAt = useRef(0);
   const captureAvailabilityRef = useRef<Map<string, CaptureAvailability>>(new Map());
   const SCREENSHOT_FAILURE_COOLDOWN_MS = 90_000;
+  const LIVE_SCREENSHOT_WINDOW_MS = 10 * 60 * 1000;
+  const STALE_SCREENSHOT_WINDOW_MS = 30 * 60 * 1000;
 
   const toDisplayUrl = useCallback((raw?: string) => {
     const value = String(raw || "").trim();
@@ -140,7 +143,7 @@ export default function ScreenshotsDashboardTab({ detachable = true }: Screensho
 
   const fetchRecentScreenshots = useCallback(async () => {
     try {
-      const response = await fetch("/api/video-server/screenshots/recent?limit=300&minutes=1");
+      const response = await fetch("/api/video-server/screenshots/recent?limit=300&minutes=10");
       if (!response.ok) {
         setError("Recent screenshots endpoint is temporarily unavailable.");
         return [];
@@ -187,7 +190,10 @@ export default function ScreenshotsDashboardTab({ detachable = true }: Screensho
       });
 
       if (response.ok) {
-        captureAvailabilityRef.current.delete(targetKey);
+        captureAvailabilityRef.current.set(targetKey, {
+          succeededAt: Date.now(),
+          status: 200,
+        });
         return true;
       }
 
@@ -348,7 +354,7 @@ export default function ScreenshotsDashboardTab({ detachable = true }: Screensho
     const now = Date.now();
     return cards.flatMap((card) => card.channels).filter((channelCard) => {
       const ts = parseDate(channelCard.screenshot?.timestamp);
-      return ts > 0 && now - ts <= 120000;
+      return ts > 0 && now - ts <= LIVE_SCREENSHOT_WINDOW_MS;
     }).length;
   }, [cards]);
 
@@ -442,7 +448,16 @@ export default function ScreenshotsDashboardTab({ detachable = true }: Screensho
                   {card.channels.map((channelCard) => {
                     const shot = channelCard.screenshot;
                     const ageMs = Date.now() - parseDate(shot?.timestamp);
-                    const isLive = parseDate(shot?.timestamp) > 0 && ageMs <= 120000;
+                    const hasTimestamp = parseDate(shot?.timestamp) > 0;
+                    const isLive = hasTimestamp && ageMs <= LIVE_SCREENSHOT_WINDOW_MS;
+                    const isRecent = hasTimestamp && ageMs > LIVE_SCREENSHOT_WINDOW_MS && ageMs <= STALE_SCREENSHOT_WINDOW_MS;
+                    const statusBadge = !hasTimestamp
+                      ? { label: "No Image", className: "bg-slate-600 text-white hover:bg-slate-600" }
+                      : isLive
+                        ? { label: "Fresh", className: "bg-emerald-600 text-white hover:bg-emerald-600" }
+                        : isRecent
+                          ? { label: "Recent", className: "bg-cyan-600 text-white hover:bg-cyan-600" }
+                          : { label: "Stale", className: "bg-amber-600 text-white hover:bg-amber-600" };
 
                     return (
                       <div key={`${card.vehicleId}-${channelCard.channel}`} className="overflow-hidden rounded border border-slate-800">
@@ -464,14 +479,8 @@ export default function ScreenshotsDashboardTab({ detachable = true }: Screensho
                         </div>
                         <div className="flex items-center justify-between px-2 py-2">
                           <div>
-                            <Badge
-                              className={
-                                isLive
-                                  ? "bg-emerald-600 text-white hover:bg-emerald-600"
-                                  : "bg-amber-600 text-white hover:bg-amber-600"
-                              }
-                            >
-                              {isLive ? "Live" : "Stale"}
+                            <Badge className={statusBadge.className}>
+                              {statusBadge.label}
                             </Badge>
                             <p className="mt-1 text-[11px] text-slate-400">
                               {shot?.timestamp
