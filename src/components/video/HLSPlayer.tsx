@@ -31,6 +31,29 @@ export default function HLSPlayer({ vehicleId, channel, vehicleName, onStop, fal
 
     const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+    const fetchManifestText = async (url: string) => {
+      try {
+        const response = await fetch(`${url}${url.includes('?') ? '&' : '?'}_probe=${Date.now()}`, {
+          method: 'GET',
+          cache: 'no-store',
+        });
+        const text = await response.text().catch(() => '');
+        return {
+          ok: response.ok,
+          status: response.status,
+          contentType: response.headers.get('content-type') || '',
+          text,
+        };
+      } catch {
+        return {
+          ok: false,
+          status: 0,
+          contentType: '',
+          text: '',
+        };
+      }
+    };
+
     const probeStreamInfo = async (candidateId: string) => {
       try {
         const response = await fetch(`/api/video-server/vehicles/${encodeURIComponent(candidateId)}/stream-info?channel=${encodeURIComponent(String(channel))}`, {
@@ -71,12 +94,25 @@ export default function HLSPlayer({ vehicleId, channel, vehicleName, onStop, fal
       return null;
     };
 
-    const loadManifest = () => {
-      if (!hls) return;
+    const loadManifest = async () => {
+      if (!hls) return false;
       const withCacheBuster = `${hlsUrlBase}${hlsUrlBase.includes('?') ? '&' : '?'}_ts=${Date.now()}`;
+      const probe = await fetchManifestText(hlsUrlBase);
+      const looksLikeManifest =
+        probe.ok &&
+        /#extm3u/i.test(probe.text) &&
+        !/application\/json/i.test(probe.contentType) &&
+        !/<html/i.test(probe.text);
+
+      if (!looksLikeManifest) {
+        console.warn('[HLS Player] Manifest not ready yet:', probe.status, probe.contentType, probe.text.slice(0, 80));
+        return false;
+      }
+
       console.log('[HLS Player] Loading manifest:', withCacheBuster);
       hls.loadSource(withCacheBuster);
       hls.startLoad(-1);
+      return true;
     };
 
     const startAndPlayStream = async () => {
@@ -190,7 +226,16 @@ export default function HLSPlayer({ vehicleId, channel, vehicleName, onStop, fal
           });
 
           hls.attachMedia(video);
-          loadManifest();
+          const manifestReady = await loadManifest();
+          if (!manifestReady) {
+            manifestRetries += 1;
+            setStatus(`Waiting for stream... ${manifestRetries}/${maxManifestRetries}`);
+            if (retryTimer) clearTimeout(retryTimer);
+            retryTimer = setTimeout(() => {
+              if (!mounted) return;
+              void loadManifest();
+            }, 1200);
+          }
           hlsRef.current = hls;
 
           hls.on(Hls.Events.MANIFEST_PARSED, () => {
@@ -221,7 +266,7 @@ export default function HLSPlayer({ vehicleId, channel, vehicleName, onStop, fal
                   retryTimer = setTimeout(() => {
                     if (!mounted) return;
                     console.log('[HLS Player] Retrying manifest load...');
-                    loadManifest();
+                    void loadManifest();
                   }, 1200);
                   return;
                 }
