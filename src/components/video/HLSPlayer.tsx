@@ -27,6 +27,7 @@ export default function HLSPlayer({ vehicleId, channel, vehicleName, onStop, fal
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
     let hlsUrlBase = '';
     let activeVehicleId = vehicleId;
+    let framePollingStopped = false;
 
     const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -43,8 +44,9 @@ export default function HLSPlayer({ vehicleId, channel, vehicleName, onStop, fal
       }
     };
 
-    const waitForFrames = async (candidateIds: string[]) => {
+    const watchForFrames = async (candidateIds: string[]) => {
       for (let attempt = 0; attempt < maxManifestRetries; attempt += 1) {
+        if (framePollingStopped || !mounted) return null;
         for (const candidateId of candidateIds) {
           const stream = await probeStreamInfo(candidateId);
           const frameCount = Number(stream?.frameCount || 0);
@@ -59,7 +61,11 @@ export default function HLSPlayer({ vehicleId, channel, vehicleName, onStop, fal
           }
         }
         if (!mounted) return null;
-        setStatus(`Waiting for camera frames... ${attempt + 1}/${maxManifestRetries}`);
+        setStatus((current) => (
+          current === 'Streaming'
+            ? current
+            : `Waiting for camera frames... ${attempt + 1}/${maxManifestRetries}`
+        ));
         await wait(1200);
       }
       return null;
@@ -138,18 +144,22 @@ export default function HLSPlayer({ vehicleId, channel, vehicleName, onStop, fal
           throw new Error(startData?.error || startData?.message || 'Failed to start stream');
         }
 
-        const frameReady = await waitForFrames(candidateVehicleIds);
-        if (frameReady?.vehicleId) {
-          activeVehicleId = frameReady.vehicleId;
-        } else if (!started) {
-          setStatus('No frames received from camera');
-          setError(true);
-          return;
-        } else {
-          setStatus('Waiting for stream manifest...');
-        }
+        void watchForFrames(candidateVehicleIds).then((frameReady) => {
+          if (!mounted || framePollingStopped) return;
+          if (frameReady?.vehicleId) {
+            activeVehicleId = frameReady.vehicleId;
+            if (status !== 'Streaming') {
+              setStatus('Camera frames received');
+            }
+            return;
+          }
+          if (!started && !error) {
+            setStatus('No frames received from camera');
+            setError(true);
+          }
+        });
 
-        hlsUrlBase = `/api/video-server/stream/${activeVehicleId}/${channel}/playlist.m3u8`;
+        hlsUrlBase = selectedStreamUrl;
         console.log('[HLS Player] Base URL:', hlsUrlBase);
 
         if (Hls.isSupported()) {
@@ -187,6 +197,7 @@ export default function HLSPlayer({ vehicleId, channel, vehicleName, onStop, fal
             console.log('[HLS Player] Manifest parsed successfully');
             if (!mounted) return;
             manifestRetries = 0;
+            framePollingStopped = true;
             setStatus('Streaming');
             setError(false);
             video.play().catch(e => console.warn('Autoplay blocked:', e));
@@ -204,7 +215,7 @@ export default function HLSPlayer({ vehicleId, channel, vehicleName, onStop, fal
 
                 if (isManifestIssue && manifestRetries < maxManifestRetries) {
                   manifestRetries += 1;
-                  setStatus(`Waiting for stream manifest... ${manifestRetries}/${maxManifestRetries}`);
+                  setStatus(`Waiting for stream... ${manifestRetries}/${maxManifestRetries}`);
                   setError(false);
                   if (retryTimer) clearTimeout(retryTimer);
                   retryTimer = setTimeout(() => {
@@ -215,6 +226,7 @@ export default function HLSPlayer({ vehicleId, channel, vehicleName, onStop, fal
                   return;
                 }
                 if (isManifestIssue && manifestRetries >= maxManifestRetries) {
+                  framePollingStopped = true;
                   setStatus('Stream unavailable');
                   setError(true);
                   return;
@@ -241,12 +253,14 @@ export default function HLSPlayer({ vehicleId, channel, vehicleName, onStop, fal
           video.src = `${hlsUrlBase}?_ts=${Date.now()}`;
           video.addEventListener('loadedmetadata', () => {
             if (mounted) {
+              framePollingStopped = true;
               setStatus('Streaming');
               setError(false);
             }
           });
           video.addEventListener('error', () => {
             if (mounted) {
+              framePollingStopped = true;
               setStatus('Stream Unavailable');
               setError(true);
             }
@@ -276,6 +290,7 @@ export default function HLSPlayer({ vehicleId, channel, vehicleName, onStop, fal
     return () => {
       console.log(`[HLS Player] Cleanup ${vehicleId} ch${channel}`);
       mounted = false;
+      framePollingStopped = true;
       if (retryTimer) clearTimeout(retryTimer);
       if (hls) {
         hls.destroy();
