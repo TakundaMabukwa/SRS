@@ -7,19 +7,23 @@ import { Printer, X } from 'lucide-react'
 import EvidenceAnnexure from '@/components/video-alerts/evidence-annexure'
 import {
   ReportAlertDetails,
+  SavedAlertArtifact,
   formatReportDateTime,
+  getSafeHtml2CanvasOptions,
   normalizeReportScreenshots,
   normalizeReportVideos,
   resolveReportLocationText,
+  saveAlertArtifactBundle,
 } from '@/components/video-alerts/report-support'
 
 interface CriminalReportModalProps {
   isOpen: boolean
   onClose: () => void
-  onSaved?: () => void | Promise<void>
+  onSaved?: (artifact?: SavedAlertArtifact) => void | Promise<void>
   driverInfo: {
     name: string
     fleetNumber: string
+    registration?: string
     department?: string
     timestamp: string
     location?: string
@@ -65,7 +69,7 @@ export default function CriminalReportModal({ isOpen, onClose, onSaved, driverIn
       if (!element) throw new Error('Form content not found')
       const html2canvas = (await import('html2canvas')).default
       const jsPDF = (await import('jspdf')).default
-      const canvas = await html2canvas(element, { scale: 2, useCORS: true, logging: false, backgroundColor: '#ffffff' })
+      const canvas = await html2canvas(element, getSafeHtml2CanvasOptions(element))
       const imgData = canvas.toDataURL('image/png')
       const pdf = new jsPDF('p', 'mm', 'a4')
       const width = pdf.internal.pageSize.getWidth()
@@ -75,19 +79,15 @@ export default function CriminalReportModal({ isOpen, onClose, onSaved, driverIn
       const fileName = `criminal-report-${driverInfo.fleetNumber}-${Date.now()}.pdf`
       pdf.save(fileName)
 
-      const { error: uploadError } = await supabase.storage.from('reports').upload(fileName, blob, { contentType: 'application/pdf' })
-      if (uploadError) throw uploadError
-      const { data: publicData } = supabase.storage.from('reports').getPublicUrl(fileName)
-      const publicUrl = publicData?.publicUrl || ''
-      const { error: dbError } = await supabase.from('reports').insert({
-        vehicle_registration: driverInfo.fleetNumber,
-        driver_name: driverInfo.name,
-        priority: 'High',
-        report_type: 'CRIMINAL_REPORT',
-        document_url: publicUrl
+      const artifact = await saveAlertArtifactBundle({
+        supabase,
+        fileName,
+        pdfBlob: blob,
+        reportType: 'CRIMINAL_REPORT',
+        driverInfo,
+        alertDetails,
       })
-      if (dbError) throw dbError
-      if (onSaved) await onSaved()
+      if (onSaved) await onSaved(artifact)
       onClose()
     } catch (err) {
       console.error('Error saving criminal report:', err)
@@ -144,6 +144,7 @@ export default function CriminalReportModal({ isOpen, onClose, onSaved, driverIn
             <h4 className="text-center text-2xl font-semibold text-blue-900 underline">Incident Information</h4>
             <div className="grid grid-cols-12 border border-slate-500"><div className="col-span-6 border-r border-slate-500 p-2 font-semibold">Incident Type</div><div className="col-span-6 p-2">{alertDetails?.type || 'Criminal activity'}</div></div>
             <div className="grid grid-cols-12 border border-slate-500"><div className="col-span-6 border-r border-slate-500 p-2 font-semibold">Date & Time of Incident</div><div className="col-span-6 p-2">{formatReportDateTime(timestamp)}</div></div>
+            <div className="grid grid-cols-12 border border-slate-500"><div className="col-span-6 border-r border-slate-500 p-2 font-semibold">Fleet / Registration</div><div className="col-span-6 p-2">{driverInfo.registration ? `${driverInfo.fleetNumber} - ${driverInfo.registration}` : driverInfo.fleetNumber || 'N/A'}</div></div>
             <div className="grid grid-cols-12 border border-slate-500"><div className="col-span-6 border-r border-slate-500 p-2 font-semibold">Location</div><div className="col-span-6 p-2">{locationText}</div></div>
             <div className="grid grid-cols-12 border border-slate-500"><div className="col-span-6 border-r border-slate-500 p-2 font-semibold">City / Site</div><div className="col-span-6 p-1"><input className="h-10 w-full border border-slate-500 px-3" value={citySite} onChange={(e) => setCitySite(e.target.value)} /></div></div>
             <div className="grid grid-cols-12 border border-slate-500"><div className="col-span-6 border-r border-slate-500 p-2 font-semibold">Specific Area</div><div className="col-span-6 p-1"><input className="h-10 w-full border border-slate-500 px-3" value={specificArea} onChange={(e) => setSpecificArea(e.target.value)} /></div></div>

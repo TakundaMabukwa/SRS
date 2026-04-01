@@ -88,6 +88,7 @@ import AccidentReportModal from '@/components/video-alerts/accident-report-modal
 import CriminalReportModal from '@/components/video-alerts/criminal-report-modal';
 import DispatchReportModal from '@/components/video-alerts/dispatch-report-modal';
 import IncidentReportTemplateModal from '@/components/video-alerts/incident-report-template-modal';
+import type { SavedAlertArtifact } from '@/components/video-alerts/report-support';
 import { useVideoWebSocket } from "@/hooks/use-video-websocket";
 import { getAlertDisplayTimestamp as getSharedAlertDisplayTimestamp, getAlertPlaybackSignature, resolveAlertPlaybackVideos, resolveMediaUrlForCurrentOrigin } from "@/lib/video-alert-playback";
 
@@ -2798,13 +2799,15 @@ export default function Dashboard() {
   const [videoModalOpen, setVideoModalOpen] = useState(false);
   const [currentTripForVideo, setCurrentTripForVideo] = useState<any>(null);
   const [selectedAlert, setSelectedAlert] = useState<any>(null);
-  const [alertDetailModalOpen, setAlertDetailModalOpen] = useState(false);
-  const [alertRealtimeLoading, setAlertRealtimeLoading] = useState(false);
-  const [alertNotesDraft, setAlertNotesDraft] = useState("");
-  const [alertScreenshotsExpanded, setAlertScreenshotsExpanded] = useState(false);
-  const [alertActionLoading, setAlertActionLoading] = useState(false);
-  const [alertActionError, setAlertActionError] = useState("");
-  const [alertActionSuccess, setAlertActionSuccess] = useState("");
+const [alertDetailModalOpen, setAlertDetailModalOpen] = useState(false);
+const [alertRealtimeLoading, setAlertRealtimeLoading] = useState(false);
+const [alertNotesDraft, setAlertNotesDraft] = useState("");
+const [alertScreenshotsExpanded, setAlertScreenshotsExpanded] = useState(false);
+const [derivedAlertScreenshotUrl, setDerivedAlertScreenshotUrl] = useState("");
+const [derivedAlertScreenshotLoading, setDerivedAlertScreenshotLoading] = useState(false);
+const [alertActionLoading, setAlertActionLoading] = useState(false);
+const [alertActionError, setAlertActionError] = useState("");
+const [alertActionSuccess, setAlertActionSuccess] = useState("");
   const [videoPreview, setVideoPreview] = useState<{ url: string; label: string } | null>(null);
   const [videoPlaybackFailures, setVideoPlaybackFailures] = useState<Record<string, boolean>>({});
   const [selectedAlertPlaybackVideos, setSelectedAlertPlaybackVideos] = useState<Array<{ key: string; label: string; url: string }>>([]);
@@ -3014,8 +3017,10 @@ export default function Dashboard() {
     if (parts.length === 2) return parts.pop()?.split(";").shift() || "";
     return "";
   };
-  const closeSelectedAlert = useCallback(
-    async (closureType: "resolved" | "false_alert" | "ncr" | "report" = "resolved") => {
+  const closeSelectedAlert = async (
+    closureType: "resolved" | "false_alert" | "ncr" | "report" = "resolved",
+    artifact?: SavedAlertArtifact | null
+  ) => {
       if (!selectedAlert?.id) return;
       const closingAlertId = String(selectedAlert.id);
       const reasonLabel = String(alertReason || "").trim();
@@ -3072,8 +3077,11 @@ export default function Dashboard() {
               actor,
               reasonCode,
               reasonLabel: closureLabel,
+              documentUrl: artifact?.documentUrl || undefined,
+              documentName: artifact?.documentName || undefined,
+              documentType: artifact?.documentType || undefined,
               payload: {
-                source: "dashboard_trip_routing",
+                ...buildSelectedAlertClosurePayload(artifact),
                 ncrForm: closureType === "ncr" ? selectedNcrForm : undefined,
                 reportForm: closureType === "report" ? selectedReportForm : undefined,
               },
@@ -3110,17 +3118,7 @@ export default function Dashboard() {
       } finally {
         setAlertActionLoading(false);
       }
-    },
-    [
-      alertNotesDraft,
-      alertReason,
-      selectedAlert?.id,
-      selectedNcrForm,
-      selectedReportForm,
-      setCurrentTripAlerts,
-      videoProxyBase,
-    ]
-  );
+    };
   const toAbsoluteVideoUrl = (raw?: string) => {
     if (!raw) return "";
     if (/^https?:\/\//i.test(raw)) return raw;
@@ -3560,12 +3558,151 @@ export default function Dashboard() {
   const selectedAlertTimeline = Array.isArray((selectedAlert as any)?.resolution_timeline)
     ? (selectedAlert as any).resolution_timeline
     : [];
+  const buildSelectedAlertClosurePayload = useCallback((artifact?: SavedAlertArtifact | null) => ({
+    source: "dashboard_trip_routing",
+    alertId: selectedAlert?.id || null,
+    alertType: selectedAlert?.type || selectedAlert?.alert_type || null,
+    severity: selectedAlert?.priority || selectedAlert?.severity || null,
+    timestamp: selectedAlertDisplayTs || selectedAlert?.timestamp || null,
+    locationText: selectedAlertLocationText || null,
+    screenshots: selectedAlertScreenshots || [],
+    videos: selectedAlertVideoList || [],
+    videoRequestState: selectedAlertVideoRequestState || null,
+    timeline: selectedAlertTimeline || [],
+    savedArtifact: artifact
+      ? {
+          documentUrl: artifact.documentUrl,
+          documentName: artifact.documentName,
+          documentType: artifact.documentType,
+          bundleUrl: artifact.bundleUrl || null,
+          closurePayload: artifact.closurePayload || {},
+        }
+      : undefined,
+  }), [
+    selectedAlert?.alert_type,
+    selectedAlert?.id,
+    selectedAlert?.priority,
+    selectedAlert?.severity,
+    selectedAlert?.timestamp,
+    selectedAlert?.type,
+    selectedAlertDisplayTs,
+    selectedAlertLocationText,
+    selectedAlertScreenshots,
+    selectedAlertTimeline,
+    selectedAlertVideoList,
+    selectedAlertVideoRequestState,
+  ]);
   useEffect(() => {
     if (alertDetailModalOpen) {
       setVideoPlaybackFailures({});
       setAlertScreenshotsExpanded(false);
     }
   }, [alertDetailModalOpen, selectedAlert?.id]);
+  useEffect(() => {
+    let cancelled = false;
+    let objectUrl = "";
+
+    async function deriveAlertScreenshotFromVideo() {
+      if (!alertDetailModalOpen || !selectedAlert?.id) {
+        setDerivedAlertScreenshotUrl("");
+        setDerivedAlertScreenshotLoading(false);
+        return;
+      }
+
+      if (selectedAlertScreenshots.length > 0) {
+        setDerivedAlertScreenshotUrl("");
+        setDerivedAlertScreenshotLoading(false);
+        return;
+      }
+
+      if (selectedAlertPlaybackLoading) {
+        setDerivedAlertScreenshotUrl("");
+        setDerivedAlertScreenshotLoading(true);
+        return;
+      }
+
+      const primaryVideoUrl = String(primaryAlertVideo?.url || "").trim();
+      if (!primaryVideoUrl) {
+        setDerivedAlertScreenshotUrl("");
+        setDerivedAlertScreenshotLoading(false);
+        return;
+      }
+
+      setDerivedAlertScreenshotLoading(true);
+      setDerivedAlertScreenshotUrl("");
+
+      try {
+        const video = document.createElement("video");
+        video.crossOrigin = "anonymous";
+        video.muted = true;
+        video.playsInline = true;
+        video.preload = "auto";
+        video.src = resolveMediaUrlForCurrentOrigin(primaryVideoUrl);
+
+        await new Promise<void>((resolve, reject) => {
+          const onLoadedData = () => resolve();
+          const onError = () => reject(new Error("video frame load failed"));
+          video.addEventListener("loadeddata", onLoadedData, { once: true });
+          video.addEventListener("error", onError, { once: true });
+        });
+
+        const targetTime = Math.max(0.2, Math.min(2, Number.isFinite(video.duration) ? video.duration * 0.25 : 1));
+        await new Promise<void>((resolve, reject) => {
+          const onSeeked = () => resolve();
+          const onError = () => reject(new Error("video seek failed"));
+          video.addEventListener("seeked", onSeeked, { once: true });
+          video.addEventListener("error", onError, { once: true });
+          try {
+            video.currentTime = targetTime;
+          } catch (error) {
+            reject(error);
+          }
+        });
+
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.max(1, video.videoWidth || 1280);
+        canvas.height = Math.max(1, video.videoHeight || 720);
+        const ctx = canvas.getContext("2d");
+        if (!ctx) throw new Error("canvas context unavailable");
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+        const blob = await new Promise<Blob | null>((resolve) => {
+          canvas.toBlob((value) => resolve(value), "image/jpeg", 0.9);
+        });
+        if (!blob) throw new Error("screenshot blob generation failed");
+
+        objectUrl = URL.createObjectURL(blob);
+        if (!cancelled) {
+          setDerivedAlertScreenshotUrl(objectUrl);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          console.warn("[Dashboard Alert Modal] Failed to derive screenshot from event video", {
+            alertId: selectedAlert?.id,
+            message: error instanceof Error ? error.message : String(error),
+          });
+          setDerivedAlertScreenshotUrl("");
+        }
+      } finally {
+        if (!cancelled) {
+          setDerivedAlertScreenshotLoading(false);
+        }
+      }
+    }
+
+    void deriveAlertScreenshotFromVideo();
+
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [
+    alertDetailModalOpen,
+    primaryAlertVideo?.url,
+    selectedAlert?.id,
+    selectedAlertPlaybackLoading,
+    selectedAlertScreenshots.length,
+  ]);
   useEffect(() => {
     let cancelled = false;
 
@@ -6039,10 +6176,10 @@ export default function Dashboard() {
               <div className="grid grid-cols-1 xl:grid-cols-12 gap-6">
                 {/* Main Content */}
                 <div className="xl:col-span-8">
-                  <Tabs defaultValue="screenshots" className="w-full">
+                  <Tabs defaultValue="videos" className="w-full">
                     <TabsList className="w-full justify-start bg-slate-200/70 p-1 rounded-lg">
-                      <TabsTrigger value="screenshots">Screenshots</TabsTrigger>
                       <TabsTrigger value="videos">Event Video</TabsTrigger>
+                      <TabsTrigger value="screenshots">Screenshots</TabsTrigger>
                       <TabsTrigger value="timeline">Timeline</TabsTrigger>
                     </TabsList>
 
@@ -6102,31 +6239,35 @@ export default function Dashboard() {
                                 </div>
                               </Card>
                             ))
-                          ) : selectedAlert.video_url ? (
+                          ) : derivedAlertScreenshotUrl ? (
                             <Card className="overflow-hidden border-slate-200 shadow-sm">
                               <div className="relative aspect-video bg-slate-900">
                                 <img
-                                  src={selectedAlert.video_url}
-                                  alt="Screenshot"
+                                  src={derivedAlertScreenshotUrl}
+                                  alt="Derived alert screenshot"
                                   className="w-full h-full object-cover"
                                 />
                                 <div className="absolute top-2 left-2 bg-black/80 text-white px-3 py-1 rounded text-xs font-medium">
-                                  Camera 1
+                                  Event Video Snapshot
                                 </div>
                                 <div className="absolute bottom-2 right-2 bg-black/80 text-white px-3 py-1 rounded text-xs">
                                   {new Date(selectedAlert.timestamp).toLocaleTimeString()}
                                 </div>
                               </div>
                               <div className="p-2 border-t flex justify-between items-center">
-                                <span className="text-xs text-slate-600">+0s</span>
-                                <Button variant="ghost" size="sm">
+                                <span className="text-xs text-slate-600">Derived from completed alert video</span>
+                                <Button variant="ghost" size="sm" onClick={() => window.open(derivedAlertScreenshotUrl, '_blank')}>
                                   <Download className="w-3 h-3" />
                                 </Button>
                               </div>
                             </Card>
                           ) : (
                             <div className="col-span-2 text-center py-12 text-slate-500">
-                              N/A
+                              {selectedAlertPlaybackLoading
+                                ? "Waiting for event video to be ready before taking the screenshot..."
+                                : derivedAlertScreenshotLoading
+                                ? "Taking screenshot from event video..."
+                                : "No screenshots available yet"}
                             </div>
                           )}
                         </div>
@@ -6549,13 +6690,14 @@ export default function Dashboard() {
         <NRCCameraCoveredModal
           isOpen={showNCRModal}
           onClose={() => setShowNCRModal(false)}
-          onSaved={async () => {
+          onSaved={async (artifact) => {
             setShowNCRModal(false)
-            await closeSelectedAlert("ncr")
+            await closeSelectedAlert("ncr", artifact)
           }}
           driverInfo={{
             name: selectedAlert.driver_name || 'Unknown Driver',
-            fleetNumber: selectedAlert.vehicle_registration || selectedAlert.device_id,
+            fleetNumber: selectedAlert.fleet_number || selectedAlert.vehicle_registration || selectedAlert.device_id,
+            registration: selectedAlert.vehicle_registration || selectedAlert.fleet_number || selectedAlert.device_id,
             department: 'Fleet Operations',
             timestamp: selectedAlert.timestamp,
             location: selectedAlertLocationText
@@ -6575,13 +6717,14 @@ export default function Dashboard() {
         <NCRSafetyViolationModal
           isOpen={showNCRModal}
           onClose={() => setShowNCRModal(false)}
-          onSaved={async () => {
+          onSaved={async (artifact) => {
             setShowNCRModal(false)
-            await closeSelectedAlert("ncr")
+            await closeSelectedAlert("ncr", artifact)
           }}
           driverInfo={{
             name: selectedAlert.driver_name || 'Unknown Driver',
-            fleetNumber: selectedAlert.vehicle_registration || selectedAlert.device_id,
+            fleetNumber: selectedAlert.fleet_number || selectedAlert.vehicle_registration || selectedAlert.device_id,
+            registration: selectedAlert.vehicle_registration || selectedAlert.fleet_number || selectedAlert.device_id,
             department: 'Fleet Operations',
             timestamp: selectedAlert.timestamp,
             location: selectedAlertLocationText
@@ -6601,13 +6744,14 @@ export default function Dashboard() {
         <NCRSpeedingModal
           isOpen={showNCRModal}
           onClose={() => setShowNCRModal(false)}
-          onSaved={async () => {
+          onSaved={async (artifact) => {
             setShowNCRModal(false)
-            await closeSelectedAlert("ncr")
+            await closeSelectedAlert("ncr", artifact)
           }}
           driverInfo={{
             name: selectedAlert.driver_name || 'Unknown Driver',
-            fleetNumber: selectedAlert.vehicle_registration || selectedAlert.device_id,
+            fleetNumber: selectedAlert.fleet_number || selectedAlert.vehicle_registration || selectedAlert.device_id,
+            registration: selectedAlert.vehicle_registration || selectedAlert.fleet_number || selectedAlert.device_id,
             department: 'Fleet Operations',
             timestamp: selectedAlert.timestamp,
             location: selectedAlertLocationText
@@ -6627,13 +6771,14 @@ export default function Dashboard() {
         <IncidentReportModal
           isOpen={showReportModal}
           onClose={() => setShowReportModal(false)}
-          onSaved={async () => {
+          onSaved={async (artifact) => {
             setShowReportModal(false)
-            await closeSelectedAlert("report")
+            await closeSelectedAlert("report", artifact)
           }}
           driverInfo={{
             name: selectedAlert.driver_name || 'Unknown Driver',
-            fleetNumber: selectedAlert.vehicle_registration || selectedAlert.device_id,
+            fleetNumber: selectedAlert.fleet_number || selectedAlert.vehicle_registration || selectedAlert.device_id,
+            registration: selectedAlert.vehicle_registration || selectedAlert.fleet_number || selectedAlert.device_id,
             department: 'Fleet Operations',
             timestamp: selectedAlert.timestamp,
             location: selectedAlertLocationText
@@ -6653,13 +6798,14 @@ export default function Dashboard() {
         <AccidentReportModal
           isOpen={showReportModal}
           onClose={() => setShowReportModal(false)}
-          onSaved={async () => {
+          onSaved={async (artifact) => {
             setShowReportModal(false)
-            await closeSelectedAlert("report")
+            await closeSelectedAlert("report", artifact)
           }}
           driverInfo={{
             name: selectedAlert.driver_name || 'Unknown Driver',
-            fleetNumber: selectedAlert.vehicle_registration || selectedAlert.device_id,
+            fleetNumber: selectedAlert.fleet_number || selectedAlert.vehicle_registration || selectedAlert.device_id,
+            registration: selectedAlert.vehicle_registration || selectedAlert.fleet_number || selectedAlert.device_id,
             department: 'Fleet Operations',
             timestamp: selectedAlert.timestamp,
             location: selectedAlertLocationText
@@ -6679,13 +6825,14 @@ export default function Dashboard() {
         <CriminalReportModal
           isOpen={showReportModal}
           onClose={() => setShowReportModal(false)}
-          onSaved={async () => {
+          onSaved={async (artifact) => {
             setShowReportModal(false)
-            await closeSelectedAlert("report")
+            await closeSelectedAlert("report", artifact)
           }}
           driverInfo={{
             name: selectedAlert.driver_name || 'Unknown Driver',
-            fleetNumber: selectedAlert.vehicle_registration || selectedAlert.device_id,
+            fleetNumber: selectedAlert.fleet_number || selectedAlert.vehicle_registration || selectedAlert.device_id,
+            registration: selectedAlert.vehicle_registration || selectedAlert.fleet_number || selectedAlert.device_id,
             department: 'Fleet Operations',
             timestamp: selectedAlert.timestamp,
             location: selectedAlertLocationText
@@ -6705,13 +6852,14 @@ export default function Dashboard() {
         <DispatchReportModal
           isOpen={showReportModal}
           onClose={() => setShowReportModal(false)}
-          onSaved={async () => {
+          onSaved={async (artifact) => {
             setShowReportModal(false)
-            await closeSelectedAlert("report")
+            await closeSelectedAlert("report", artifact)
           }}
           driverInfo={{
             name: selectedAlert.driver_name || 'Unknown Driver',
-            fleetNumber: selectedAlert.vehicle_registration || selectedAlert.device_id,
+            fleetNumber: selectedAlert.fleet_number || selectedAlert.vehicle_registration || selectedAlert.device_id,
+            registration: selectedAlert.vehicle_registration || selectedAlert.fleet_number || selectedAlert.device_id,
             department: 'Fleet Operations',
             timestamp: selectedAlert.timestamp,
             location: selectedAlertLocationText

@@ -1,17 +1,11 @@
 'use client'
 
-import { useState } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
 import { BarChart } from '@mui/x-charts/BarChart'
-import { LineChart } from '@mui/x-charts/LineChart'
 import FleetRiskGauge from '@/components/charts/FleetFuelGauge'
-import { RefreshCw, TrendingUp, AlertTriangle, Users, Award, Activity } from 'lucide-react'
 
 export default function ExecutiveDashboardEPS() {
-  const [lastUpdated] = useState(new Date())
-
   const leaderboard = [
     { driverName: 'JOHANNES MPHAKA', currentPoints: 950, totalEarned: 1850, performanceScore: 95, violations: 1, speedingIncidents: 0, totalKilometers: 12500 },
     { driverName: 'ERIC NTHULANI', currentPoints: 940, totalEarned: 1820, performanceScore: 94, violations: 1, speedingIncidents: 0, totalKilometers: 12200 },
@@ -40,97 +34,8 @@ export default function ExecutiveDashboardEPS() {
     { month: 'Jan 2026', speedViolations: 167, routeViolations: 89, nightViolations: 58, activeVehicles: 30, kilometers: 312000 }
   ]
 
-  const totalDrivers = 30
-  const highRiskDrivers = riskAssessment.filter(d => d.risk_category === 'High Risk').length
-  const totalPoints = leaderboard.reduce((sum, l) => sum + l.currentPoints, 0)
-  const totalKilometers = leaderboard.reduce((sum, d) => sum + d.totalKilometers, 0)
-  const totalViolations = 681
-
   return (
     <div className="space-y-8">
-      <div className="bg-white shadow-md p-6 border border-gray-200 rounded-lg">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="font-bold text-2xl text-gray-800">EPS Courier Services</h1>
-            <p className="text-sm text-gray-600 mt-1">Executive Dashboard - Fleet Analytics</p>
-          </div>
-          <div className="flex items-center space-x-4">
-            <div className="text-right">
-              <p className="text-xs text-gray-500">Last updated</p>
-              <p className="text-sm font-semibold text-gray-700">{lastUpdated.toLocaleTimeString()}</p>
-            </div>
-            <Button className="bg-blue-600 hover:bg-blue-700" size="sm">
-              <RefreshCw className="w-4 h-4 mr-2" />
-              Refresh
-            </Button>
-          </div>
-        </div>
-      </div>
-
-      {/* Executive KPIs */}
-      <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-        <Card className="border border-gray-200">
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-600">Total Drivers</p>
-                <p className="text-2xl font-bold text-gray-900">{totalDrivers}</p>
-                <p className="text-xs text-gray-500 mt-1">All Active</p>
-              </div>
-              <Users className="w-8 h-8 text-gray-400" />
-            </div>
-          </CardContent>
-        </Card>
-        <Card className="border border-gray-200">
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-600">High Risk</p>
-                <p className="text-2xl font-bold text-gray-900">{highRiskDrivers}</p>
-                <p className="text-xs text-gray-500 mt-1">Needs Action</p>
-              </div>
-              <AlertTriangle className="w-8 h-8 text-gray-400" />
-            </div>
-          </CardContent>
-        </Card>
-        <Card className="border border-gray-200">
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-600">Active Vehicles</p>
-                <p className="text-2xl font-bold text-gray-900">30</p>
-                <p className="text-xs text-gray-500 mt-1">100% Online</p>
-              </div>
-              <Activity className="w-8 h-8 text-gray-400" />
-            </div>
-          </CardContent>
-        </Card>
-        <Card className="border border-gray-200">
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-600">Total Points</p>
-                <p className="text-2xl font-bold text-gray-900">{totalPoints.toLocaleString()}</p>
-                <p className="text-xs text-gray-500 mt-1">Rewards</p>
-              </div>
-              <Award className="w-8 h-8 text-gray-400" />
-            </div>
-          </CardContent>
-        </Card>
-        <Card className="border border-gray-200">
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-600">Violations</p>
-                <p className="text-2xl font-bold text-gray-900">{totalViolations}</p>
-                <p className="text-xs text-gray-500 mt-1">-15% MTD</p>
-              </div>
-              <TrendingUp className="w-8 h-8 text-gray-400" />
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
       {/* Main Dashboard Charts */}
       <div className="space-y-8">
         {/* Driver Rewards Leaderboard */}

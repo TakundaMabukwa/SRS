@@ -1,9 +1,10 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import Image from 'next/image'
 import { Button } from '@/components/ui/button'
 import { Printer, X } from 'lucide-react'
+import { getSafeHtml2CanvasOptions, normalizeReportScreenshots, SavedAlertArtifact, saveAlertArtifactBundle } from '@/components/video-alerts/report-support'
 
 interface AlertDetails {
   id?: string
@@ -17,9 +18,11 @@ interface AlertDetails {
 interface NCRFormModalProps {
   isOpen: boolean
   onClose: () => void
+  onSaved?: (artifact?: SavedAlertArtifact) => void | Promise<void>
   driverInfo: {
     name: string
     fleetNumber: string
+    registration?: string
     department?: string
     timestamp: string
     location?: string
@@ -27,7 +30,7 @@ interface NCRFormModalProps {
   alertDetails?: AlertDetails
 }
 
-export default function NCRFormModal({ isOpen, onClose, driverInfo, alertDetails }: NCRFormModalProps) {
+export default function NCRFormModal({ isOpen, onClose, onSaved, driverInfo, alertDetails }: NCRFormModalProps) {
   const locationText =
     typeof alertDetails?.location === 'string'
       ? alertDetails.location
@@ -49,6 +52,7 @@ export default function NCRFormModal({ isOpen, onClose, driverInfo, alertDetails
     actionEffective: ''
   })
   const [saving, setSaving] = useState(false)
+  const normalizedScreenshots = useMemo(() => normalizeReportScreenshots(alertDetails?.screenshots), [alertDetails?.screenshots])
 
   useEffect(() => {
     if (!isOpen) return
@@ -70,32 +74,7 @@ export default function NCRFormModal({ isOpen, onClose, driverInfo, alertDetails
       const html2canvas = (await import('html2canvas')).default
       const jsPDF = (await import('jspdf')).default
       
-      const canvas = await html2canvas(element, {
-        scale: 2,
-        useCORS: true,
-        logging: false,
-        backgroundColor: '#ffffff',
-        windowWidth: element.scrollWidth,
-        windowHeight: element.scrollHeight,
-        onclone: (clonedDoc) => {
-          const clonedElement = clonedDoc.getElementById('ncr-form-content')
-          if (clonedElement) {
-            const allElements = clonedElement.querySelectorAll('*')
-            allElements.forEach((el: Element) => {
-              const computed = window.getComputedStyle(el)
-              if (computed.borderColor && computed.borderColor.includes('oklch')) {
-                el.style.borderColor = '#000'
-              }
-              if (computed.color && computed.color.includes('oklch')) {
-                el.style.color = '#000'
-              }
-              if (computed.backgroundColor && computed.backgroundColor.includes('oklch')) {
-                el.style.backgroundColor = '#fff'
-              }
-            })
-          }
-        }
-      })
+      const canvas = await html2canvas(element, getSafeHtml2CanvasOptions(element))
       
       const imgData = canvas.toDataURL('image/png')
       const pdf = new jsPDF('p', 'mm', 'a4')
@@ -110,23 +89,20 @@ export default function NCRFormModal({ isOpen, onClose, driverInfo, alertDetails
       // Download the PDF
       pdf.save(fileName)
       
-      const { error: uploadError } = await supabase.storage
-        .from('reports')
-        .upload(fileName, pdfBlob, { contentType: 'application/pdf' })
-      
-      if (uploadError) throw uploadError
-      
-      const { data: { publicUrl } } = supabase.storage.from('reports').getPublicUrl(fileName)
-      
-      const { error: dbError } = await supabase.from('reports').insert({
-        vehicle_registration: driverInfo.fleetNumber,
-        driver_name: driverInfo.name,
-        priority: 'High',
-        document_url: publicUrl,
-        report_type: 'NCR'
+      const artifact = await saveAlertArtifactBundle({
+        supabase,
+        fileName,
+        pdfBlob,
+        reportType: 'NCR',
+        driverInfo,
+        alertDetails: alertDetails
+          ? {
+              ...alertDetails,
+              videos: [],
+            }
+          : undefined,
       })
-      
-      if (dbError) throw dbError
+      if (onSaved) await onSaved(artifact)
       
       alert('NCR Report saved successfully!')
       onClose()
@@ -210,8 +186,12 @@ export default function NCRFormModal({ isOpen, onClose, driverInfo, alertDetails
                   <tr>
                     <td className="p-1 border-r border-black font-semibold" style={{backgroundColor: '#f1f5f9'}}>Vehicle Fleet No</td>
                     <td className="p-1 border-r border-black font-bold" style={{backgroundColor: '#f9fafb'}}>{driverInfo.fleetNumber}</td>
+                    <td className="p-1 border-r border-black font-semibold" style={{backgroundColor: '#f1f5f9'}}>Registration</td>
+                    <td className="p-1" style={{backgroundColor: '#f9fafb'}}>{driverInfo.registration || 'N/A'}</td>
+                  </tr>
+                  <tr>
                     <td className="p-1 border-r border-black font-semibold" style={{backgroundColor: '#f1f5f9'}}>Date/Time</td>
-                    <td className="p-1" style={{backgroundColor: '#f9fafb'}}>{new Date(driverInfo.timestamp).toLocaleString('en-GB')}</td>
+                    <td className="p-1" style={{backgroundColor: '#f9fafb'}} colSpan={3}>{new Date(driverInfo.timestamp).toLocaleString('en-GB')}</td>
                   </tr>
                 </tbody>
               </table>
@@ -241,9 +221,9 @@ export default function NCRFormModal({ isOpen, onClose, driverInfo, alertDetails
                     </tr>
                   </tbody>
                 </table>
-                {Array.isArray(alertDetails.screenshots) && alertDetails.screenshots.length > 0 && (
+                {normalizedScreenshots.length > 0 && (
                   <div className="grid grid-cols-3 gap-2 p-2 border-t border-black">
-                    {alertDetails.screenshots.slice(0, 3).map((shot, idx) => (
+                    {normalizedScreenshots.slice(0, 3).map((shot, idx) => (
                       <div key={`${shot.url}-${idx}`} className="border border-black p-1">
                         <img src={shot.url} alt={`Evidence ${idx + 1}`} style={{width: '100%', height: '80px', objectFit: 'cover'}} />
                         <div className="text-[10px] mt-1">

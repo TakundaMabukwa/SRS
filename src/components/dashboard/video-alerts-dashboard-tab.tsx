@@ -112,6 +112,14 @@ export default function VideoAlertsDashboardTab({
       severity,
       priority: severity,
       status: String(incoming.status || "new").toLowerCase(),
+      fleet_number: String(
+        incoming.fleet_number ||
+          incoming.fleetNumber ||
+          incoming?.vehicle?.fleet_number ||
+          incoming?.metadata?.vehicle?.fleetNumber ||
+          incoming?.metadata?.vehicle?.fleet_number ||
+          ""
+      ).trim(),
       vehicle_registration: vehicle,
       driver_name: incoming.driver_name || incoming.driver || incoming?.metadata?.driverName || "Unknown",
       timestamp: firstOccurrenceTimestamp,
@@ -119,6 +127,26 @@ export default function VideoAlertsDashboardTab({
       firstOccurrenceTimestamp,
       repeated_count: Number(incoming.repeated_count || incoming.repeatedCount || 1) || 1,
     };
+  }, []);
+
+  const getAlertVehicleDisplayLabel = useCallback((alert: any) => {
+    const registration = String(
+      alert?.vehicle_registration ||
+      alert?.vehicle_reg ||
+      alert?.registration ||
+      alert?.reg ||
+      ""
+    ).trim();
+    const fleetNumber = String(
+      alert?.fleet_number ||
+      alert?.fleetNumber ||
+      ""
+    ).trim();
+
+    if (fleetNumber && registration && fleetNumber.toLowerCase() !== registration.toLowerCase()) {
+      return `${fleetNumber} - ${registration}`;
+    }
+    return fleetNumber || registration || String(alert?.vehicleId || alert?.device_id || "N/A").trim() || "N/A";
   }, []);
 
   useEffect(() => {
@@ -857,7 +885,7 @@ export default function VideoAlertsDashboardTab({
   }, []);
 
   const renderAlertBoardRow = (alert: any) => {
-    const vehicleLabel = alert?.vehicle_registration || alert?.vehicleId || alert?.device_id || "N/A";
+    const vehicleLabel = getAlertVehicleDisplayLabel(alert);
     const alertLabel = alert?.title || alert?.alert_type || alert?.type || "Alert";
     const hasVideo = !!exactVideoReady[String(alert.id)];
     const hasVideoInRange = !!videoAvailability[String(alert.id)];
@@ -950,7 +978,7 @@ export default function VideoAlertsDashboardTab({
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
             <div className="truncate text-[13px] font-semibold leading-4 text-slate-900">
-              {alert.title} ({alert.vehicle_registration || "N/A"})
+              {alert.title} ({getAlertVehicleDisplayLabel(alert)})
             </div>
             <div className="mt-0.5 text-[11px] leading-4 text-slate-500 capitalize">
               {(alert.alert_type || "alert").replace(/_/g, " ")}
@@ -987,7 +1015,7 @@ export default function VideoAlertsDashboardTab({
         <div className="mt-2 grid grid-cols-2 gap-2 text-[11px]">
           <div>
             <div className="text-[10px] uppercase tracking-wide text-slate-400">Target</div>
-            <div className="truncate font-mono font-semibold text-slate-900">{alert.vehicle_registration || "N/A"}</div>
+            <div className="truncate font-mono font-semibold text-slate-900">{getAlertVehicleDisplayLabel(alert)}</div>
             <div className="truncate text-slate-500">{alert.driver_name || "Unknown"}</div>
           </div>
           <div>
@@ -1038,7 +1066,7 @@ export default function VideoAlertsDashboardTab({
           <div className="truncate text-[11px] text-slate-500">{(alert.alert_type || "alert").replace(/_/g, " ")}</div>
         </div>
         <div className="min-w-0">
-          <div className="truncate font-mono font-semibold text-slate-900">{alert.vehicle_registration || "N/A"}</div>
+          <div className="truncate font-mono font-semibold text-slate-900">{getAlertVehicleDisplayLabel(alert)}</div>
           <div className="truncate text-[11px] text-slate-500">{alert.driver_name || "Unknown"}</div>
         </div>
         <div className="min-w-0">

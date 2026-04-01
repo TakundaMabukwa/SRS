@@ -6,19 +6,23 @@ import { Button } from '@/components/ui/button'
 import { Printer, X } from 'lucide-react'
 import EvidenceAnnexure from '@/components/video-alerts/evidence-annexure'
 import {
+  getSafeHtml2CanvasOptions,
   ReportAlertDetails,
+  SavedAlertArtifact,
   normalizeReportScreenshots,
   normalizeReportVideos,
   resolveReportLocationText,
+  saveAlertArtifactBundle,
 } from '@/components/video-alerts/report-support'
 
 interface DispatchReportModalProps {
   isOpen: boolean
   onClose: () => void
-  onSaved?: () => void | Promise<void>
+  onSaved?: (artifact?: SavedAlertArtifact) => void | Promise<void>
   driverInfo: {
     name: string
     fleetNumber: string
+    registration?: string
     department?: string
     timestamp: string
     location?: string
@@ -89,12 +93,7 @@ export default function DispatchReportModal({
       const html2canvas = (await import('html2canvas')).default
       const jsPDF = (await import('jspdf')).default
 
-      const canvas = await html2canvas(element, {
-        scale: 2,
-        useCORS: true,
-        logging: false,
-        backgroundColor: '#ffffff',
-      })
+      const canvas = await html2canvas(element, getSafeHtml2CanvasOptions(element))
       const imgData = canvas.toDataURL('image/png')
       const pdf = new jsPDF('p', 'mm', 'a4')
       const width = pdf.internal.pageSize.getWidth()
@@ -105,24 +104,16 @@ export default function DispatchReportModal({
       const fileName = `dispatch-report-${driverInfo.fleetNumber}-${Date.now()}.pdf`
       pdf.save(fileName)
 
-      const { error: uploadError } = await supabase.storage
-        .from('reports')
-        .upload(fileName, blob, { contentType: 'application/pdf' })
-      if (uploadError) throw uploadError
-
-      const { data: publicData } = supabase.storage.from('reports').getPublicUrl(fileName)
-      const publicUrl = publicData?.publicUrl || ''
-
-      const { error: dbError } = await supabase.from('reports').insert({
-        vehicle_registration: driverInfo.fleetNumber,
-        driver_name: driverInfo.name,
-        priority: 'High',
-        report_type: 'DISPATCH_REPORT',
-        document_url: publicUrl,
+      const artifact = await saveAlertArtifactBundle({
+        supabase,
+        fileName,
+        pdfBlob: blob,
+        reportType: 'DISPATCH_REPORT',
+        driverInfo,
+        alertDetails,
       })
-      if (dbError) throw dbError
 
-      if (onSaved) await onSaved()
+      if (onSaved) await onSaved(artifact)
       onClose()
     } catch (err) {
       console.error('Error saving dispatch report:', err)
@@ -200,6 +191,11 @@ export default function DispatchReportModal({
               <div className="grid grid-cols-[140px_1fr] items-end gap-3">
                 <label className="font-semibold uppercase">Location:</label>
                 <input className={lineClass} value={locationText} readOnly />
+              </div>
+
+              <div className="grid grid-cols-[140px_1fr] items-end gap-3">
+                <label className="font-semibold uppercase">Fleet / Reg:</label>
+                <input className={lineClass} value={driverInfo.registration ? `${driverInfo.fleetNumber} - ${driverInfo.registration}` : driverInfo.fleetNumber} readOnly />
               </div>
 
               <div className="grid grid-cols-[140px_320px] items-end gap-3">

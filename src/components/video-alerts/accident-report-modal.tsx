@@ -7,19 +7,23 @@ import { Printer, X } from 'lucide-react'
 import EvidenceAnnexure from '@/components/video-alerts/evidence-annexure'
 import {
   ReportAlertDetails,
+  SavedAlertArtifact,
   formatReportDate,
+  getSafeHtml2CanvasOptions,
   normalizeReportScreenshots,
   normalizeReportVideos,
   resolveReportLocationText,
+  saveAlertArtifactBundle,
 } from '@/components/video-alerts/report-support'
 
 interface AccidentReportModalProps {
   isOpen: boolean
   onClose: () => void
-  onSaved?: () => void | Promise<void>
+  onSaved?: (artifact?: SavedAlertArtifact) => void | Promise<void>
   driverInfo: {
     name: string
     fleetNumber: string
+    registration?: string
     department?: string
     timestamp: string
     location?: string
@@ -119,12 +123,7 @@ export default function AccidentReportModal({
       const html2canvas = (await import('html2canvas')).default
       const jsPDF = (await import('jspdf')).default
 
-      const canvas = await html2canvas(element, {
-        scale: 2,
-        useCORS: true,
-        logging: false,
-        backgroundColor: '#ffffff',
-      })
+      const canvas = await html2canvas(element, getSafeHtml2CanvasOptions(element))
       const imgData = canvas.toDataURL('image/png')
       const pdf = new jsPDF('p', 'mm', 'a4')
       const width = pdf.internal.pageSize.getWidth()
@@ -146,24 +145,16 @@ export default function AccidentReportModal({
       const fileName = `accident-report-${driverInfo.fleetNumber}-${Date.now()}.pdf`
       pdf.save(fileName)
 
-      const { error: uploadError } = await supabase.storage.from('reports').upload(fileName, blob, {
-        contentType: 'application/pdf',
+      const artifact = await saveAlertArtifactBundle({
+        supabase,
+        fileName,
+        pdfBlob: blob,
+        reportType: 'ACCIDENT_REPORT',
+        driverInfo,
+        alertDetails,
       })
-      if (uploadError) throw uploadError
 
-      const { data: publicData } = supabase.storage.from('reports').getPublicUrl(fileName)
-      const publicUrl = publicData?.publicUrl || ''
-
-      const { error: dbError } = await supabase.from('reports').insert({
-        vehicle_registration: driverInfo.fleetNumber,
-        driver_name: driverInfo.name,
-        priority: 'High',
-        report_type: 'ACCIDENT_REPORT',
-        document_url: publicUrl,
-      })
-      if (dbError) throw dbError
-
-      if (onSaved) await onSaved()
+      if (onSaved) await onSaved(artifact)
       onClose()
     } catch (error) {
       console.error('Error saving accident report:', error)
@@ -270,7 +261,8 @@ export default function AccidentReportModal({
               <div className="col-span-5">
                 <div className="h-full min-h-[86px] border border-black p-2 text-xs">
                   <p><span className="font-semibold">Alert ID:</span> {alertDetails?.id || 'N/A'}</p>
-                  <p><span className="font-semibold">Vehicle:</span> {driverInfo.fleetNumber || 'N/A'}</p>
+                  <p><span className="font-semibold">Vehicle:</span> {driverInfo.registration ? `${driverInfo.fleetNumber} - ${driverInfo.registration}` : driverInfo.fleetNumber || 'N/A'}</p>
+                  <p><span className="font-semibold">Registration:</span> {driverInfo.registration || 'N/A'}</p>
                   <p><span className="font-semibold">Driver:</span> {driverInfo.name || 'N/A'}</p>
                   <p><span className="font-semibold">Severity:</span> {alertDetails?.severity || 'N/A'}</p>
                 </div>

@@ -7,21 +7,25 @@ import { Printer, X } from 'lucide-react'
 import EvidenceAnnexure from '@/components/video-alerts/evidence-annexure'
 import {
   ReportAlertDetails,
+  SavedAlertArtifact,
   formatReportDate,
   formatReportDateTime,
   formatReportTime,
+  getSafeHtml2CanvasOptions,
   normalizeReportScreenshots,
   normalizeReportVideos,
   resolveReportLocationText,
+  saveAlertArtifactBundle,
 } from '@/components/video-alerts/report-support'
 
 interface IncidentReportModalProps {
   isOpen: boolean
   onClose: () => void
-  onSaved?: () => void | Promise<void>
+  onSaved?: (artifact?: SavedAlertArtifact) => void | Promise<void>
   driverInfo: {
     name: string
     fleetNumber: string
+    registration?: string
     department?: string
     timestamp: string
     location?: string
@@ -66,7 +70,7 @@ export default function IncidentReportModal({ isOpen, onClose, onSaved, driverIn
       const html2canvas = (await import('html2canvas')).default
       const jsPDF = (await import('jspdf')).default
 
-      const canvas = await html2canvas(element, { scale: 2, useCORS: true, logging: false, backgroundColor: '#ffffff' })
+      const canvas = await html2canvas(element, getSafeHtml2CanvasOptions(element))
       const imgData = canvas.toDataURL('image/png')
       const pdf = new jsPDF('p', 'mm', 'a4')
       const width = pdf.internal.pageSize.getWidth()
@@ -77,22 +81,16 @@ export default function IncidentReportModal({ isOpen, onClose, onSaved, driverIn
       const fileName = `incident-report-${driverInfo.fleetNumber}-${Date.now()}.pdf`
       pdf.save(fileName)
 
-      const { error: uploadError } = await supabase.storage.from('reports').upload(fileName, blob, { contentType: 'application/pdf' })
-      if (uploadError) throw uploadError
-
-      const { data: publicData } = supabase.storage.from('reports').getPublicUrl(fileName)
-      const publicUrl = publicData?.publicUrl || ''
-
-      const { error: dbError } = await supabase.from('reports').insert({
-        vehicle_registration: driverInfo.fleetNumber,
-        driver_name: driverInfo.name,
-        priority: 'High',
-        report_type: 'INCIDENT_REPORT',
-        document_url: publicUrl
+      const artifact = await saveAlertArtifactBundle({
+        supabase,
+        fileName,
+        pdfBlob: blob,
+        reportType: 'INCIDENT_REPORT',
+        driverInfo,
+        alertDetails,
       })
-      if (dbError) throw dbError
 
-      if (onSaved) await onSaved()
+      if (onSaved) await onSaved(artifact)
       onClose()
     } catch (err) {
       console.error('Error saving incident report:', err)
@@ -176,7 +174,11 @@ export default function IncidentReportModal({ isOpen, onClose, onSaved, driverIn
             </div>
             <div className="grid grid-cols-12 border border-slate-500">
               <div className="col-span-6 border-r border-slate-500 p-2 font-semibold text-slate-700 underline">Fleet/ Vehicle Number:</div>
-              <div className="col-span-6 p-2">{driverInfo.fleetNumber}</div>
+              <div className="col-span-6 p-2">{driverInfo.registration ? `${driverInfo.fleetNumber} - ${driverInfo.registration}` : driverInfo.fleetNumber}</div>
+            </div>
+            <div className="grid grid-cols-12 border border-slate-500">
+              <div className="col-span-6 border-r border-slate-500 p-2 font-semibold text-slate-700 underline">Vehicle Registration:</div>
+              <div className="col-span-6 p-2">{driverInfo.registration || 'N/A'}</div>
             </div>
             <div className="grid grid-cols-12 border border-slate-500">
               <div className="col-span-6 border-r border-slate-500 p-2 font-semibold text-slate-700 underline">Type of Incident:</div>

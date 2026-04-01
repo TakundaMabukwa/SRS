@@ -189,6 +189,8 @@ export default function AlertDetailPage({ params }) {
   const [currentUser] = useState({ id: "user-1", name: "Current User", role: "Operator" });
   const [resolvedScreenshots, setResolvedScreenshots] = useState([]);
   const [screenshotsLoading, setScreenshotsLoading] = useState(false);
+  const [derivedScreenshotUrl, setDerivedScreenshotUrl] = useState("");
+  const [derivedScreenshotLoading, setDerivedScreenshotLoading] = useState(false);
   const alertPlaybackSignature = useMemo(
     () => getAlertPlaybackSignature(selectedAlert),
     [selectedAlert]
@@ -342,6 +344,100 @@ export default function AlertDetailPage({ params }) {
     };
   }, [alertPlaybackSignature]);
 
+  useEffect(() => {
+    let cancelled = false;
+    let objectUrl = "";
+
+    async function deriveScreenshotFromVideo() {
+      if (resolvedScreenshots.length > 0) {
+        setDerivedScreenshotUrl("");
+        setDerivedScreenshotLoading(false);
+        return;
+      }
+
+      if (loadingEventVideos) {
+        setDerivedScreenshotUrl("");
+        setDerivedScreenshotLoading(true);
+        return;
+      }
+
+      const primaryVideoUrl = String(eventVideos?.[0]?.url || "").trim();
+      if (!primaryVideoUrl) {
+        setDerivedScreenshotUrl("");
+        setDerivedScreenshotLoading(false);
+        return;
+      }
+
+      setDerivedScreenshotLoading(true);
+      setDerivedScreenshotUrl("");
+
+      try {
+        const video = document.createElement("video");
+        video.crossOrigin = "anonymous";
+        video.muted = true;
+        video.playsInline = true;
+        video.preload = "auto";
+        video.src = resolveMediaUrlForCurrentOrigin(primaryVideoUrl);
+
+        await new Promise<void>((resolve, reject) => {
+          const onLoadedData = () => resolve();
+          const onError = () => reject(new Error("video frame load failed"));
+          video.addEventListener("loadeddata", onLoadedData, { once: true });
+          video.addEventListener("error", onError, { once: true });
+        });
+
+        const targetTime = Math.max(0.2, Math.min(2, Number.isFinite(video.duration) ? video.duration * 0.25 : 1));
+        await new Promise<void>((resolve, reject) => {
+          const onSeeked = () => resolve();
+          const onError = () => reject(new Error("video seek failed"));
+          video.addEventListener("seeked", onSeeked, { once: true });
+          video.addEventListener("error", onError, { once: true });
+          try {
+            video.currentTime = targetTime;
+          } catch (error) {
+            reject(error);
+          }
+        });
+
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.max(1, video.videoWidth || 1280);
+        canvas.height = Math.max(1, video.videoHeight || 720);
+        const ctx = canvas.getContext("2d");
+        if (!ctx) throw new Error("canvas context unavailable");
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+        const blob = await new Promise<Blob | null>((resolve) => {
+          canvas.toBlob((value) => resolve(value), "image/jpeg", 0.9);
+        });
+        if (!blob) throw new Error("screenshot blob generation failed");
+
+        objectUrl = URL.createObjectURL(blob);
+        if (!cancelled) {
+          setDerivedScreenshotUrl(objectUrl);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          console.warn("[AlertDetail] Failed to derive screenshot from event video", {
+            alertId: selectedAlert?.id,
+            message: error instanceof Error ? error.message : String(error),
+          });
+          setDerivedScreenshotUrl("");
+        }
+      } finally {
+        if (!cancelled) {
+          setDerivedScreenshotLoading(false);
+        }
+      }
+    }
+
+    void deriveScreenshotFromVideo();
+
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [eventVideos, loadingEventVideos, resolvedScreenshots, selectedAlert?.id]);
+
   const handleAddNote = async () => {
     if (!newNote.trim()) return;
     
@@ -477,10 +573,10 @@ export default function AlertDetailPage({ params }) {
         <div className="grid grid-cols-12 gap-6">
           {/* Main Content */}
           <div className="col-span-8">
-            <Tabs defaultValue="screenshots" className="w-full">
+            <Tabs defaultValue="videos" className="w-full">
               <TabsList className="w-full justify-start">
-                <TabsTrigger value="screenshots">Screenshots</TabsTrigger>
                 <TabsTrigger value="videos">Event Video</TabsTrigger>
+                <TabsTrigger value="screenshots">Screenshots</TabsTrigger>
                 <TabsTrigger value="timeline">Timeline</TabsTrigger>
               </TabsList>
 
@@ -531,9 +627,41 @@ export default function AlertDetailPage({ params }) {
                           </div>
                         </Card>
                       ))
+                    ) : derivedScreenshotUrl ? (
+                      <Card className="col-span-2 overflow-hidden">
+                        <div className="relative aspect-video bg-slate-900">
+                          <img
+                            src={derivedScreenshotUrl}
+                            alt="Derived alert screenshot"
+                            className="w-full h-full object-cover"
+                          />
+                          <div className="absolute top-2 left-2 bg-black/80 text-white px-3 py-1 rounded text-xs font-medium">
+                            Event Video Snapshot
+                          </div>
+                          <div className="absolute bottom-2 right-2 bg-black/80 text-white px-3 py-1 rounded text-xs">
+                            {safeFormatDate(selectedAlertDisplayTimestamp || selectedAlert.timestamp, "HH:mm:ss")}
+                          </div>
+                        </div>
+                        <div className="p-2 border-t flex justify-between items-center">
+                          <span className="text-xs text-slate-600">
+                            Derived from completed alert video
+                          </span>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => window.open(derivedScreenshotUrl, "_blank", "noopener,noreferrer")}
+                          >
+                            <Download className="w-3 h-3" />
+                          </Button>
+                        </div>
+                      </Card>
                     ) : (
                       <div className="col-span-2 text-center py-12 text-slate-500">
-                        {screenshotsLoading ? "Resolving alert screenshots..." : "No screenshots available yet"}
+                        {loadingEventVideos
+                          ? "Waiting for event video to be ready before taking the screenshot..."
+                          : screenshotsLoading || derivedScreenshotLoading
+                          ? "Taking screenshot from event video..."
+                          : "No screenshots available yet"}
                       </div>
                     )}
                   </div>

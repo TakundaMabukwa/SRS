@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Camera, RefreshCw, Download, MonitorPlay, Shield, RadioTower, Activity, ExternalLink } from "lucide-react";
 import { useVideoWebSocket } from "@/hooks/use-video-websocket";
 import { createClient } from "@/lib/supabase/client";
+import { resolveMediaUrlForCurrentOrigin } from "@/lib/video-alert-playback";
 
 type ChannelInfo = {
   logicalChannel?: number;
@@ -29,6 +30,7 @@ type ScreenshotItem = {
   device_id?: string;
   channel?: number;
   storage_url?: string;
+  display_url?: string;
   timestamp?: string;
 };
 
@@ -141,13 +143,49 @@ export default function ScreenshotsDashboardTab({ detachable = true }: Screensho
     return { reason: topReason, count: topCount || 0 };
   }, [screenshots, vehicles]);
 
+  const withCacheBust = useCallback((url: string, seed?: string | number) => {
+    const value = String(url || "").trim();
+    if (!value) return "";
+    const suffix = `_ts=${encodeURIComponent(String(seed ?? Date.now()))}`;
+    return value.includes("?") ? `${value}&${suffix}` : `${value}?${suffix}`;
+  }, []);
+
   const toDisplayUrl = useCallback((raw?: string) => {
     const value = String(raw || "").trim();
     if (!value || value === "upload-failed" || value === "local-only") return "";
-    if (/^https?:\/\//i.test(value)) return value;
-    if (value.startsWith("/")) return value;
-    return `/${value.replace(/^\/+/, "")}`;
+    let normalized = value;
+    if (normalized.startsWith("/api/images/")) {
+      normalized = `/api/video-server/images/${normalized.slice("/api/images/".length)}`;
+    } else if (!/^https?:\/\//i.test(normalized) && normalized.startsWith("/images/")) {
+      normalized = `/api/video-server${normalized}`;
+    } else if (!/^https?:\/\//i.test(normalized) && !normalized.startsWith("/")) {
+      normalized = `/${normalized.replace(/^\/+/, "")}`;
+    }
+    return resolveMediaUrlForCurrentOrigin(normalized);
   }, []);
+
+  const resolveRenderableImageUrl = useCallback(async (rawUrl: string, retries = 5, delayMs = 500) => {
+    const baseUrl = String(rawUrl || "").trim();
+    if (!baseUrl) return "";
+    for (let attempt = 0; attempt < retries; attempt++) {
+      const tryUrl = withCacheBust(baseUrl, `${Date.now()}-${attempt}`);
+      try {
+        const response = await fetch(tryUrl, { cache: "no-store" });
+        if (response.ok) {
+          const blob = await response.blob();
+          if (blob.size > 0) {
+            return URL.createObjectURL(blob);
+          }
+        }
+      } catch {
+        // retry
+      }
+      if (attempt < retries - 1) {
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+      }
+    }
+    return "";
+  }, [withCacheBust]);
 
   const fetchConnectedVehicles = useCallback(async () => {
     const response = await fetch("/api/video-server/vehicles/connected");
@@ -216,9 +254,29 @@ export default function ScreenshotsDashboardTab({ detachable = true }: Screensho
       const validRows = rows
         .map((row: ScreenshotItem) => ({
           ...row,
-          storage_url: toDisplayUrl(row.storage_url),
+          storage_url: withCacheBust(
+            toDisplayUrl(row.storage_url),
+            row.timestamp || row.id || Date.now()
+          ),
+          display_url: withCacheBust(
+            toDisplayUrl(row.storage_url),
+            row.timestamp || row.id || Date.now()
+          ),
         }))
         .filter((row: ScreenshotItem) => row.storage_url && row.storage_url.length > 0);
+
+      console.info("[Screenshots] Recent feed rows", {
+        totalRows: rows.length,
+        validRows: validRows.length,
+        rows: rows.map((row: ScreenshotItem) => ({
+          id: row.id,
+          deviceId: row.device_id,
+          channel: row.channel ?? 1,
+          timestamp: row.timestamp,
+          rawUrl: row.storage_url,
+          displayUrl: toDisplayUrl(row.storage_url),
+        })),
+      });
 
       setScreenshots(validRows);
       setLastRefresh(new Date());
@@ -257,10 +315,57 @@ export default function ScreenshotsDashboardTab({ detachable = true }: Screensho
         payload?.message ||
         ""
       ).trim();
+      const returnedUrl = String(
+        payload?.storage_url ||
+        payload?.screenshot?.storage_url ||
+        payload?.screenshot?.url ||
+        payload?.url ||
+        ""
+      ).trim();
+      const imageId = String(payload?.fallback?.imageId || payload?.imageId || "").trim();
+      const immediateImageUrl = returnedUrl
+        ? withCacheBust(toDisplayUrl(returnedUrl))
+        : imageId
+          ? withCacheBust(`/api/video-server/images/${encodeURIComponent(imageId)}/file`)
+          : "";
+
+      console.info("[Screenshots] Capture response", {
+        requestedVehicleId: target.vehicleId,
+        candidateId,
+        channel: target.channel,
+        status: response.status,
+        ok: response.ok,
+        success: payload?.success,
+        fallbackOk: payload?.fallback?.ok,
+        fallbackReason,
+        returnedUrl,
+        imageId,
+        immediateImageUrl,
+        payload,
+      });
 
       if (response.ok) {
         const fallbackOk = payload?.fallback?.ok !== false;
         const success = payload?.success !== false && fallbackOk;
+        if (success && immediateImageUrl) {
+          const renderableUrl = await resolveRenderableImageUrl(immediateImageUrl);
+          setScreenshots((current) => {
+            const nextShot: ScreenshotItem = {
+              id: imageId || `optimistic-${candidateId}-${target.channel}-${Date.now()}`,
+              device_id: candidateId || target.vehicleId,
+              channel: target.channel,
+              storage_url: immediateImageUrl,
+              display_url: renderableUrl || immediateImageUrl,
+              timestamp: new Date().toISOString(),
+            };
+            const filtered = current.filter((row) => {
+              const sameDevice = String(row.device_id || "").trim() === String(nextShot.device_id || "").trim();
+              const sameChannel = Number(row.channel || 1) === Number(nextShot.channel || 1);
+              return !(sameDevice && sameChannel);
+            });
+            return [nextShot, ...filtered];
+          });
+        }
         captureAvailabilityRef.current.set(targetKey, {
           failedAt: success ? undefined : Date.now(),
           reason: success ? undefined : (fallbackReason || "Screenshot request did not produce an image"),
@@ -552,9 +657,39 @@ export default function ScreenshotsDashboardTab({ detachable = true }: Screensho
                         <div className="relative aspect-video bg-slate-900">
                           {shot?.storage_url ? (
                             <img
-                              src={shot.storage_url}
+                              src={shot.display_url || shot.storage_url}
                               alt={`Vehicle ${card.vehicleId} channel ${channelCard.channel}`}
                               className="h-full w-full object-cover"
+                              onLoad={() => {
+                                console.info("[Screenshots] Image loaded", {
+                                  vehicleId: card.vehicleId,
+                                  channel: channelCard.channel,
+                                  url: shot.display_url || shot.storage_url,
+                                });
+                              }}
+                              onError={() => {
+                                console.error("[Screenshots] Image failed to load", {
+                                  vehicleId: card.vehicleId,
+                                  channel: channelCard.channel,
+                                  url: shot.display_url || shot.storage_url,
+                                });
+                              }}
+                              ref={(img) => {
+                                if (!img) return;
+                                img.onerror = () => {
+                                  const attemptedRetry = img.dataset.retryAttempted === "true";
+                                  if (!attemptedRetry) {
+                                    img.dataset.retryAttempted = "true";
+                                    img.src = withCacheBust(shot.display_url || shot.storage_url || "", Date.now());
+                                    return;
+                                  }
+                                  console.error("[Screenshots] Image failed after retry", {
+                                    vehicleId: card.vehicleId,
+                                    channel: channelCard.channel,
+                                    url: shot.display_url || shot.storage_url,
+                                  });
+                                };
+                              }}
                             />
                           ) : (
                             <div className="flex h-full items-center justify-center text-slate-500">

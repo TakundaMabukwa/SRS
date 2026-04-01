@@ -1,5 +1,7 @@
 'use client'
 
+import { normalizeBackendMediaUrl, resolveMediaUrlForCurrentOrigin } from '@/lib/video-alert-playback'
+
 export interface ReportAlertDetails {
   id?: string
   type?: string
@@ -13,6 +15,7 @@ export interface ReportAlertDetails {
 export interface ReportDriverInfo {
   name: string
   fleetNumber: string
+  registration?: string
   department?: string
   timestamp: string
   location?: string
@@ -34,14 +37,24 @@ export type VideoInput = {
   path?: string
 }
 
+export interface SavedAlertArtifact {
+  documentUrl: string
+  documentName: string
+  documentType: string
+  bundleUrl?: string
+  closurePayload: Record<string, any>
+}
+
 export function resolveReportLocationText(
   location: ReportAlertDetails['location'],
   fallback?: string
 ): string {
   if (typeof location === 'string' && location.trim()) return location.trim()
-  if (location?.address) return String(location.address)
-  if (location?.latitude !== undefined && location?.longitude !== undefined) {
-    return `${location.latitude}, ${location.longitude}`
+  const locationObject =
+    location && typeof location === 'object' ? location : undefined
+  if (locationObject?.address) return String(locationObject.address)
+  if (locationObject?.latitude !== undefined && locationObject?.longitude !== undefined) {
+    return `${locationObject.latitude}, ${locationObject.longitude}`
   }
   return fallback || 'Unknown location'
 }
@@ -53,7 +66,8 @@ export function normalizeReportScreenshots(
   const out: Array<{ url: string; timestamp?: string }> = []
   const seen = new Set<string>()
   for (const shot of screenshots) {
-    const url = String(shot?.url || shot?.storage_url || shot?.signed_url || shot?.image_url || '').trim()
+    const rawUrl = String(shot?.url || shot?.storage_url || shot?.signed_url || shot?.image_url || '').trim()
+    const url = toResolvedMediaUrl(rawUrl)
     if (!url || (!/^https?:\/\//i.test(url) && !url.startsWith('/'))) continue
     if (seen.has(url)) continue
     seen.add(url)
@@ -69,13 +83,188 @@ export function normalizeReportVideos(
   const out: Array<{ key?: string; label?: string; url?: string }> = []
   const seen = new Set<string>()
   for (const video of videos) {
-    const url = String(video?.url || video?.src || video?.path || '').trim()
+    const rawUrl = String(video?.url || video?.src || video?.path || '').trim()
+    const url = toResolvedMediaUrl(rawUrl)
     if (!url || (!/^https?:\/\//i.test(url) && !url.startsWith('/'))) continue
     if (seen.has(url)) continue
     seen.add(url)
     out.push({ key: video?.key, label: video?.label, url })
   }
   return out
+}
+
+function sanitizePathSegment(value: string): string {
+  return String(value || '')
+    .trim()
+    .replace(/[^a-z0-9._-]+/gi, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '') || 'artifact'
+}
+
+function toResolvedMediaUrl(url?: string): string {
+  const clean = String(url || '').trim()
+  if (!clean) return ''
+  try {
+    if (/^https?:\/\//i.test(clean)) {
+      const parsed = new URL(clean)
+      if (parsed.pathname.startsWith('/api/video-server/')) {
+        return resolveMediaUrlForCurrentOrigin(`${parsed.pathname}${parsed.search || ''}`)
+      }
+      if (parsed.pathname.startsWith('/api/')) {
+        return resolveMediaUrlForCurrentOrigin(`/api/video-server${parsed.pathname.slice(4)}${parsed.search || ''}`)
+      }
+    }
+  } catch {
+    // Fall through to standard normalization.
+  }
+  return resolveMediaUrlForCurrentOrigin(normalizeBackendMediaUrl(clean))
+}
+
+export function getReportVehicleDisplayText(driverInfo: ReportDriverInfo): string {
+  const fleet = String(driverInfo.fleetNumber || '').trim()
+  const registration = String(driverInfo.registration || '').trim()
+  if (fleet && registration && fleet !== registration) {
+    return `${fleet} - ${registration}`
+  }
+  return fleet || registration || 'N/A'
+}
+
+export function buildAlertEvidencePayload(
+  driverInfo: ReportDriverInfo,
+  alertDetails?: ReportAlertDetails,
+  extras?: Record<string, any>
+): Record<string, any> {
+  const screenshots = normalizeReportScreenshots(alertDetails?.screenshots).map((shot, index) => ({
+    index: index + 1,
+    url: toResolvedMediaUrl(shot.url),
+    timestamp: shot.timestamp || null,
+  }))
+  const videos = normalizeReportVideos(alertDetails?.videos).map((video, index) => ({
+    index: index + 1,
+    key: video.key || null,
+    label: video.label || `Video ${index + 1}`,
+    url: toResolvedMediaUrl(video.url),
+  }))
+
+  return {
+    alertId: alertDetails?.id || null,
+    alertType: alertDetails?.type || null,
+    severity: alertDetails?.severity || null,
+    timestamp: alertDetails?.timestamp || driverInfo.timestamp || null,
+    vehicle: getReportVehicleDisplayText(driverInfo),
+    fleetNumber: driverInfo.fleetNumber || null,
+    vehicleRegistration: driverInfo.registration || null,
+    driver: driverInfo.name || null,
+    department: driverInfo.department || null,
+    locationText: resolveReportLocationText(alertDetails?.location, driverInfo.location),
+    screenshots,
+    screenshotCount: screenshots.length,
+    videos,
+    videoCount: videos.length,
+    ...extras,
+  }
+}
+
+export async function saveAlertArtifactBundle({
+  supabase,
+  storageBucket = 'reports',
+  fileName,
+  pdfBlob,
+  reportType,
+  driverInfo,
+  alertDetails,
+  priority = 'High',
+  extraPayload,
+}: {
+  supabase: any
+  storageBucket?: string
+  fileName: string
+  pdfBlob: Blob
+  reportType: string
+  driverInfo: ReportDriverInfo
+  alertDetails?: ReportAlertDetails
+  priority?: string
+  extraPayload?: Record<string, any>
+}): Promise<SavedAlertArtifact> {
+  const baseName = fileName.replace(/\.pdf$/i, '')
+  const safeBaseName = sanitizePathSegment(baseName)
+
+  const { error: uploadError } = await supabase.storage
+    .from(storageBucket)
+    .upload(fileName, pdfBlob, { contentType: 'application/pdf' })
+  if (uploadError) throw uploadError
+
+  const { data: publicData } = supabase.storage.from(storageBucket).getPublicUrl(fileName)
+  const documentUrl = publicData?.publicUrl || ''
+
+  const closurePayload: Record<string, any> = buildAlertEvidencePayload(driverInfo, alertDetails, {
+    reportType,
+    priority,
+    documentUrl,
+    documentName: fileName,
+    documentType: reportType,
+    ...extraPayload,
+  })
+
+  let bundleUrl = ''
+  try {
+    const bundleName = `${safeBaseName}.json`
+    const bundleBlob = new Blob([JSON.stringify(closurePayload, null, 2)], {
+      type: 'application/json',
+    })
+    const { error: bundleError } = await supabase.storage
+      .from(storageBucket)
+      .upload(bundleName, bundleBlob, {
+        contentType: 'application/json',
+        upsert: true,
+      })
+    if (!bundleError) {
+      const { data: bundlePublicData } = supabase.storage.from(storageBucket).getPublicUrl(bundleName)
+      bundleUrl = bundlePublicData?.publicUrl || ''
+      closurePayload.bundleUrl = bundleUrl
+    }
+  } catch (error) {
+    console.warn('Failed to save alert artifact bundle:', error)
+  }
+
+  const richInsert = {
+    vehicle_registration: driverInfo.registration || driverInfo.fleetNumber,
+    driver_name: driverInfo.name,
+    priority,
+    report_type: reportType,
+    document_url: documentUrl,
+  }
+
+  try {
+    const { error: richInsertError } = await supabase.from('reports').insert(richInsert)
+    if (richInsertError) {
+      const { error: fallbackInsertError } = await supabase.from('reports').insert({
+        url: documentUrl,
+      })
+      if (fallbackInsertError) {
+        console.warn('Failed to index saved report in reports table:', {
+          richInsertError,
+          fallbackInsertError,
+          documentUrl,
+          reportType,
+        })
+      }
+    }
+  } catch (error) {
+    console.warn('Unexpected reports table insert failure:', {
+      error,
+      documentUrl,
+      reportType,
+    })
+  }
+
+  return {
+    documentUrl,
+    documentName: fileName,
+    documentType: reportType,
+    bundleUrl,
+    closurePayload,
+  }
 }
 
 export function formatReportDate(timestamp?: string): string {
@@ -97,4 +286,52 @@ export function formatReportDateTime(timestamp?: string): string {
   const date = new Date(timestamp)
   if (Number.isNaN(date.getTime())) return ''
   return date.toLocaleString('en-GB')
+}
+
+function sanitizeOklchStyles(doc: Document) {
+  const fallbackMap: Record<string, string> = {
+    color: '#000000',
+    backgroundColor: '#ffffff',
+    borderColor: '#000000',
+    outlineColor: '#000000',
+    textDecorationColor: '#000000',
+    columnRuleColor: '#000000',
+  }
+
+  doc.querySelectorAll('style').forEach((styleEl) => {
+    const cssText = styleEl.textContent || ''
+    if (cssText.includes('oklch(')) {
+      styleEl.textContent = cssText.replace(/oklch\([^)]+\)/g, '#000000')
+    }
+  })
+
+  doc.querySelectorAll<HTMLElement>('*').forEach((el) => {
+    const computed = window.getComputedStyle(el)
+    for (const [prop, fallback] of Object.entries(fallbackMap)) {
+      const value = computed[prop as keyof CSSStyleDeclaration]
+      if (typeof value === 'string' && value.includes('oklch(')) {
+        ;(el.style as any)[prop] = fallback
+      }
+    }
+    if (typeof computed.boxShadow === 'string' && computed.boxShadow.includes('oklch(')) {
+      el.style.boxShadow = 'none'
+    }
+    if (typeof computed.textShadow === 'string' && computed.textShadow.includes('oklch(')) {
+      el.style.textShadow = 'none'
+    }
+  })
+}
+
+export function getSafeHtml2CanvasOptions(element: HTMLElement) {
+  return {
+    scale: 2,
+    useCORS: true,
+    logging: false,
+    backgroundColor: '#ffffff',
+    windowWidth: element.scrollWidth,
+    windowHeight: element.scrollHeight,
+    onclone: (clonedDoc: Document) => {
+      sanitizeOklchStyles(clonedDoc)
+    },
+  }
 }

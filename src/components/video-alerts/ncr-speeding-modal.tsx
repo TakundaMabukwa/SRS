@@ -6,19 +6,23 @@ import { Button } from '@/components/ui/button'
 import { Printer, X } from 'lucide-react'
 import EvidenceAnnexure from '@/components/video-alerts/evidence-annexure'
 import {
+  getSafeHtml2CanvasOptions,
   ReportAlertDetails as AlertDetails,
   normalizeReportScreenshots,
   normalizeReportVideos,
   resolveReportLocationText,
+  SavedAlertArtifact,
+  saveAlertArtifactBundle,
 } from '@/components/video-alerts/report-support'
 
 interface SpeedingModalProps {
   isOpen: boolean
   onClose: () => void
-  onSaved?: () => void | Promise<void>
+  onSaved?: (artifact?: SavedAlertArtifact) => void | Promise<void>
   driverInfo: {
     name: string
     fleetNumber: string
+    registration?: string
     department?: string
     timestamp: string
     location?: string
@@ -106,7 +110,7 @@ export default function NCRSpeedingModal({ isOpen, onClose, onSaved, driverInfo,
 
       const html2canvas = (await import('html2canvas')).default
       const jsPDF = (await import('jspdf')).default
-      const canvas = await html2canvas(element, { scale: 2, useCORS: true, logging: false, backgroundColor: '#ffffff' })
+      const canvas = await html2canvas(element, getSafeHtml2CanvasOptions(element))
       const imgData = canvas.toDataURL('image/png')
       const pdf = new jsPDF('p', 'mm', 'a4')
       const width = pdf.internal.pageSize.getWidth()
@@ -116,20 +120,15 @@ export default function NCRSpeedingModal({ isOpen, onClose, onSaved, driverInfo,
       const fileName = `ncr-speeding-${driverInfo.fleetNumber}-${Date.now()}.pdf`
       pdf.save(fileName)
 
-      const { error: uploadError } = await supabase.storage.from('reports').upload(fileName, blob, { contentType: 'application/pdf' })
-      if (uploadError) throw uploadError
-      const { data: publicData } = supabase.storage.from('reports').getPublicUrl(fileName)
-      const publicUrl = publicData?.publicUrl || ''
-
-      const { error: dbError } = await supabase.from('reports').insert({
-        vehicle_registration: driverInfo.fleetNumber,
-        driver_name: driverInfo.name,
-        priority: 'High',
-        report_type: 'NCR_SPEEDING',
-        document_url: publicUrl
+      const artifact = await saveAlertArtifactBundle({
+        supabase,
+        fileName,
+        pdfBlob: blob,
+        reportType: 'NCR_SPEEDING',
+        driverInfo,
+        alertDetails,
       })
-      if (dbError) throw dbError
-      if (onSaved) await onSaved()
+      if (onSaved) await onSaved(artifact)
       onClose()
     } catch (err) {
       console.error('Error saving NCR speeding report:', err)
@@ -205,6 +204,12 @@ export default function NCRSpeedingModal({ isOpen, onClose, onSaved, driverInfo,
                   <div className="col-span-2 border-r border-black p-2">{driverInfo.fleetNumber}</div>
                   <div className="col-span-1 border-r border-black p-2 bg-slate-100">Area</div>
                   <div className="col-span-3 p-2">Road Network</div>
+                </div>
+                <div className="grid grid-cols-8 border-b border-black text-sm">
+                  <div className="col-span-2 border-r border-black p-2 bg-slate-100">Vehicle Registration</div>
+                  <div className="col-span-2 border-r border-black p-2">{driverInfo.registration || 'N/A'}</div>
+                  <div className="col-span-1 border-r border-black p-2 bg-slate-100">Alert ID</div>
+                  <div className="col-span-3 p-2">{alertDetails?.id || 'N/A'}</div>
                 </div>
                 <div className="border-b border-black p-2 font-bold bg-slate-100">Classification Of Non-Conformance</div>
                 <div className="grid grid-cols-6 border-b border-black text-sm">
