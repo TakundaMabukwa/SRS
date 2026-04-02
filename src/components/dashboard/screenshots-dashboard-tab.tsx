@@ -323,8 +323,11 @@ export default function ScreenshotsDashboardTab({ detachable = true }: Screensho
         ""
       ).trim();
       const imageId = String(payload?.fallback?.imageId || payload?.imageId || "").trim();
-      const immediateImageUrl = returnedUrl
-        ? withCacheBust(toDisplayUrl(returnedUrl))
+      const liveFrameUrl = String(payload?.liveFrameUrl || "").trim();
+      const immediateImageUrl = liveFrameUrl
+        ? withCacheBust(toDisplayUrl(liveFrameUrl))
+        : returnedUrl
+          ? withCacheBust(toDisplayUrl(returnedUrl))
         : imageId
           ? withCacheBust(`/api/video-server/images/${encodeURIComponent(imageId)}/file`)
           : "";
@@ -340,6 +343,7 @@ export default function ScreenshotsDashboardTab({ detachable = true }: Screensho
         fallbackReason,
         returnedUrl,
         imageId,
+        liveFrameUrl,
         immediateImageUrl,
         payload,
       });
