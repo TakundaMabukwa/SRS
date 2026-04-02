@@ -37,7 +37,6 @@ type ScreenshotItem = {
 type CaptureTarget = {
   vehicleId: string;
   channel: number;
-  fallbackVehicleIds?: string[];
 };
 
 type VehicleChannelCard = {
@@ -77,6 +76,21 @@ function parseDate(value?: string): number {
   return Number.isNaN(parsed) ? 0 : parsed;
 }
 
+function mergeLatestScreenshots(current: ScreenshotItem[], incoming: ScreenshotItem[]): ScreenshotItem[] {
+  const byKey = new Map<string, ScreenshotItem>();
+  for (const shot of [...current, ...incoming]) {
+    const deviceId = String(shot.device_id || "").trim();
+    const channel = Number(shot.channel || 1);
+    const uniqueId = String(shot.id || "").trim();
+    const key = deviceId ? `${deviceId}:${channel}` : `id:${uniqueId || Math.random()}`;
+    const existing = byKey.get(key);
+    if (!existing || parseDate(shot.timestamp) >= parseDate(existing.timestamp)) {
+      byKey.set(key, shot);
+    }
+  }
+  return Array.from(byKey.values()).sort((a, b) => parseDate(b.timestamp) - parseDate(a.timestamp));
+}
+
 function buildTargets(vehicles: ConnectedVehicle[]): CaptureTarget[] {
   const targets: CaptureTarget[] = [];
   const seen = new Set<string>();
@@ -95,9 +109,6 @@ function buildTargets(vehicles: ConnectedVehicle[]): CaptureTarget[] {
       const target = {
         vehicleId,
         channel,
-        fallbackVehicleIds: Array.from(
-          new Set([vehicle.id, vehicle.phone].map((value) => String(value || "").trim()).filter(Boolean))
-        ),
       };
       const key = toTargetKey(target);
       if (!seen.has(key)) {
@@ -188,7 +199,7 @@ export default function ScreenshotsDashboardTab({ detachable = true }: Screensho
   }, [withCacheBust]);
 
   const fetchConnectedVehicles = useCallback(async () => {
-    const response = await fetch("/api/video-server/vehicles/connected");
+    const response = await fetch("/api/video-server/vehicles/connected", { cache: "no-store" });
     if (!response.ok) {
       throw new Error("Failed to load connected vehicles");
     }
@@ -278,7 +289,7 @@ export default function ScreenshotsDashboardTab({ detachable = true }: Screensho
         })),
       });
 
-      setScreenshots(validRows);
+      setScreenshots((current) => mergeLatestScreenshots(current, validRows));
       setLastRefresh(new Date());
       return validRows as ScreenshotItem[];
     } catch {
@@ -294,9 +305,7 @@ export default function ScreenshotsDashboardTab({ detachable = true }: Screensho
       return false;
     }
 
-    const candidateVehicleIds = Array.from(
-      new Set([target.vehicleId, ...(target.fallbackVehicleIds || [])].map((value) => String(value || "").trim()).filter(Boolean))
-    );
+    const candidateVehicleIds = [String(target.vehicleId || "").trim()].filter(Boolean);
 
     for (const candidateId of candidateVehicleIds) {
       const response = await fetch(`/api/video-server/vehicles/${candidateId}/screenshot`, {
@@ -362,12 +371,7 @@ export default function ScreenshotsDashboardTab({ detachable = true }: Screensho
               display_url: renderableUrl || immediateImageUrl,
               timestamp: new Date().toISOString(),
             };
-            const filtered = current.filter((row) => {
-              const sameDevice = String(row.device_id || "").trim() === String(nextShot.device_id || "").trim();
-              const sameChannel = Number(row.channel || 1) === Number(nextShot.channel || 1);
-              return !(sameDevice && sameChannel);
-            });
-            return [nextShot, ...filtered];
+            return mergeLatestScreenshots(current, [nextShot]);
           });
         }
         captureAvailabilityRef.current.set(targetKey, {
@@ -421,14 +425,13 @@ export default function ScreenshotsDashboardTab({ detachable = true }: Screensho
     try {
       await fetchConnectedVehicles();
       await fetchRecentScreenshots();
-      await runCaptureCycle();
     } catch {
       setError("Unable to refresh screenshot monitor right now.");
     } finally {
       setRefreshing(false);
       setLoading(false);
     }
-  }, [fetchConnectedVehicles, fetchRecentScreenshots, runCaptureCycle]);
+  }, [fetchConnectedVehicles, fetchRecentScreenshots]);
 
   const handleWsMessage = useCallback(
     (data: { type?: string }) => {
@@ -451,9 +454,6 @@ export default function ScreenshotsDashboardTab({ detachable = true }: Screensho
     const boot = async () => {
       try {
         await refreshAll();
-        if (active) {
-          await runCaptureCycle();
-        }
       } finally {
         if (active) {
           setLoading(false);
@@ -464,14 +464,7 @@ export default function ScreenshotsDashboardTab({ detachable = true }: Screensho
     return () => {
       active = false;
     };
-  }, [refreshAll, runCaptureCycle]);
-
-  useEffect(() => {
-    const captureInterval = setInterval(() => {
-      void runCaptureCycle();
-    }, 30000);
-    return () => clearInterval(captureInterval);
-  }, [runCaptureCycle]);
+  }, [refreshAll]);
 
   useEffect(() => {
     const pollingInterval = setInterval(() => {
@@ -479,13 +472,6 @@ export default function ScreenshotsDashboardTab({ detachable = true }: Screensho
     }, 8000);
     return () => clearInterval(pollingInterval);
   }, [fetchRecentScreenshots]);
-
-  useEffect(() => {
-    const vehiclesInterval = setInterval(() => {
-      void fetchConnectedVehicles();
-    }, 60000);
-    return () => clearInterval(vehiclesInterval);
-  }, [fetchConnectedVehicles]);
 
   const connectedVehicles = useMemo(
     () => vehicles.filter((vehicle) => vehicle.connected !== false),
@@ -561,7 +547,7 @@ export default function ScreenshotsDashboardTab({ detachable = true }: Screensho
               </div>
               <h2 className="mt-3 text-3xl font-bold tracking-tight">Screenshot Control Room</h2>
               <p className="mt-1 text-sm text-slate-300">
-                Per-vehicle camera snapshots with auto-capture and live refresh.
+                Server-backed snapshots from connected live channels with live refresh.
               </p>
             </div>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
