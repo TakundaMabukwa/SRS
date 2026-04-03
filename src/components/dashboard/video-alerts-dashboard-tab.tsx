@@ -45,6 +45,98 @@ type VideoAlertsDashboardTabProps = {
   suspendBackgroundWork?: boolean;
 };
 
+type VehicleIdentity = {
+  plate: string;
+  fleetNumber: string;
+};
+
+type StructuredAlertDomain = "ADAS" | "DMS";
+
+type AlertNameMapping = {
+  title: string;
+  domain?: StructuredAlertDomain;
+  code?: number;
+};
+
+const SIGNAL_CODE_MAP: Record<string, AlertNameMapping> = {
+  platform_video_alarm_0101: { title: "Video Signal Lost", code: 0x0101 },
+  platform_video_alarm_0102: { title: "Video Signal Occlusion", code: 0x0102 },
+  platform_video_alarm_0103: { title: "Storage Failure", code: 0x0103 },
+  platform_video_alarm_0104: { title: "Other Video Equipment Failure", code: 0x0104 },
+  platform_video_alarm_0105: { title: "Passenger Overload", code: 0x0105 },
+  platform_video_alarm_0106: { title: "Abnormal Driving Behavior", code: 0x0106 },
+  platform_video_alarm_0107: { title: "Special Alarm Recording Threshold", code: 0x0107 },
+  jtt1078_storage_failure: { title: "Storage Failure", code: 0x0103 },
+};
+
+const STRUCTURED_ALERT_TITLE_MAP: Record<StructuredAlertDomain, Record<number, string>> = {
+  ADAS: {
+    1: "ADAS: Forward Collision Alert",
+    2: "ADAS: Lane Departure Alert",
+    3: "ADAS: Too Close Distance Alert",
+    4: "ADAS: Pedestrian Collision Alert",
+    5: "ADAS: Frequent Lane Change Alert",
+    6: "ADAS: Road Sign Exceedance Alert",
+    7: "ADAS: Obstacle Alert",
+    16: "ADAS: Road Sign Recognition Event",
+    17: "ADAS: Active Snapshot Event",
+  },
+  DMS: {
+    1: "DMS: Fatigue Driving Alert",
+    2: "DMS: Calling Alert",
+    3: "DMS: Smoking Alert",
+    4: "DMS: Distracted Driving Alert",
+    5: "DMS: Driver Abnormality Alert",
+    6: "DMS: Steering Wheel Alert",
+    7: "DMS: Infrared Blocking",
+    8: "DMS: Seat Belt Alert",
+    10: "DMS: Device Blocking",
+    13: "DMS: Play Phone",
+    16: "DMS: Automatic Snapshot Event",
+    17: "DMS: Driver Change Event",
+  },
+};
+
+const OFFICIAL_ALERT_ALIAS_MAP: Record<string, AlertNameMapping> = {
+  "adas: forward collision alert": { title: "ADAS: Forward Collision Alert", domain: "ADAS", code: 1 },
+  "adas: lane departure alert": { title: "ADAS: Lane Departure Alert", domain: "ADAS", code: 2 },
+  "adas: too close distance alert": { title: "ADAS: Too Close Distance Alert", domain: "ADAS", code: 3 },
+  "adas: pedestrian collision alert": { title: "ADAS: Pedestrian Collision Alert", domain: "ADAS", code: 4 },
+  "adas: frequent lane change alert": { title: "ADAS: Frequent Lane Change Alert", domain: "ADAS", code: 5 },
+  "adas: road sign exceedance alert": { title: "ADAS: Road Sign Exceedance Alert", domain: "ADAS", code: 6 },
+  "adas: obstruction alarm": { title: "ADAS: Obstacle Alert", domain: "ADAS", code: 7 },
+  "adas: road sign identification event": { title: "ADAS: Road Sign Recognition Event", domain: "ADAS", code: 16 },
+  "adas: active capture event": { title: "ADAS: Active Snapshot Event", domain: "ADAS", code: 17 },
+  "adas: forward collision warning": { title: "ADAS: Forward Collision Alert", domain: "ADAS", code: 1 },
+  "adas: lane departure alarm": { title: "ADAS: Lane Departure Alert", domain: "ADAS", code: 2 },
+  "adas: following distance too close": { title: "ADAS: Too Close Distance Alert", domain: "ADAS", code: 3 },
+  "adas: pedestrian collision alarm": { title: "ADAS: Pedestrian Collision Alert", domain: "ADAS", code: 4 },
+  "adas: frequent lane change alarm": { title: "ADAS: Frequent Lane Change Alert", domain: "ADAS", code: 5 },
+  "adas: road sign over-limit alarm": { title: "ADAS: Road Sign Exceedance Alert", domain: "ADAS", code: 6 },
+  "dms: fatigue driving alert": { title: "DMS: Fatigue Driving Alert", domain: "DMS", code: 1 },
+  "dms: fatigue driving alarm": { title: "DMS: Fatigue Driving Alert", domain: "DMS", code: 1 },
+  "dms: calling alert": { title: "DMS: Calling Alert", domain: "DMS", code: 2 },
+  "dms: handheld phone alarm": { title: "DMS: Calling Alert", domain: "DMS", code: 2 },
+  "dms: smoking alert": { title: "DMS: Smoking Alert", domain: "DMS", code: 3 },
+  "dms: smoking alarm": { title: "DMS: Smoking Alert", domain: "DMS", code: 3 },
+  "dms: distracted driving alert": { title: "DMS: Distracted Driving Alert", domain: "DMS", code: 4 },
+  "dms: driver abnormal alarm": { title: "DMS: Driver Abnormality Alert", domain: "DMS", code: 5 },
+  "dms: steering wheel alert": { title: "DMS: Steering Wheel Alert", domain: "DMS", code: 6 },
+  "dms: infrared blocking": { title: "DMS: Infrared Blocking", domain: "DMS", code: 7 },
+  "dms: seat belt alert": { title: "DMS: Seat Belt Alert", domain: "DMS", code: 8 },
+  "dms: device blocking": { title: "DMS: Device Blocking", domain: "DMS", code: 10 },
+  "dms: play phone": { title: "DMS: Play Phone", domain: "DMS", code: 13 },
+  "dms: automatic capture event": { title: "DMS: Automatic Snapshot Event", domain: "DMS", code: 16 },
+  "dms: driver change event": { title: "DMS: Driver Change Event", domain: "DMS", code: 17 },
+  "storage failure": { title: "Storage Failure", code: 0x0103 },
+  "main memory fault": { title: "Main Memory Fault" },
+  "video signal lost": { title: "Video Signal Lost", code: 0x0101 },
+  "video signal occlusion": { title: "Video Signal Occlusion", code: 0x0102 },
+  "other video equipment failure": { title: "Other Video Equipment Failure", code: 0x0104 },
+  "passenger overload": { title: "Passenger Overload", code: 0x0105 },
+  "special alarm recording threshold": { title: "Special Alarm Recording Threshold", code: 0x0107 },
+};
+
 const MIN_READY_VIDEO_BYTES = 500 * 1024;
 const MAX_EXACT_READY_CHECKS = 12;
 
@@ -73,6 +165,7 @@ export default function VideoAlertsDashboardTab({
   const [pinnedHistoryAlerts, setPinnedHistoryAlerts] = useState<any[]>([]);
   const [videoAvailability, setVideoAvailability] = useState<Record<string, boolean>>({});
   const [exactVideoReady, setExactVideoReady] = useState<Record<string, boolean>>({});
+  const [vehicleIdentityLookup, setVehicleIdentityLookup] = useState<Map<string, VehicleIdentity>>(new Map());
   const [popoutTargets, setPopoutTargets] = useState<Record<string, HTMLElement | null>>({});
   const popoutTargetsRef = useRef<Record<string, HTMLElement | null>>({});
   const availabilityCacheRef = useRef<Map<string, any[]>>(new Map());
@@ -80,60 +173,168 @@ export default function VideoAlertsDashboardTab({
   const exactReadyCacheRef = useRef<Map<string, boolean>>(new Map());
   const pendingExactReadyIdsRef = useRef<Set<string>>(new Set());
 
+  const getStructuredAlertMapping = useCallback((value: string) => {
+    const text = String(value || "").trim();
+    if (!text) return null;
+
+    const signalMapped = SIGNAL_CODE_MAP[text];
+    if (signalMapped) {
+      return {
+        title: signalMapped.title,
+        domain: signalMapped.domain || null,
+        code: signalMapped.code ?? null,
+        level: null,
+      };
+    }
+
+    const structuredMatch = text.match(/^(ADAS|DMS)\s+Alert\s+Type\s+(\d+)(?:\s*\(Level\s*(\d+)\))?$/i);
+    if (structuredMatch) {
+      const domain = structuredMatch[1].toUpperCase() as StructuredAlertDomain;
+      const code = Number(structuredMatch[2]);
+      const level = structuredMatch[3] ? Number(structuredMatch[3]) : null;
+      return {
+        title: STRUCTURED_ALERT_TITLE_MAP[domain]?.[code] || `${domain} Alert Type ${code}`,
+        domain,
+        code,
+        level,
+      };
+    }
+
+    const alias = OFFICIAL_ALERT_ALIAS_MAP[text.toLowerCase()];
+    if (alias) {
+      return {
+        title: alias.title,
+        domain: alias.domain || null,
+        code: alias.code ?? null,
+        level: null,
+      };
+    }
+
+    return null;
+  }, []);
+
+  const getAlertPresentation = useCallback((incoming: any) => {
+    const metadata = incoming?.metadata || {};
+    const candidateValues = [
+      incoming?.title,
+      incoming?.alert_type,
+      incoming?.type,
+      metadata?.primaryAlertType,
+      ...(Array.isArray(metadata?.alertSignalDetails) ? metadata.alertSignalDetails.map((detail: any) => detail?.label) : []),
+      ...(Array.isArray(metadata?.alertSignals) ? metadata.alertSignals : []),
+      ...(Array.isArray(metadata?.alertSignalDetails) ? metadata.alertSignalDetails.map((detail: any) => detail?.code) : []),
+    ]
+      .map((value) => String(value || "").trim())
+      .filter(Boolean);
+
+    const silent = candidateValues.some((value) => /abnormal\s+driving/i.test(value));
+    if (silent) {
+      return {
+        title: "",
+        typeLabel: "",
+        codeLabel: "",
+        silent: true,
+      };
+    }
+
+    for (const value of candidateValues) {
+      const structured = getStructuredAlertMapping(value);
+      if (!structured) continue;
+      const codeLabel = structured.domain && structured.code
+        ? `${structured.domain} code ${structured.code}${structured.level !== null ? ` • Level ${structured.level}` : ""}`
+        : structured.code
+          ? `Code ${structured.code}`
+        : "";
+      return {
+        title: structured.title,
+        typeLabel: structured.title,
+        codeLabel,
+        silent: false,
+      };
+    }
+
+    const fallback = candidateValues[0] || "Alert";
+    return {
+      title: fallback,
+      typeLabel: fallback,
+      codeLabel: "",
+      silent: false,
+    };
+  }, [getStructuredAlertMapping]);
+
+  const getAlertVehicleIdentifiers = useCallback((incoming: any) => {
+    const vehicleMeta = incoming?.metadata?.vehicle || incoming?.vehicle || {};
+    return Array.from(
+      new Set(
+        [
+          incoming?.vehicleId,
+          incoming?.device_id,
+          incoming?.vehicle_id,
+          vehicleMeta?.vehicleId,
+          vehicleMeta?.terminalId,
+        ]
+          .map((value) => String(value || "").trim())
+          .filter(Boolean)
+      )
+    );
+  }, []);
+
+  const resolveVehicleIdentity = useCallback((incoming: any) => {
+    const identifiers = getAlertVehicleIdentifiers(incoming);
+    for (const identifier of identifiers) {
+      const details = vehicleIdentityLookup.get(identifier);
+      if (details) {
+        return {
+          vehicleId: identifier,
+          details,
+        };
+      }
+    }
+
+    return {
+      vehicleId: identifiers[0] || "",
+      details: null,
+    };
+  }, [getAlertVehicleIdentifiers, vehicleIdentityLookup]);
+
   const normalizeAlert = useCallback((incoming: any) => {
     if (!incoming || typeof incoming !== "object") return null;
 
     const vehicleMeta = incoming?.metadata?.vehicle || incoming?.vehicle || {};
+    const presentation = getAlertPresentation(incoming);
+    if (presentation.silent) return null;
     const firstOccurrenceTimestamp = getAlertFirstOccurrenceTimestamp(incoming) || incoming.timestamp || incoming.created_at || incoming.alert_timestamp || new Date().toISOString();
     const lastOccurrenceTimestamp = getAlertLastOccurrenceTimestamp(incoming) || firstOccurrenceTimestamp;
     const displayTimestamp = getAlertDisplayTimestamp(incoming) || lastOccurrenceTimestamp || firstOccurrenceTimestamp;
     const id = String(incoming.id || incoming.alert_id || incoming.alertId || "").trim();
-    const title = String(incoming.title || incoming.type || incoming.alert_type || "Alert").trim();
+    const title = String(presentation.title || incoming.title || incoming.type || incoming.alert_type || "Alert").trim();
     const severity = String(incoming.severity || incoming.priority || "low").toLowerCase();
-    const registration = String(
-      incoming.vehicle_registration ||
-        incoming.vehicle_reg ||
-        incoming.registration ||
-        incoming.reg ||
-        vehicleMeta.plateNumber ||
-        ""
-    ).trim();
-    const fleetNumber = String(
-      incoming.fleet_number ||
-        incoming.fleetNumber ||
-        incoming?.vehicle?.fleet_number ||
-        incoming?.metadata?.vehicle?.fleetNumber ||
-        incoming?.metadata?.vehicle?.fleet_number ||
-        ""
-    ).trim();
-    const fallbackVehicleId = String(
-      vehicleMeta.terminalId ||
-        vehicleMeta.vehicleId ||
-        incoming.device_id ||
-        incoming.vehicleId ||
-        incoming.vehicle_id ||
-        ""
-    ).trim();
+    const resolvedIdentity = resolveVehicleIdentity(incoming);
+    const registration = String(resolvedIdentity.details?.plate || "").trim();
+    const fleetNumber = String(resolvedIdentity.details?.fleetNumber || "").trim();
+    const fallbackVehicleId = String(resolvedIdentity.vehicleId || "").trim();
 
     return {
       ...incoming,
       id: id || `${fallbackVehicleId}-${title}-${displayTimestamp || Date.now()}`,
       title,
-      alert_type: incoming.alert_type || incoming.type || title.toLowerCase().replace(/\s+/g, "_"),
+      alert_type: presentation.typeLabel || incoming.alert_type || incoming.type || title.toLowerCase().replace(/\s+/g, "_"),
+      type: presentation.typeLabel || incoming.type || incoming.alert_type || title,
       severity,
       priority: severity,
       status: String(incoming.status || "new").toLowerCase(),
       fleet_number: fleetNumber,
       vehicle_registration: registration,
-      vehicleId: String(incoming.vehicleId || incoming.device_id || incoming.vehicle_id || vehicleMeta.vehicleId || "").trim(),
-      device_id: String(incoming.device_id || incoming.vehicleId || incoming.vehicle_id || vehicleMeta.vehicleId || "").trim(),
+      codeLabel: presentation.codeLabel,
+      vehicleId: String(incoming.vehicleId || incoming.device_id || incoming.vehicle_id || vehicleMeta.vehicleId || fallbackVehicleId || "").trim(),
+      device_id: String(incoming.device_id || incoming.vehicleId || incoming.vehicle_id || vehicleMeta.vehicleId || fallbackVehicleId || "").trim(),
       driver_name: incoming.driver_name || incoming.driver || incoming?.metadata?.driverName || "Unknown",
       timestamp: firstOccurrenceTimestamp,
       lastOccurrenceTimestamp,
       firstOccurrenceTimestamp,
       repeated_count: Number(incoming.repeated_count || incoming.repeatedCount || 1) || 1,
     };
-  }, []);
+  }, [getAlertPresentation, resolveVehicleIdentity]);
 
   const getAlertVehicleDisplayLabel = useCallback((alert: any) => {
     const registration = String(
@@ -421,6 +622,62 @@ export default function VideoAlertsDashboardTab({
   }, [fetchPinnedVehicleHistoryAlerts]);
 
   useEffect(() => {
+    const identifiers = Array.from(
+      new Set(
+        [...sourceAlerts, ...realtimeAlerts, ...pinnedHistoryAlerts]
+          .flatMap((alert) => getAlertVehicleIdentifiers(alert))
+          .filter(Boolean)
+      )
+    );
+
+    if (identifiers.length === 0) {
+      setVehicleIdentityLookup(new Map());
+      return;
+    }
+
+    let cancelled = false;
+
+    const fetchVehicleLookup = async () => {
+      try {
+        const res = await fetch(
+          `/api/vehicle-lookup?deviceIds=${encodeURIComponent(identifiers.join(","))}`,
+          {
+            cache: "no-store",
+            signal: AbortSignal.timeout(15000),
+          }
+        );
+        const json = await readJsonSafely(res);
+        const rows = Array.isArray(json?.vehicles) ? json.vehicles : [];
+        const nextLookup = new Map<string, VehicleIdentity>();
+
+        for (const row of rows) {
+          const deviceId = String(row?.deviceId || "").trim();
+          if (!deviceId) continue;
+          nextLookup.set(deviceId, {
+            plate: String(row?.plate || "").trim(),
+            fleetNumber: String(row?.fleetNumber || "").trim(),
+          });
+        }
+
+        if (!cancelled) {
+          setVehicleIdentityLookup(nextLookup);
+        }
+      } catch (error) {
+        console.warn("Alert vehicle registration lookup failed:", error);
+        if (!cancelled) {
+          setVehicleIdentityLookup(new Map());
+        }
+      }
+    };
+
+    void fetchVehicleLookup();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [getAlertVehicleIdentifiers, pinnedHistoryAlerts, readJsonSafely, realtimeAlerts, sourceAlerts]);
+
+  useEffect(() => {
     if (suspendBackgroundWork) return;
     const interval = setInterval(() => {
       fetchTripRoutingStyleAlerts();
@@ -631,8 +888,11 @@ export default function VideoAlertsDashboardTab({
       const s = searchTerm.toLowerCase();
       const matchesSearch = (
         alert.title?.toLowerCase().includes(s) ||
+        alert.fleet_number?.toLowerCase().includes(s) ||
         alert.vehicle_registration?.toLowerCase().includes(s) ||
         alert.driver_name?.toLowerCase().includes(s) ||
+        alert.vehicleId?.toLowerCase().includes(s) ||
+        alert.device_id?.toLowerCase().includes(s) ||
         alert.id?.toLowerCase().includes(s)
       );
       if (!matchesSearch) return false;
@@ -900,6 +1160,7 @@ export default function VideoAlertsDashboardTab({
   const renderAlertBoardRow = (alert: any) => {
     const vehicleLabel = getAlertVehicleDisplayLabel(alert);
     const alertLabel = alert?.title || alert?.alert_type || alert?.type || "Alert";
+    const codeLabel = String(alert?.codeLabel || "").trim();
     const hasVideo = !!exactVideoReady[String(alert.id)];
     const hasVideoInRange = !!videoAvailability[String(alert.id)];
     const pinned = isPinnedVehicle(alert);
@@ -910,8 +1171,14 @@ export default function VideoAlertsDashboardTab({
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
             <div className="truncate text-[13px] font-semibold leading-4 text-slate-900">
-              {alertLabel} ({vehicleLabel})
+              {alertLabel}
+              {vehicleLabel ? ` (${vehicleLabel})` : ""}
             </div>
+            {codeLabel ? (
+              <div className="mt-0.5 text-[10px] uppercase tracking-wide text-slate-400">
+                {codeLabel}
+              </div>
+            ) : null}
             <div className="mt-1 flex items-center gap-1.5">
               {pinned ? (
                 <Badge className="rounded-full border border-cyan-200 bg-cyan-50 px-1.5 py-0 text-[10px] font-semibold text-cyan-700">
@@ -999,8 +1266,8 @@ export default function VideoAlertsDashboardTab({
                 </div>
               );
             })()}
-            <div className="mt-0.5 text-[11px] leading-4 text-slate-500 capitalize">
-              {(alert.alert_type || "alert").replace(/_/g, " ")}
+            <div className="mt-0.5 text-[11px] leading-4 text-slate-500">
+              {String(alert?.codeLabel || alert?.alert_type || "alert").replace(/_/g, " ")}
             </div>
             {videoAvailability[String(alert.id)] && !exactVideoReady[String(alert.id)] ? (
               <div className="mt-1">
