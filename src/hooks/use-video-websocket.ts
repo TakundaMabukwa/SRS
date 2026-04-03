@@ -69,10 +69,16 @@ function getWsCandidates() {
 
 export function useVideoWebSocket(onMessage?: (data: WebSocketMessage) => void) {
   const ws = useRef<WebSocket | null>(null)
+  const onMessageRef = useRef(onMessage)
   const [connected, setConnected] = useState(false)
   const [lastMessage, setLastMessage] = useState<WebSocketMessage | null>(null)
 
   useEffect(() => {
+    onMessageRef.current = onMessage
+  }, [onMessage])
+
+  useEffect(() => {
+    let isActive = true
     const urls = getWsCandidates()
     if (!urls.length) {
       console.error('Alert hub base URL is not set. WebSocket disabled.')
@@ -93,26 +99,34 @@ export function useVideoWebSocket(onMessage?: (data: WebSocketMessage) => void) 
           return
         }
 
-        ws.current.onopen = () => {
+        const socket = ws.current
+
+        socket.onopen = () => {
+          if (!isActive || ws.current !== socket) return
           setConnected(true)
           console.log('WebSocket connected')
         }
 
-        ws.current.onmessage = (event) => {
+        socket.onmessage = (event) => {
+          if (!isActive || ws.current !== socket) return
           try {
             const data = JSON.parse(event.data)
             setLastMessage(data)
-            onMessage?.(data)
+            onMessageRef.current?.(data)
           } catch (err) {
             console.error('WebSocket message parse error:', err)
           }
         }
 
-        ws.current.onerror = () => {
+        socket.onerror = () => {
           // Silent error handling - will reconnect on close
         }
 
-        ws.current.onclose = () => {
+        socket.onclose = () => {
+          if (ws.current === socket) {
+            ws.current = null
+          }
+          if (!isActive) return
           setConnected(false)
           if (idx < urls.length) {
             tryNext()
@@ -131,12 +145,18 @@ export function useVideoWebSocket(onMessage?: (data: WebSocketMessage) => void) 
     connect()
 
     return () => {
-      if (ws.current) {
-        ws.current.close()
-        ws.current = null
+      isActive = false
+      const socket = ws.current
+      ws.current = null
+      if (socket) {
+        socket.onopen = null
+        socket.onmessage = null
+        socket.onerror = null
+        socket.onclose = null
+        socket.close()
       }
     }
-  }, [onMessage])
+  }, [])
 
   return { connected, lastMessage }
 }

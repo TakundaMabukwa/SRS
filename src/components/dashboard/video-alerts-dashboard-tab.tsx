@@ -58,6 +58,38 @@ type AlertNameMapping = {
   code?: number;
 };
 
+function areVehicleIdentityMapsEqual(
+  a: Map<string, VehicleIdentity>,
+  b: Map<string, VehicleIdentity>
+) {
+  if (a.size !== b.size) return false;
+  for (const [key, value] of a.entries()) {
+    const other = b.get(key);
+    if (!other) return false;
+    if (other.plate !== value.plate || other.fleetNumber !== value.fleetNumber) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function areAlertListsEquivalent(a: any[], b: any[]) {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i += 1) {
+    const left = a[i];
+    const right = b[i];
+    if (
+      String(left?.id || "") !== String(right?.id || "") ||
+      String(left?.timestamp || left?.created_at || "") !== String(right?.timestamp || right?.created_at || "") ||
+      String(left?.title || left?.alert_type || left?.type || "") !== String(right?.title || right?.alert_type || right?.type || "")
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
 const SIGNAL_CODE_MAP: Record<string, AlertNameMapping> = {
   platform_video_alarm_0101: { title: "Video Signal Lost", code: 0x0101 },
   platform_video_alarm_0102: { title: "Video Signal Occlusion", code: 0x0102 },
@@ -583,7 +615,7 @@ export default function VideoAlertsDashboardTab({
   const fetchPinnedVehicleHistoryAlerts = useCallback(async () => {
     const vehicleIds = pinnedVehicleIds.filter(Boolean);
     if (vehicleIds.length === 0) {
-      setPinnedHistoryAlerts([]);
+      setPinnedHistoryAlerts((prev) => (prev.length === 0 ? prev : []));
       return;
     }
 
@@ -599,19 +631,35 @@ export default function VideoAlertsDashboardTab({
         })
       );
 
-      const merged = dedupeByIdAndSort(results.flat().map((alert: any) => ({
-        ...alert,
-        vehicleId: alert?.vehicleId || alert?.device_id,
-        device_id: alert?.device_id || alert?.vehicleId,
-        title: alert?.title || alert?.alert_type || alert?.type,
-      })));
+      const deduped = new Map<string, any>();
+      for (const alert of results.flat()) {
+        const enriched = {
+          ...alert,
+          vehicleId: alert?.vehicleId || alert?.device_id,
+          device_id: alert?.device_id || alert?.vehicleId,
+          title: alert?.title || alert?.alert_type || alert?.type,
+        };
+        const key = String(
+          enriched?.id ||
+          enriched?.alert_id ||
+          enriched?.alertId ||
+          `${enriched?.device_id || enriched?.vehicleId || "unknown"}-${enriched?.title || "alert"}-${enriched?.timestamp || enriched?.created_at || ""}`
+        );
+        deduped.set(key, { ...(deduped.get(key) || {}), ...enriched });
+      }
 
-      setPinnedHistoryAlerts(merged);
+      const merged = Array.from(deduped.values()).sort(
+        (a: any, b: any) =>
+          new Date(getAlertDisplayTimestamp(b) || b?.timestamp || b?.created_at || 0).getTime() -
+          new Date(getAlertDisplayTimestamp(a) || a?.timestamp || a?.created_at || 0).getTime()
+      );
+
+      setPinnedHistoryAlerts((prev) => (areAlertListsEquivalent(prev, merged) ? prev : merged));
     } catch (error) {
       console.error("Failed to fetch pinned vehicle alert history:", error);
-      setPinnedHistoryAlerts([]);
+      setPinnedHistoryAlerts((prev) => (prev.length === 0 ? prev : []));
     }
-  }, [dedupeByIdAndSort, pinnedVehicleIds, readJsonSafely, videoProxyBase]);
+  }, [pinnedVehicleIds, readJsonSafely, videoProxyBase]);
 
   useEffect(() => {
     fetchTripRoutingStyleAlerts();
@@ -631,7 +679,7 @@ export default function VideoAlertsDashboardTab({
     );
 
     if (identifiers.length === 0) {
-      setVehicleIdentityLookup(new Map());
+      setVehicleIdentityLookup((prev) => (prev.size === 0 ? prev : new Map()));
       return;
     }
 
@@ -660,12 +708,14 @@ export default function VideoAlertsDashboardTab({
         }
 
         if (!cancelled) {
-          setVehicleIdentityLookup(nextLookup);
+          setVehicleIdentityLookup((prev) => (
+            areVehicleIdentityMapsEqual(prev, nextLookup) ? prev : nextLookup
+          ));
         }
       } catch (error) {
         console.warn("Alert vehicle registration lookup failed:", error);
         if (!cancelled) {
-          setVehicleIdentityLookup(new Map());
+          setVehicleIdentityLookup((prev) => (prev.size === 0 ? prev : new Map()));
         }
       }
     };
