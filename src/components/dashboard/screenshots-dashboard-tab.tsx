@@ -103,7 +103,7 @@ function buildTargets(vehicles: ConnectedVehicle[]): CaptureTarget[] {
       .filter(isVideoChannel)
       .map((channel) => channel.logicalChannel ?? channel.channel ?? 1);
 
-    const channels = videoChannels.length > 0 ? videoChannels : [1];
+    const channels = videoChannels.length > 0 ? videoChannels : [1, 2];
 
     for (const channel of channels) {
       const target = {
@@ -500,7 +500,7 @@ export default function ScreenshotsDashboardTab({ detachable = true }: Screensho
         const videoChannels = (vehicle.channels || [])
           .filter(isVideoChannel)
           .map((channel) => channel.logicalChannel ?? channel.channel ?? 1);
-        const channels = videoChannels.length > 0 ? videoChannels : [1];
+        const channels = videoChannels.length > 0 ? videoChannels : [1, 2];
         const dedupedChannels = Array.from(new Set(channels)).sort((a, b) => a - b);
 
         const groupedChannels = dedupedChannels.map((channel) => ({
@@ -727,3 +727,4 @@ export default function ScreenshotsDashboardTab({ detachable = true }: Screensho
     </div>
   );
 }
+
