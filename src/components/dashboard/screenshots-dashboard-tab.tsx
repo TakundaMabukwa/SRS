@@ -3,8 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Camera, RefreshCw, Download, MonitorPlay, Shield, RadioTower, Activity, ExternalLink } from "lucide-react";
+import { Camera, RefreshCw, Download, MonitorPlay, Shield, RadioTower, ExternalLink } from "lucide-react";
 import { useVideoWebSocket } from "@/hooks/use-video-websocket";
 import { createClient } from "@/lib/supabase/client";
 import { resolveMediaUrlForCurrentOrigin } from "@/lib/video-alert-playback";
@@ -50,6 +49,12 @@ type VehicleGroupCard = {
   channels: VehicleChannelCard[];
 };
 
+type ScreenshotGridTile = {
+  vehicleId: string;
+  displayLabel: string;
+  channel: number;
+  screenshot?: ScreenshotItem;
+};
 type CaptureAvailability = {
   failedAt?: number;
   reason?: string;
@@ -134,6 +139,7 @@ export default function ScreenshotsDashboardTab({ detachable = true }: Screensho
   const [capturing, setCapturing] = useState(false);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [gridColumns, setGridColumns] = useState(4);
   const vehiclesRef = useRef<ConnectedVehicle[]>([]);
   const lastWsRefreshAt = useRef(0);
   const captureAvailabilityRef = useRef<Map<string, CaptureAvailability>>(new Map());
@@ -535,6 +541,43 @@ export default function ScreenshotsDashboardTab({ detachable = true }: Screensho
     }).length;
   }, [cards]);
 
+  const screenshotTiles = useMemo<ScreenshotGridTile[]>(() => {
+    return cards
+      .flatMap((card) =>
+        card.channels.map((channelCard) => ({
+          vehicleId: card.vehicleId,
+          displayLabel: card.displayLabel,
+          channel: channelCard.channel,
+          screenshot: channelCard.screenshot,
+        }))
+      )
+      .sort((a, b) => {
+        const timeDiff = parseDate(b.screenshot?.timestamp) - parseDate(a.screenshot?.timestamp);
+        if (timeDiff !== 0) return timeDiff;
+        const labelDiff = a.displayLabel.localeCompare(b.displayLabel);
+        if (labelDiff !== 0) return labelDiff;
+        return a.channel - b.channel;
+      });
+  }, [cards]);
+
+  const gridClassName = useMemo(() => {
+    switch (gridColumns) {
+      case 1:
+        return "grid grid-cols-1 gap-3";
+      case 2:
+        return "grid grid-cols-1 gap-3 md:grid-cols-2";
+      case 3:
+        return "grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3";
+      case 4:
+        return "grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4";
+      case 5:
+        return "grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5";
+      case 6:
+        return "grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-6";
+      default:
+        return "grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4";
+    }
+  }, [gridColumns]);
   return (
     <div className="space-y-6">
       <Card className="overflow-hidden border-slate-800 bg-gradient-to-r from-slate-950 via-slate-900 to-slate-800 text-slate-100 shadow-xl">
@@ -608,120 +651,108 @@ export default function ScreenshotsDashboardTab({ detachable = true }: Screensho
         </Card>
       ) : (
         <div className="space-y-4">
-          <div className="flex items-center gap-2">
-            <RadioTower className="h-5 w-5 text-slate-700" />
-            <h3 className="text-lg font-semibold text-slate-900">Vehicle Screenshot Grid</h3>
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex items-center gap-2">
+              <RadioTower className="h-5 w-5 text-slate-700" />
+              <h3 className="text-lg font-semibold text-slate-900">Vehicle Screenshot Grid</h3>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs font-medium uppercase tracking-wide text-slate-500">Grid</span>
+              {[1, 2, 3, 4, 5, 6].map((cols) => (
+                <Button
+                  key={cols}
+                  type="button"
+                  size="sm"
+                  variant={gridColumns === cols ? "default" : "outline"}
+                  className={gridColumns === cols ? "bg-slate-900 text-white hover:bg-slate-800" : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"}
+                  onClick={() => setGridColumns(cols)}
+                >
+                  {cols}x{cols}
+                </Button>
+              ))}
+            </div>
           </div>
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-          {cards.map((card) => {
-            return (
-              <Card
-                key={card.vehicleId}
-                className="overflow-hidden border-slate-300 bg-slate-950 text-slate-100"
-              >
-                <div className="flex items-center justify-between border-b border-slate-800 px-3 py-2">
-                  <p className="text-sm font-semibold">{card.displayLabel}</p>
-                  <Badge className="bg-slate-700 text-slate-100 hover:bg-slate-700">
-                    <Activity className="mr-1 h-3 w-3" />
-                    {card.channels.length} channels
-                  </Badge>
-                </div>
+          <div className={gridClassName}>
+            {screenshotTiles.map((tile) => {
+              const shot = tile.screenshot;
+              const availability = captureAvailabilityRef.current.get(`${tile.vehicleId}:${tile.channel}`);
 
-                <div className="grid grid-cols-1 gap-2 p-2 sm:grid-cols-2">
-                  {card.channels.map((channelCard) => {
-                    const shot = channelCard.screenshot;
-                    const availability = captureAvailabilityRef.current.get(`${card.vehicleId}:${channelCard.channel}`);
-                    const ageMs = Date.now() - parseDate(shot?.timestamp);
-                    const hasTimestamp = parseDate(shot?.timestamp) > 0;
-                    const isLive = hasTimestamp && ageMs <= LIVE_SCREENSHOT_WINDOW_MS;
-                    const isRecent = hasTimestamp && ageMs > LIVE_SCREENSHOT_WINDOW_MS && ageMs <= STALE_SCREENSHOT_WINDOW_MS;
-                    const statusBadge = !hasTimestamp
-                      ? { label: "No Image", className: "bg-slate-600 text-white hover:bg-slate-600" }
-                      : isLive
-                        ? { label: "Fresh", className: "bg-emerald-600 text-white hover:bg-emerald-600" }
-                        : isRecent
-                          ? { label: "Recent", className: "bg-cyan-600 text-white hover:bg-cyan-600" }
-                          : { label: "Stale", className: "bg-amber-600 text-white hover:bg-amber-600" };
-
-                    return (
-                      <div key={`${card.vehicleId}-${channelCard.channel}`} className="overflow-hidden rounded border border-slate-800">
-                        <div className="relative aspect-video bg-slate-900">
-                          {shot?.storage_url ? (
-                            <img
-                              src={shot.display_url || shot.storage_url}
-                              alt={`Vehicle ${card.vehicleId} channel ${channelCard.channel}`}
-                              className="h-full w-full object-cover"
-                              onLoad={() => {
-                                console.info("[Screenshots] Image loaded", {
-                                  vehicleId: card.vehicleId,
-                                  channel: channelCard.channel,
-                                  url: shot.display_url || shot.storage_url,
-                                });
-                              }}
-                              onError={() => {
-                                console.error("[Screenshots] Image failed to load", {
-                                  vehicleId: card.vehicleId,
-                                  channel: channelCard.channel,
-                                  url: shot.display_url || shot.storage_url,
-                                });
-                              }}
-                              ref={(img) => {
-                                if (!img) return;
-                                img.onerror = () => {
-                                  const attemptedRetry = img.dataset.retryAttempted === "true";
-                                  if (!attemptedRetry) {
-                                    img.dataset.retryAttempted = "true";
-                                    img.src = withCacheBust(shot.display_url || shot.storage_url || "", Date.now());
-                                    return;
-                                  }
-                                  console.error("[Screenshots] Image failed after retry", {
-                                    vehicleId: card.vehicleId,
-                                    channel: channelCard.channel,
-                                    url: shot.display_url || shot.storage_url,
-                                  });
-                                };
-                              }}
-                            />
-                          ) : (
-                            <div className="flex h-full items-center justify-center text-slate-500">
-                              <MonitorPlay className="h-8 w-8" />
-                            </div>
-                          )}
-                          <div className="absolute right-2 top-2 rounded bg-black/70 px-2 py-1 text-[11px]">
-                            CH {channelCard.channel}
-                          </div>
-                        </div>
-                        <div className="flex items-center justify-between px-2 py-2">
-                          <div>
-                            <Badge className={statusBadge.className}>
-                              {statusBadge.label}
-                            </Badge>
-                            <p className="mt-1 text-[11px] text-slate-400">
-                              {shot?.timestamp
-                                ? new Date(shot.timestamp).toLocaleTimeString()
-                                : (availability?.reason || "No image")}
-                            </p>
-                          </div>
-                          {shot?.storage_url && (
-                            <Button
-                              size="icon"
-                              variant="secondary"
-                              className="h-7 w-7"
-                              onClick={() => window.open(shot.storage_url, "_blank")}
-                              title="Open image"
-                            >
-                              <Download className="h-3 w-3" />
-                            </Button>
-                          )}
-                        </div>
+              return (
+                <Card
+                  key={`${tile.vehicleId}-${tile.channel}`}
+                  className="overflow-hidden border-slate-300 bg-slate-950 text-slate-100"
+                >
+                  <div className="relative aspect-video bg-slate-900">
+                    {shot?.storage_url ? (
+                      <img
+                        src={shot.display_url || shot.storage_url}
+                        alt={`Vehicle ${tile.vehicleId} channel ${tile.channel}`}
+                        className="h-full w-full object-cover"
+                        onLoad={() => {
+                          console.info("[Screenshots] Image loaded", {
+                            vehicleId: tile.vehicleId,
+                            channel: tile.channel,
+                            url: shot.display_url || shot.storage_url,
+                          });
+                        }}
+                        onError={() => {
+                          console.error("[Screenshots] Image failed to load", {
+                            vehicleId: tile.vehicleId,
+                            channel: tile.channel,
+                            url: shot.display_url || shot.storage_url,
+                          });
+                        }}
+                        ref={(img) => {
+                          if (!img) return;
+                          img.onerror = () => {
+                            const attemptedRetry = img.dataset.retryAttempted === "true";
+                            if (!attemptedRetry) {
+                              img.dataset.retryAttempted = "true";
+                              img.src = withCacheBust(shot.display_url || shot.storage_url || "", Date.now());
+                              return;
+                            }
+                            console.error("[Screenshots] Image failed after retry", {
+                              vehicleId: tile.vehicleId,
+                              channel: tile.channel,
+                              url: shot.display_url || shot.storage_url,
+                            });
+                          };
+                        }}
+                      />
+                    ) : (
+                      <div className="flex h-full items-center justify-center text-slate-500">
+                        <MonitorPlay className="h-8 w-8" />
                       </div>
-                    );
-                  })}
-                </div>
-              </Card>
-            );
-          })}
-        </div>
+                    )}
+                    <div className="absolute right-2 top-2 rounded bg-black/70 px-2 py-1 text-[11px] font-medium">
+                      CH {tile.channel}
+                    </div>
+                  </div>
+                  <div className="flex items-start justify-between gap-3 border-t border-slate-800 px-3 py-2">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-semibold text-slate-100">{tile.displayLabel}</p>
+                      <p className="mt-1 text-[11px] text-slate-400">
+                        {shot?.timestamp
+                          ? new Date(shot.timestamp).toLocaleTimeString()
+                          : (availability?.reason || "Waiting for image")}
+                      </p>
+                    </div>
+                    {shot?.storage_url && (
+                      <Button
+                        size="icon"
+                        variant="secondary"
+                        className="h-7 w-7 shrink-0"
+                        onClick={() => window.open(shot.storage_url, "_blank")}
+                        title="Open image"
+                      >
+                        <Download className="h-3 w-3" />
+                      </Button>
+                    )}
+                  </div>
+                </Card>
+              );
+            })}
+          </div>
         </div>
       )}
     </div>
