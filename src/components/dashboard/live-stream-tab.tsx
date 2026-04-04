@@ -64,6 +64,7 @@ export default function LiveStreamTab() {
   const [selectedVehicles, setSelectedVehicles] = useState<Set<string>>(new Set());
   const [searchTerm, setSearchTerm] = useState("");
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
+  const [gridColumns, setGridColumns] = useState(4);
   const [loading, setLoading] = useState(true);
   const [pinnedFeed, setPinnedFeed] = useState<PinnedFeed | null>(null);
   const [pipPosition, setPipPosition] = useState({ x: 24, y: 96 });
@@ -192,6 +193,29 @@ export default function LiveStreamTab() {
     });
   });
 
+  const gridClassName = (() => {
+    switch (gridColumns) {
+      case 1:
+        return "grid grid-cols-1 gap-4";
+      case 2:
+        return "grid grid-cols-1 gap-4 md:grid-cols-2";
+      case 3:
+        return "grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3";
+      case 4:
+        return "grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4";
+      case 5:
+        return "grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-5";
+      case 6:
+        return "grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-6";
+      case 7:
+        return "grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-7";
+      case 8:
+        return "grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-8";
+      default:
+        return "grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4";
+    }
+  })();
+
   useEffect(() => {
     if (!isDraggingPip) return;
 
@@ -262,7 +286,22 @@ export default function LiveStreamTab() {
               className="h-10 border-slate-300 bg-white pl-9"
             />
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            {viewMode === "grid" && (
+              <div className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-300 bg-white p-1">
+                {[1, 2, 3, 4, 5, 6, 7, 8].map((cols) => (
+                  <Button
+                    key={cols}
+                    variant={gridColumns === cols ? "default" : "outline"}
+                    size="sm"
+                    className={gridColumns === cols ? "bg-slate-900 text-white hover:bg-slate-800" : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"}
+                    onClick={() => setGridColumns(cols)}
+                  >
+                    {cols}x{cols}
+                  </Button>
+                ))}
+              </div>
+            )}
             <Button
               variant="outline"
               size="icon"
@@ -313,7 +352,7 @@ export default function LiveStreamTab() {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+          <div className={gridClassName}>
             {streamEntries.map((entry) => (
               <div
                 key={entry.id}
@@ -411,7 +450,7 @@ export default function LiveStreamTab() {
         ) : filteredVehicles.length === 0 ? (
           <Card className="p-8 text-center text-slate-500">No connected vehicles found</Card>
         ) : viewMode === "grid" ? (
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+          <div className={gridClassName}>
             {filteredVehicles.map((vehicle) => (
               <Card
                 key={vehicle.id}
@@ -507,3 +546,5 @@ export default function LiveStreamTab() {
     </div>
   );
 }
+
+

@@ -574,6 +574,10 @@ export default function ScreenshotsDashboardTab({ detachable = true }: Screensho
         return "grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5";
       case 6:
         return "grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-6";
+      case 7:
+        return "grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-7";
+      case 8:
+        return "grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-8";
       default:
         return "grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4";
     }
@@ -658,7 +662,7 @@ export default function ScreenshotsDashboardTab({ detachable = true }: Screensho
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <span className="text-xs font-medium uppercase tracking-wide text-slate-500">Grid</span>
-              {[1, 2, 3, 4, 5, 6].map((cols) => (
+              {[1, 2, 3, 4, 5, 6, 7, 8].map((cols) => (
                 <Button
                   key={cols}
                   type="button"
