@@ -618,6 +618,75 @@ async function resolvePlaybackWindowForAlert(alert: any, videoProxyBase = DEFAUL
 
   let lastError: Error | null = null;
 
+  const alertId = String((alert as any)?.id || "").trim();
+  const lookbackSeconds = Math.max(30, Math.round((new Date(endIso).getTime() - new Date(startIso).getTime()) / 2000));
+  const forwardSeconds = lookbackSeconds;
+
+  const tryAlertWindow = async () => {
+    if (!alertId) return [];
+
+    for (const playbackBase of getPlaybackRequestBases(videoProxyBase)) {
+      try {
+        const res = await fetch(`${playbackBase}/alerts/${encodeURIComponent(alertId)}/request-report-video`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            lookbackSeconds,
+            forwardSeconds,
+            queryResources: true,
+          }),
+        });
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok || !json?.success) {
+          throw new Error(json?.message || `HTTP ${res.status}`);
+        }
+
+        const data = json?.data || {};
+        const channelEntries = Array.isArray(data?.channels) ? data.channels : [];
+        const channelJobs = channelEntries
+          .map((entry: any) => ({
+            channel: Number(entry?.channel || 0),
+            jobId: String(entry?.jobId || "").trim(),
+          }))
+          .filter((entry: any) => Number.isFinite(entry.channel) && entry.channel > 0 && entry.jobId);
+
+        if (channelJobs.length > 0) {
+          const resolvedVideos = await Promise.all(channelJobs.map(async (entry: any) => ({
+            key: `alert_job_${entry.jobId}_${entry.channel}`,
+            label: `Alert-time Playback CH${entry.channel}`,
+            url: await pollPlaybackJob(entry.jobId, playbackBase, buildJobFileUrl(entry.jobId, playbackBase)),
+          })));
+          console.info("[AlertPlayback] Multi-channel alert jobs resolved", {
+            alertId,
+            vehicleId,
+            videos: resolvedVideos,
+          });
+          writeCachedPlaybackVideos(cacheKey, resolvedVideos);
+          return resolvedVideos;
+        }
+
+        const jobId = String(data?.playbackJobId || "").trim();
+        const playbackJobUrl = normalizeBackendMediaUrl(String(data?.playbackJobUrl || "").trim(), playbackBase);
+        if (jobId) {
+          const resolvedUrl = await pollPlaybackJob(jobId, playbackBase, playbackJobUrl);
+          const resolvedVideos = [
+            {
+              key: `alert_job_${jobId}`,
+              label: `Alert-time Playback CH${Number(data?.playbackChannel || channel) || channel}`,
+              url: resolvedUrl,
+            },
+          ];
+          writeCachedPlaybackVideos(cacheKey, resolvedVideos);
+          return resolvedVideos;
+        }
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+      }
+    }
+
+    return [];
+  };
+
   const tryStoredWindow = async () => {
     for (const playbackBase of getPlaybackRequestBases(videoProxyBase)) {
       try {
