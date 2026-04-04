@@ -166,7 +166,7 @@ export default function LiveStreamTab() {
   );
 
   const liveChannelCount = filteredVehicles.reduce(
-    (acc, vehicle) => acc + ((vehicle.channels && vehicle.channels.length > 0) ? vehicle.channels.length : 1),
+    (acc, vehicle) => acc + ((vehicle.channels && vehicle.channels.length > 0) ? vehicle.channels.length : 2),
     0
   );
 
@@ -176,7 +176,7 @@ export default function LiveStreamTab() {
 
     const channels = (vehicle.channels && vehicle.channels.length > 0)
       ? vehicle.channels
-      : [{ logicalChannel: 1 }];
+      : [{ logicalChannel: 1 }, { logicalChannel: 2 }];
 
     return channels.map((ch, idx) => {
       const channelNumber = getChannelNumber(ch);
@@ -486,7 +486,7 @@ export default function LiveStreamTab() {
                 <div className="mt-3 flex items-center justify-between">
                   <div className="flex items-center gap-2 text-xs text-slate-600">
                     <Activity className="h-3.5 w-3.5" />
-                    {(vehicle.channels && vehicle.channels.length > 0) ? vehicle.channels.length : 1} channel(s)
+                    {(vehicle.channels && vehicle.channels.length > 0) ? vehicle.channels.length : 2} channel(s)
                   </div>
                   <Button
                     size="sm"
@@ -525,7 +525,7 @@ export default function LiveStreamTab() {
                     </td>
                     <td className="px-4 py-3 font-medium text-slate-900">{vehicle.displayLabel}</td>
                     <td className="px-4 py-3 font-mono text-xs text-slate-600">{vehicle.phone || vehicle.id}</td>
-                    <td className="px-4 py-3 text-slate-600">{(vehicle.channels && vehicle.channels.length > 0) ? vehicle.channels.length : 1}</td>
+                    <td className="px-4 py-3 text-slate-600">{(vehicle.channels && vehicle.channels.length > 0) ? vehicle.channels.length : 2}</td>
                     <td className="px-4 py-3 text-center">
                       <Button
                         size="sm"
@@ -546,5 +546,6 @@ export default function LiveStreamTab() {
     </div>
   );
 }
+
 
 
