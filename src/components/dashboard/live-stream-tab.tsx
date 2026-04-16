@@ -56,7 +56,7 @@ type StreamEntry = {
 };
 
 function getChannelNumber(channel: VehicleChannel): number {
-  return channel.logicalChannel ?? channel.channel ?? 1;
+  return channel.logicalChannel ?? channel.channel ?? 2;
 }
 
 function getLiveChannels(channels: VehicleChannel[] | undefined): number[] {
@@ -66,7 +66,7 @@ function getLiveChannels(channels: VehicleChannel[] | undefined): number[] {
         .filter((value, index, values) => Number.isFinite(value) && value > 0 && values.indexOf(value) === index)
     : [];
 
-  return Array.from(new Set([...discovered, 1, 2])).sort((a, b) => a - b);
+  return Array.from(new Set([2, 1, ...discovered]));
 }
 
 export default function LiveStreamTab() {
@@ -553,6 +553,7 @@ export default function LiveStreamTab() {
     </div>
   );
 }
+
 
 
 
