@@ -67,6 +67,15 @@ function isVideoChannel(channel: ChannelInfo): boolean {
   return channelType === "video" || channelType === "audio_video";
 }
 
+function getScreenshotChannels(channels: ChannelInfo[] | undefined): number[] {
+  const discovered = (channels || [])
+    .filter(isVideoChannel)
+    .map((channel) => channel.logicalChannel ?? channel.channel ?? 1)
+    .filter((value, index, values) => Number.isFinite(value) && value > 0 && values.indexOf(value) === index);
+
+  return Array.from(new Set([...discovered, 1, 2])).sort((a, b) => a - b);
+}
+
 function toTargetKey(target: CaptureTarget): string {
   return `${target.vehicleId}:${target.channel}`;
 }
@@ -104,11 +113,7 @@ function buildTargets(vehicles: ConnectedVehicle[]): CaptureTarget[] {
     const vehicleId = toVehicleKey(vehicle);
     if (!vehicleId) continue;
 
-    const videoChannels = (vehicle.channels || [])
-      .filter(isVideoChannel)
-      .map((channel) => channel.logicalChannel ?? channel.channel ?? 1);
-
-    const channels = videoChannels.length > 0 ? videoChannels : [1, 2];
+    const channels = getScreenshotChannels(vehicle.channels);
 
     for (const channel of channels) {
       const target = {
@@ -503,11 +508,7 @@ export default function ScreenshotsDashboardTab({ detachable = true }: Screensho
         const lookupIds = Array.from(
           new Set([vehicle.id, vehicle.phone].map((value) => String(value || "").trim()).filter(Boolean))
         );
-        const videoChannels = (vehicle.channels || [])
-          .filter(isVideoChannel)
-          .map((channel) => channel.logicalChannel ?? channel.channel ?? 1);
-        const channels = videoChannels.length > 0 ? videoChannels : [1, 2];
-        const dedupedChannels = Array.from(new Set(channels)).sort((a, b) => a - b);
+        const dedupedChannels = getScreenshotChannels(vehicle.channels);
 
         const groupedChannels = dedupedChannels.map((channel) => ({
           channel,
@@ -540,6 +541,11 @@ export default function ScreenshotsDashboardTab({ detachable = true }: Screensho
       return ts > 0 && now - ts <= LIVE_SCREENSHOT_WINDOW_MS;
     }).length;
   }, [cards]);
+
+  const targetChannelCount = useMemo(
+    () => connectedVehicles.reduce((total, vehicle) => total + getScreenshotChannels(vehicle.channels).length, 0),
+    [connectedVehicles]
+  );
 
   const screenshotTiles = useMemo<ScreenshotGridTile[]>(() => {
     return cards

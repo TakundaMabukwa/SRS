@@ -59,6 +59,16 @@ function getChannelNumber(channel: VehicleChannel): number {
   return channel.logicalChannel ?? channel.channel ?? 1;
 }
 
+function getLiveChannels(channels: VehicleChannel[] | undefined): number[] {
+  const discovered = Array.isArray(channels)
+    ? channels
+        .map(getChannelNumber)
+        .filter((value, index, values) => Number.isFinite(value) && value > 0 && values.indexOf(value) === index)
+    : [];
+
+  return Array.from(new Set([...discovered, 1, 2])).sort((a, b) => a - b);
+}
+
 export default function LiveStreamTab() {
   const [vehicles, setVehicles] = useState<ConnectedVehicle[]>([]);
   const [selectedVehicles, setSelectedVehicles] = useState<Set<string>>(new Set());
@@ -166,7 +176,7 @@ export default function LiveStreamTab() {
   );
 
   const liveChannelCount = filteredVehicles.reduce(
-    (acc, vehicle) => acc + ((vehicle.channels && vehicle.channels.length > 0) ? vehicle.channels.length : 2),
+    (acc, vehicle) => acc + getLiveChannels(vehicle.channels).length,
     0
   );
 
@@ -174,12 +184,9 @@ export default function LiveStreamTab() {
     const vehicle = vehicles.find((v) => v.id === vehicleId);
     if (!vehicle) return [];
 
-    const channels = (vehicle.channels && vehicle.channels.length > 0)
-      ? vehicle.channels
-      : [{ logicalChannel: 1 }, { logicalChannel: 2 }];
+    const channels = getLiveChannels(vehicle.channels);
 
-    return channels.map((ch, idx) => {
-      const channelNumber = getChannelNumber(ch);
+    return channels.map((channelNumber, idx) => {
       const fallbackVehicleIds = Array.from(
         new Set([vehicle.id, vehicle.phone].map((value) => String(value || "").trim()).filter(Boolean))
       );
@@ -486,7 +493,7 @@ export default function LiveStreamTab() {
                 <div className="mt-3 flex items-center justify-between">
                   <div className="flex items-center gap-2 text-xs text-slate-600">
                     <Activity className="h-3.5 w-3.5" />
-                    {(vehicle.channels && vehicle.channels.length > 0) ? vehicle.channels.length : 2} channel(s)
+                    {getLiveChannels(vehicle.channels).length} channel(s)
                   </div>
                   <Button
                     size="sm"

@@ -1,0 +1,38 @@
+
+> breakdown-dashboard@0.1.0 dev
+> cross-env NODE_OPTIONS=--max-old-space-size=1536 UV_THREADPOOL_SIZE=1 NEXT_DISABLE_ESLINT=1 next dev
+
+   ▲ Next.js 15.5.12
+   - Local:        http://localhost:3000
+   - Network:      http://192.168.0.129:3000
+   - Environments: .env.local
+   - Experiments (use with caution):
+     ⨯ webpackBuildWorker
+
+ ✓ Starting...
+ ✓ Ready in 9.2s
+ ✓ Compiled /middleware in 455ms (170 modules)
+ ○ Compiling / ...
+ ✓ Compiled / in 2.3s (591 modules)
+ GET / 307 in 2724ms
+ ○ Compiling /login ...
+ ✓ Compiled /login in 1765ms (816 modules)
+ GET /login 200 in 2124ms
+ HEAD / 307 in 286ms
+ ○ Compiling /api/video-server/[...path] ...
+ ✓ Compiled /api/video-server/[...path] in 1404ms (630 modules)
+SyntaxError: Expected property name or '}' in JSON at position 1 (line 1 column 2)
+    at JSON.parse (<anonymous>)
+ POST /api/video-server/vehicles/221085886967/videos/window 500 in 2180ms
+ POST /api/video-server/vehicles/221085886967/videos/window 200 in 677ms
+ GET /api/video-server/videos/jobs/JOB-LOCAL-1774930914042-39720 200 in 661ms
+ HEAD /api/video-server/videos/jobs/JOB-LOCAL-1774930914042-39720/file 200 in 1060ms
+ ○ Compiling /api/vehicle-lookup ...
+ ✓ Compiled /api/vehicle-lookup in 893ms (417 modules)
+ GET /api/vehicle-lookup?deviceIds=221085886967,221087899117,221087901160 500 in 1109ms
+ ✓ Compiled in 600ms (431 modules)
+ GET /api/vehicle-lookup?deviceIds=221085886967,221087899117,221087901160 200 in 1189ms
+ GET /api/vehicle-lookup?deviceId=221085886967 200 in 979ms
+Terminate batch job (Y/N)? [?25h
+
+^C
