@@ -421,17 +421,20 @@ function getAlertVehicleId(alert: any) {
 }
 
 function getAlertChannel(alert: any) {
+  return getAlertChannelCandidates(alert)[0] || 1;
+}
+
+function getAlertChannelCandidates(alert: any) {
   const candidates = [
     alert?.channel,
     alert?.metadata?.channel,
     alert?.metadata?.resourceChannel,
     alert?.metadata?.locationFix?.channel,
   ];
-  for (const candidate of candidates) {
-    const value = Number(candidate);
-    if (Number.isFinite(value) && value > 0) return value;
-  }
-  return 1;
+  const normalized = candidates
+    .map((candidate) => Number(candidate))
+    .filter((value, index, arr) => Number.isFinite(value) && value > 0 && arr.indexOf(value) === index);
+  return normalized.length > 0 ? normalized : [2, 1];
 }
 
 function getAlertPlaybackWindow(alert: any) {
@@ -607,7 +610,8 @@ async function resolvePlaybackWindowForAlert(alert: any, videoProxyBase = DEFAUL
   }
 
   const vehicleId = getAlertVehicleId(alert);
-  const channel = getAlertChannel(alert);
+  const channelCandidates = getAlertChannelCandidates(alert);
+  const channel = channelCandidates[0] || 1;
   const playbackWindow = getAlertPlaybackWindow(alert);
   if (!vehicleId || !playbackWindow) return [];
 
@@ -688,73 +692,75 @@ async function resolvePlaybackWindowForAlert(alert: any, videoProxyBase = DEFAUL
   };
 
   const tryStoredWindow = async () => {
-    for (const playbackBase of getPlaybackRequestBases(videoProxyBase)) {
-      try {
-        const res = await fetch(`${playbackBase}/vehicles/${encodeURIComponent(vehicleId)}/videos/window`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            channel,
-            startTime: startIso,
-            endTime: endIso,
-          }),
-        });
-        const json = await res.json().catch(() => ({}));
-        if (!res.ok || !json?.success) {
-          throw new Error(json?.message || `HTTP ${res.status}`);
-        }
+    for (const targetChannel of channelCandidates) {
+      for (const playbackBase of getPlaybackRequestBases(videoProxyBase)) {
+        try {
+          const res = await fetch(`${playbackBase}/vehicles/${encodeURIComponent(vehicleId)}/videos/window`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              channel: targetChannel,
+              startTime: startIso,
+              endTime: endIso,
+            }),
+          });
+          const json = await res.json().catch(() => ({}));
+          if (!res.ok || !json?.success) {
+            throw new Error(json?.message || `HTTP ${res.status}`);
+          }
 
-        const data = json?.data || {};
-        if (data?.playbackSource === "live_fallback" && data?.streamUrl) {
-          const fallbackVideos = [
-            {
-              key: `live_fallback_${vehicleId}_${channel}`,
-              label: `Alert-time Live Fallback CH${channel}`,
-              url: normalizeBackendMediaUrl(String(data.streamUrl), playbackBase),
-            },
-          ];
-          console.info("[AlertPlayback] Live fallback selected", {
+          const data = json?.data || {};
+          if (data?.playbackSource === "live_fallback" && data?.streamUrl) {
+            const fallbackVideos = [
+              {
+                key: `live_fallback_${vehicleId}_${targetChannel}`,
+                label: `Alert-time Live Fallback CH${targetChannel}`,
+                url: normalizeBackendMediaUrl(String(data.streamUrl), playbackBase),
+              },
+            ];
+            console.info("[AlertPlayback] Live fallback selected", {
+              alertId: String(alert?.id || "").trim(),
+              vehicleId,
+              channel: targetChannel,
+              videos: fallbackVideos,
+            });
+            writeCachedPlaybackVideos(cacheKey, fallbackVideos);
+            return fallbackVideos;
+          }
+
+          const jobId = String(data?.playbackJobId || "").trim();
+          const playbackJobUrl = normalizeBackendMediaUrl(String(data?.playbackJobUrl || "").trim(), playbackBase);
+          console.info("[AlertPlayback] Window job created", {
             alertId: String(alert?.id || "").trim(),
             vehicleId,
-            channel,
-            videos: fallbackVideos,
-          });
-          writeCachedPlaybackVideos(cacheKey, fallbackVideos);
-          return fallbackVideos;
-        }
-
-        const jobId = String(data?.playbackJobId || "").trim();
-        const playbackJobUrl = normalizeBackendMediaUrl(String(data?.playbackJobUrl || "").trim(), playbackBase);
-        console.info("[AlertPlayback] Window job created", {
-          alertId: String(alert?.id || "").trim(),
-          vehicleId,
-          channel,
-          playbackBase,
-          startIso,
-          endIso,
-          jobId,
-          playbackJobUrl,
-          sourceSegments: Number(data?.sourceSegments || 0),
-        });
-        if (jobId) {
-          const resolvedUrl = await pollPlaybackJob(jobId, playbackBase, playbackJobUrl);
-          const resolvedVideos = [
-            {
-              key: `job_${jobId}`,
-              label: `Alert-time Playback CH${channel}`,
-              url: resolvedUrl,
-            },
-          ];
-          console.info("[AlertPlayback] Window job resolved", {
-            alertId: String(alert?.id || "").trim(),
+            channel: targetChannel,
+            playbackBase,
+            startIso,
+            endIso,
             jobId,
-            videos: resolvedVideos,
+            playbackJobUrl,
+            sourceSegments: Number(data?.sourceSegments || 0),
           });
-          writeCachedPlaybackVideos(cacheKey, resolvedVideos);
-          return resolvedVideos;
+          if (jobId) {
+            const resolvedUrl = await pollPlaybackJob(jobId, playbackBase, playbackJobUrl);
+            const resolvedVideos = [
+              {
+                key: `job_${jobId}`,
+                label: `Alert-time Playback CH${targetChannel}`,
+                url: resolvedUrl,
+              },
+            ];
+            console.info("[AlertPlayback] Window job resolved", {
+              alertId: String(alert?.id || "").trim(),
+              jobId,
+              videos: resolvedVideos,
+            });
+            writeCachedPlaybackVideos(cacheKey, resolvedVideos);
+            return resolvedVideos;
+          }
+        } catch (error) {
+          lastError = error instanceof Error ? error : new Error(String(error));
         }
-      } catch (error) {
-        lastError = error instanceof Error ? error : new Error(String(error));
       }
     }
 
@@ -766,8 +772,10 @@ async function resolvePlaybackWindowForAlert(alert: any, videoProxyBase = DEFAUL
     return immediateStored;
   }
 
-  const fallbackClip = await findNearestAvailableClip(vehicleId, channel, safeTargetTime, videoProxyBase);
-  if (fallbackClip) {
+  for (const targetChannel of channelCandidates) {
+    const fallbackClip = await findNearestAvailableClip(vehicleId, targetChannel, safeTargetTime, videoProxyBase);
+    if (!fallbackClip) continue;
+
     const boundedWindow = buildBoundedPlaybackWindow(fallbackClip, safeTargetTime);
     for (const playbackBase of getPlaybackRequestBases(videoProxyBase)) {
       try {

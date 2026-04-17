@@ -493,21 +493,37 @@ export default function VideoAlertsDashboardTab({
     return date.toISOString().slice(0, 10);
   }, []);
 
+  const getAlertChannelCandidates = useCallback((alert: any) => {
+    const candidates = [
+      alert?.channel,
+      alert?.metadata?.channel,
+      alert?.metadata?.resourceChannel,
+      alert?.metadata?.locationFix?.channel,
+    ]
+      .map((value) => Number(value))
+      .filter((value, index, arr) => Number.isFinite(value) && value > 0 && arr.indexOf(value) === index);
+
+    return candidates.length > 0 ? candidates : [2, 1];
+  }, []);
+
   const alertHasVideoInChannels = useCallback((alert: any, channels: any[]) => {
     const timestamp = new Date(getAlertDisplayTimestamp(alert) || "");
     if (Number.isNaN(timestamp.getTime())) return false;
 
-    const wantedChannel = Number(alert?.channel || alert?.metadata?.channel || 1) || 1;
-    const matchingChannel = channels.find((entry: any) => Number(entry?.channel || 1) === wantedChannel);
-    const clips = Array.isArray(matchingChannel?.clips) ? matchingChannel.clips : [];
+    const wantedChannels = getAlertChannelCandidates(alert);
 
-    return clips.some((clip: any) => {
-      const clipStart = new Date(clip?.startTime || 0);
-      const clipEnd = new Date(clip?.endTime || clip?.startTime || 0);
-      if (Number.isNaN(clipStart.getTime()) || Number.isNaN(clipEnd.getTime())) return false;
-      return clipStart.getTime() <= timestamp.getTime() && clipEnd.getTime() >= timestamp.getTime();
+    return wantedChannels.some((wantedChannel) => {
+      const matchingChannel = channels.find((entry: any) => Number(entry?.channel || 1) === wantedChannel);
+      const clips = Array.isArray(matchingChannel?.clips) ? matchingChannel.clips : [];
+
+      return clips.some((clip: any) => {
+        const clipStart = new Date(clip?.startTime || 0);
+        const clipEnd = new Date(clip?.endTime || clip?.startTime || 0);
+        if (Number.isNaN(clipStart.getTime()) || Number.isNaN(clipEnd.getTime())) return false;
+        return clipStart.getTime() <= timestamp.getTime() && clipEnd.getTime() >= timestamp.getTime();
+      });
     });
-  }, []);
+  }, [getAlertChannelCandidates]);
 
   const refreshVideoAvailability = useCallback(async (alerts: any[]) => {
     const normalizedAlerts = alerts
