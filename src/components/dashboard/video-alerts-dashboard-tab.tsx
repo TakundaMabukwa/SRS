@@ -205,6 +205,27 @@ export default function VideoAlertsDashboardTab({
   const exactReadyCacheRef = useRef<Map<string, boolean>>(new Map());
   const pendingExactReadyIdsRef = useRef<Set<string>>(new Set());
 
+  const removeClosedAlertFromBoard = useCallback((detail: any) => {
+    const idsToRemove = new Set(
+      [detail?.id, ...(Array.isArray(detail?.groupedIds) ? detail.groupedIds : [])]
+        .map((value) => String(value || "").trim())
+        .filter(Boolean)
+    );
+    if (idsToRemove.size === 0) return;
+
+    const filterClosed = (alerts: any[]) =>
+      alerts.filter((alert) => {
+        const alertId = String(alert?.id || "").trim();
+        if (alertId && idsToRemove.has(alertId)) return false;
+        const groupedIds = Array.isArray(alert?.groupedIds) ? alert.groupedIds.map((value: any) => String(value || "").trim()) : [];
+        return !groupedIds.some((value: string) => idsToRemove.has(value));
+      });
+
+    setSourceAlerts((prev) => filterClosed(prev));
+    setRealtimeAlerts((prev) => filterClosed(prev));
+    setPinnedHistoryAlerts((prev) => filterClosed(prev));
+  }, []);
+
   const getStructuredAlertMapping = useCallback((value: string) => {
     const text = String(value || "").trim();
     if (!text) return null;
@@ -735,6 +756,18 @@ export default function VideoAlertsDashboardTab({
 
     return () => clearInterval(interval);
   }, [fetchTripRoutingStyleAlerts, suspendBackgroundWork]);
+
+  useEffect(() => {
+    const handleClosed = (event: Event) => {
+      const customEvent = event as CustomEvent<any>;
+      removeClosedAlertFromBoard(customEvent?.detail);
+    };
+
+    window.addEventListener("video-alert-closed", handleClosed as EventListener);
+    return () => {
+      window.removeEventListener("video-alert-closed", handleClosed as EventListener);
+    };
+  }, [removeClosedAlertFromBoard]);
 
   const normalizeRealtimeAlert = useCallback((incoming: any) => normalizeAlert(incoming), [normalizeAlert]);
 

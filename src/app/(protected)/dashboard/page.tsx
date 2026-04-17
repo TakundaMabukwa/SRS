@@ -3101,6 +3101,16 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
             alerts: remainingAlerts,
           };
         });
+        if (typeof window !== "undefined") {
+          window.dispatchEvent(
+            new CustomEvent("video-alert-closed", {
+              detail: {
+                id: closingAlertId,
+                groupedIds: Array.isArray(selectedAlert?.groupedIds) ? selectedAlert.groupedIds : [],
+              },
+            })
+          );
+        }
         // Close detail modal immediately after successful close and clear selected item.
         setAlertDetailModalOpen(false);
         setSelectedAlert(null);
