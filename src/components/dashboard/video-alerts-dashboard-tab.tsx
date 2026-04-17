@@ -499,11 +499,18 @@ export default function VideoAlertsDashboardTab({
       alert?.metadata?.channel,
       alert?.metadata?.resourceChannel,
       alert?.metadata?.locationFix?.channel,
-    ]
-      .map((value) => Number(value))
-      .filter((value, index, arr) => Number.isFinite(value) && value > 0 && arr.indexOf(value) === index);
+    ];
 
-    return candidates.length > 0 ? candidates : [1, 2];
+    let primaryChannel = 1;
+    for (const candidate of candidates) {
+      const value = Number(candidate);
+      if (Number.isFinite(value) && value > 0) {
+        primaryChannel = value;
+        break;
+      }
+    }
+
+    return Array.from(new Set([primaryChannel, 1, 2].filter((value) => Number.isFinite(value) && value > 0)));
   }, []);
 
   const alertHasVideoInChannels = useCallback((alert: any, channels: any[]) => {
@@ -1777,4 +1784,5 @@ export default function VideoAlertsDashboardTab({
     </div>
   );
 }
+
 

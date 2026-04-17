@@ -421,20 +421,26 @@ function getAlertVehicleId(alert: any) {
 }
 
 function getAlertChannel(alert: any) {
-  return getAlertChannelCandidates(alert)[0] || 1;
-}
-
-function getAlertChannelCandidates(alert: any) {
   const candidates = [
     alert?.channel,
     alert?.metadata?.channel,
     alert?.metadata?.resourceChannel,
     alert?.metadata?.locationFix?.channel,
   ];
-  const normalized = candidates
-    .map((candidate) => Number(candidate))
-    .filter((value, index, arr) => Number.isFinite(value) && value > 0 && arr.indexOf(value) === index);
-  return normalized.length > 0 ? normalized : [1, 2];
+  for (const candidate of candidates) {
+    const value = Number(candidate);
+    if (Number.isFinite(value) && value > 0) return value;
+  }
+  return 1;
+}
+
+function getAlertChannelCandidates(alert: any) {
+  const primaryChannel = getAlertChannel(alert);
+  return Array.from(
+    new Set(
+      [primaryChannel, 1, 2].filter((value) => Number.isFinite(value) && value > 0)
+    )
+  );
 }
 
 function getAlertPlaybackWindow(alert: any) {
@@ -480,7 +486,7 @@ function getAlertPlaybackCacheKey(alert: any) {
   return JSON.stringify({
     id: String(alert?.id || "").trim(),
     vehicleId: getAlertVehicleId(alert),
-    channel: getAlertChannel(alert),
+    channels: getAlertChannelCandidates(alert),
     startIso: playbackWindow?.startIso || "",
     endIso: playbackWindow?.endIso || "",
   });
@@ -610,8 +616,8 @@ async function resolvePlaybackWindowForAlert(alert: any, videoProxyBase = DEFAUL
   }
 
   const vehicleId = getAlertVehicleId(alert);
+  const channel = getAlertChannel(alert);
   const channelCandidates = getAlertChannelCandidates(alert);
-  const channel = channelCandidates[0] || 1;
   const playbackWindow = getAlertPlaybackWindow(alert);
   if (!vehicleId || !playbackWindow) return [];
 
@@ -841,3 +847,4 @@ export async function resolveAlertPlaybackVideos(alertSource: AlertPlaybackSourc
 
   return resolvePlaybackWindowForAlert(alert, videoProxyBase);
 }
+
