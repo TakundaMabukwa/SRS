@@ -90,7 +90,7 @@ import DispatchReportModal from '@/components/video-alerts/dispatch-report-modal
 import IncidentReportTemplateModal from '@/components/video-alerts/incident-report-template-modal';
 import type { SavedAlertArtifact } from '@/components/video-alerts/report-support';
 import { useVideoWebSocket } from "@/hooks/use-video-websocket";
-import { getAlertDisplayTimestamp as getSharedAlertDisplayTimestamp, getAlertPlaybackSignature, resolveAlertPlaybackVideos, resolveMediaUrlForCurrentOrigin } from "@/lib/video-alert-playback";
+import { formatRawAlertTimestamp, getAlertDisplayTimestamp as getSharedAlertDisplayTimestamp, getAlertPlaybackSignature, resolveAlertPlaybackVideos, resolveMediaUrlForCurrentOrigin } from "@/lib/video-alert-playback";
 
 const VideoAlertsDashboardTab = dynamic(
   () => import("@/components/dashboard/video-alerts-dashboard-tab"),
@@ -6092,7 +6092,7 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
                       </Badge>
                     </div>
                     <p className="text-[11px] text-slate-300 truncate">
-                      Alert ID: {selectedAlert.id} • {selectedAlertDisplayTs ? new Date(selectedAlertDisplayTs).toLocaleString() : 'N/A'}
+                      Alert ID: {selectedAlert.id} | {selectedAlertDisplayTs ? formatRawAlertTimestamp(selectedAlertDisplayTs, "datetime") : 'N/A'}
                     </p>
                     {alertRealtimeLoading && (
                       <p className="text-[10px] text-amber-300">Refreshing latest alert details...</p>
@@ -6948,6 +6948,7 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
     </>
   );
 }
+
 
 
 
