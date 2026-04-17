@@ -503,7 +503,7 @@ export default function VideoAlertsDashboardTab({
       .map((value) => Number(value))
       .filter((value, index, arr) => Number.isFinite(value) && value > 0 && arr.indexOf(value) === index);
 
-    return candidates.length > 0 ? candidates : [2, 1];
+    return candidates.length > 0 ? candidates : [1, 2];
   }, []);
 
   const alertHasVideoInChannels = useCallback((alert: any, channels: any[]) => {

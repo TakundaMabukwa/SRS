@@ -434,7 +434,7 @@ function getAlertChannelCandidates(alert: any) {
   const normalized = candidates
     .map((candidate) => Number(candidate))
     .filter((value, index, arr) => Number.isFinite(value) && value > 0 && arr.indexOf(value) === index);
-  return normalized.length > 0 ? normalized : [2, 1];
+  return normalized.length > 0 ? normalized : [1, 2];
 }
 
 function getAlertPlaybackWindow(alert: any) {

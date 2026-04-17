@@ -3195,6 +3195,7 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
     ).trim();
     const channel = Number(alertRow?.channel || 1) || 1;
     const alertTimestamp = new Date(
+      getSharedAlertDisplayTimestamp(alertRow) ||
       alertRow?.timestamp ||
       alertRow?.created_at ||
       alertRow?.alert_timestamp ||
