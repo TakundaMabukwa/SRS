@@ -3513,6 +3513,18 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
     });
     return entries;
   })();
+  const getAlertMediaChannel = React.useCallback((value: any) => {
+    const candidates = [
+      Number(value?.channel || 0),
+      Number(String(value?.label || "").match(/\bch(?:annel)?\s*([1-9]\d*)\b/i)?.[1] || 0),
+      Number(String(value?.key || "").match(/\bch(?:annel)?[_-]?([1-9]\d*)\b/i)?.[1] || 0),
+      Number(String(value?.url || "").match(/channel[_-](\d+)/i)?.[1] || 0),
+    ];
+    for (const candidate of candidates) {
+      if (Number.isFinite(candidate) && candidate > 0) return candidate;
+    }
+    return null;
+  }, []);
   const preEventVideo = selectedAlertVideoList.find((v) => String(v.key || "").includes("pre_event"));
   const postEventVideo = selectedAlertVideoList.find((v) => String(v.key || "").includes("post_event"));
   const cameraSdVideo = selectedAlertVideoList.find(
@@ -3531,13 +3543,32 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
     if (key.includes("pre_event") || key.includes("post_event") || key.includes("camera_sd") || key.includes("alert_window")) return false;
     return true;
   });
-  const primaryAlertVideo =
-    alertWindowVideo ||
-    preEventVideo ||
-    postEventVideo ||
-    cameraSdVideo ||
-    genericEventVideos[0] ||
-    null;
+  const selectedAlertEventVideos = (() => {
+    const preferred = [
+      ...selectedAlertVideoList.filter((video) => {
+        const key = String(video?.key || "").toLowerCase();
+        const label = String(video?.label || "").toLowerCase();
+        return key.includes("alert_window") || label.includes("alert window") || label.includes("alert-time playback");
+      }),
+      ...prePostVideos,
+      ...genericEventVideos,
+      ...(cameraSdVideo ? [cameraSdVideo] : []),
+    ];
+    const seen = new Set<string>();
+    return preferred
+      .filter((video) => {
+        const url = String(video?.url || "").trim();
+        if (!url || seen.has(url)) return false;
+        seen.add(url);
+        return true;
+      })
+      .sort((a, b) => {
+        const channelDelta = (getAlertMediaChannel(a) || Number.MAX_SAFE_INTEGER) - (getAlertMediaChannel(b) || Number.MAX_SAFE_INTEGER);
+        if (channelDelta !== 0) return channelDelta;
+        return String(a?.label || "").localeCompare(String(b?.label || ""));
+      });
+  })();
+  const primaryAlertVideo = selectedAlertEventVideos[0] || null;
   const shouldShowOnlySdCard =
     !!cameraSdVideo &&
     prePostVideos.length > 0 &&
@@ -3563,9 +3594,25 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
     }
     return out;
   })();
+  const selectedAlertPrimaryScreenshots = (() => {
+    const sorted = [...selectedAlertScreenshots].sort((a: any, b: any) => {
+      const channelDelta = Number(a?.channel || 0) - Number(b?.channel || 0);
+      if (channelDelta !== 0) return channelDelta;
+      const aOffset = Math.abs(Number(a?.offsetSeconds ?? a?.offset ?? Number.MAX_SAFE_INTEGER));
+      const bOffset = Math.abs(Number(b?.offsetSeconds ?? b?.offset ?? Number.MAX_SAFE_INTEGER));
+      return aOffset - bOffset;
+    });
+    const byChannel = new Map<number, any>();
+    for (const screenshot of sorted) {
+      const channel = Number(screenshot?.channel || 0);
+      if (!Number.isFinite(channel) || channel <= 0 || byChannel.has(channel)) continue;
+      byChannel.set(channel, screenshot);
+    }
+    return Array.from(byChannel.values()).sort((a: any, b: any) => Number(a?.channel || 0) - Number(b?.channel || 0));
+  })();
   const visibleAlertScreenshots = alertScreenshotsExpanded
     ? selectedAlertScreenshots
-    : selectedAlertScreenshots.slice(0, 4);
+    : (selectedAlertPrimaryScreenshots.length > 0 ? selectedAlertPrimaryScreenshots : selectedAlertScreenshots.slice(0, 4));
   const selectedAlertTimeline = Array.isArray((selectedAlert as any)?.resolution_timeline)
     ? (selectedAlert as any).resolution_timeline
     : [];
@@ -6201,7 +6248,7 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
                           <h3 className="text-lg font-semibold text-slate-900">
                             Camera Screenshots
                           </h3>
-                          {selectedAlertScreenshots.length > 4 ? (
+                          {selectedAlertScreenshots.length > visibleAlertScreenshots.length ? (
                             <Button
                               type="button"
                               variant="outline"
@@ -6210,7 +6257,7 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
                             >
                               {alertScreenshotsExpanded
                                 ? "Show less"
-                                : `View more (${selectedAlertScreenshots.length - 4})`}
+                                : `View more (${selectedAlertScreenshots.length - visibleAlertScreenshots.length})`}
                             </Button>
                           ) : null}
                         </div>
@@ -6228,7 +6275,7 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
                             </>
                           ) : selectedAlertScreenshots.length > 0 ? (
                             visibleAlertScreenshots.map((screenshot, idx) => (
-                              <Card key={idx} className="overflow-hidden border-slate-200 shadow-sm hover:shadow-md transition-shadow">
+                              <Card key={String(screenshot.id || screenshot.url || idx)} className="overflow-hidden border-slate-200 shadow-sm hover:shadow-md transition-shadow">
                                 <div className="relative aspect-video bg-slate-900">
                                   <img
                                     src={screenshot.url}
@@ -6243,7 +6290,12 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
                                   </div>
                                 </div>
                                 <div className="p-2 border-t flex justify-between items-center">
-                                  <span className="text-xs text-slate-600">+{screenshot.offset || 0}s</span>
+                                  <span className="text-xs text-slate-600">
+                                    {(() => {
+                                      const offsetValue = Number(screenshot.offsetSeconds ?? screenshot.offset ?? 0);
+                                      return `${offsetValue >= 0 ? "+" : ""}${Number.isFinite(offsetValue) ? offsetValue.toFixed(1) : "0.0"}s`;
+                                    })()}
+                                  </span>
                                   <Button variant="ghost" size="sm" onClick={() => window.open(screenshot.url, '_blank')}>
                                     <Download className="w-3 h-3" />
                                   </Button>
@@ -6320,38 +6372,51 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
                                 <div className="aspect-video w-full rounded mb-3 border border-slate-700 bg-slate-800 animate-pulse" />
                               </Card>
                             </div>
-                          ) : primaryAlertVideo ? (
-                            <Card className="p-4 border-slate-200 shadow-sm bg-slate-950 text-slate-100">
-                              <UniversalVideoPlayer
-                                url={primaryAlertVideo.url}
-                                fallbackUrls={primaryAlertVideo.fallbackUrls || []}
-                                autoPlay={true}
-                                className="w-full rounded mb-3 border border-slate-700"
-                              />
-                              <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
-                                <div className="flex items-center gap-3">
-                                  <Video className="w-5 h-5 text-cyan-300" />
-                                  <div>
-                                    <p className="font-medium text-white">{primaryAlertVideo.label || "Alert Window Video"}</p>
-                                    <p className="text-xs text-slate-300">Stored MP4 clip for this vehicle, channel, and alert time range.</p>
-                                  </div>
-                                </div>
-                                <div className="flex items-center gap-2">
-                                  <Button
-                                    variant="outline"
-                                    size="sm"
-                                    className="border-cyan-400/40 bg-slate-900 text-cyan-200 hover:bg-slate-800"
-                                    onClick={() => window.open(resolveMediaUrlForCurrentOrigin(primaryAlertVideo.url), "_blank")}
-                                  >
-                                    Preview
-                                  </Button>
-                                  <Button variant="outline" size="sm" onClick={() => window.open(resolveMediaUrlForCurrentOrigin(primaryAlertVideo.url), "_blank")}>
-                                    <Download className="w-4 h-4 mr-2" />
-                                    Download
-                                  </Button>
-                                </div>
-                              </div>
-                            </Card>
+                          ) : selectedAlertEventVideos.length > 0 ? (
+                            <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                              {selectedAlertEventVideos.map((video) => {
+                                const channel = getAlertMediaChannel(video);
+                                return (
+                                  <Card key={video.url} className="p-4 border-slate-200 shadow-sm bg-slate-950 text-slate-100">
+                                    <UniversalVideoPlayer
+                                      url={video.url}
+                                      fallbackUrls={video.fallbackUrls || []}
+                                      autoPlay={true}
+                                      className="w-full rounded mb-3 border border-slate-700"
+                                    />
+                                    <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+                                      <div className="flex items-center gap-3">
+                                        <Video className="w-5 h-5 text-cyan-300" />
+                                        <div>
+                                          <p className="font-medium text-white">
+                                            {video.label || (channel ? `Alert Window Video CH${channel}` : "Alert Window Video")}
+                                          </p>
+                                          <p className="text-xs text-slate-300">
+                                            {channel
+                                              ? `Stored MP4 clip for camera ${channel} during the alert window.`
+                                              : "Stored MP4 clip for this vehicle and alert time range."}
+                                          </p>
+                                        </div>
+                                      </div>
+                                      <div className="flex items-center gap-2">
+                                        <Button
+                                          variant="outline"
+                                          size="sm"
+                                          className="border-cyan-400/40 bg-slate-900 text-cyan-200 hover:bg-slate-800"
+                                          onClick={() => window.open(resolveMediaUrlForCurrentOrigin(video.url), "_blank")}
+                                        >
+                                          Preview
+                                        </Button>
+                                        <Button variant="outline" size="sm" onClick={() => window.open(resolveMediaUrlForCurrentOrigin(video.url), "_blank")}>
+                                          <Download className="w-4 h-4 mr-2" />
+                                          Download
+                                        </Button>
+                                      </div>
+                                    </div>
+                                  </Card>
+                                );
+                              })}
+                            </div>
                           ) : (
                             <div className="text-center py-12 text-slate-500">
                               <p>
