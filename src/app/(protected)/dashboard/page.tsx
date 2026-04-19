@@ -6514,28 +6514,6 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
                                 </div>
                               </Card>
                             ))
-                          ) : derivedAlertScreenshotUrl ? (
-                            <Card className="overflow-hidden border-slate-200 shadow-sm">
-                              <div className="relative aspect-video bg-slate-900">
-                                <img
-                                  src={derivedAlertScreenshotUrl}
-                                  alt="Derived alert screenshot"
-                                  className="w-full h-full object-cover"
-                                />
-                                <div className="absolute top-2 left-2 bg-black/80 text-white px-3 py-1 rounded text-xs font-medium">
-                                  Event Video Snapshot
-                                </div>
-                                <div className="absolute bottom-2 right-2 bg-black/80 text-white px-3 py-1 rounded text-xs">
-                                  {new Date(selectedAlert.timestamp).toLocaleTimeString()}
-                                </div>
-                              </div>
-                              <div className="p-2 border-t flex justify-between items-center">
-                                <span className="text-xs text-slate-600">Derived from completed alert video</span>
-                                <Button variant="ghost" size="sm" onClick={() => window.open(derivedAlertScreenshotUrl, '_blank')}>
-                                  <Download className="w-3 h-3" />
-                                </Button>
-                              </div>
-                            </Card>
                           ) : (
                             <div className="col-span-2 text-center py-12 text-slate-500">
                               {selectedAlertPlaybackLoading
