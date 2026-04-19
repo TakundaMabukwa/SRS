@@ -3856,6 +3856,33 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
     let cancelled = false;
     const objectUrls: string[] = [];
 
+    const waitForVideoEvent = (video: HTMLVideoElement, eventName: "loadeddata" | "canplay" | "seeked", timeoutMs = 8000) =>
+      new Promise<void>((resolve, reject) => {
+        const timer = window.setTimeout(() => {
+          cleanup();
+          reject(new Error(`video ${eventName} timeout`));
+        }, timeoutMs);
+
+        const cleanup = () => {
+          window.clearTimeout(timer);
+          video.removeEventListener(eventName, onReady);
+          video.removeEventListener("error", onError);
+        };
+
+        const onReady = () => {
+          cleanup();
+          resolve();
+        };
+
+        const onError = () => {
+          cleanup();
+          reject(new Error(`video ${eventName} failed`));
+        };
+
+        video.addEventListener(eventName, onReady, { once: true });
+        video.addEventListener("error", onError, { once: true });
+      });
+
     async function deriveAlertScreenshotsFromVideos() {
       if (!alertDetailModalOpen || !selectedAlert?.id) {
         setDerivedAlertScreenshots([]);
@@ -3892,42 +3919,27 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
       try {
         const nextDerived: Array<{ url: string; channel?: number; timestamp?: string; offset?: number }> = [];
         for (const candidateVideo of candidateVideos.slice(0, 2)) {
-          const videoResponse = await fetch(resolveMediaUrlForCurrentOrigin(String(candidateVideo?.url || "").trim()), {
-            cache: "force-cache",
-            signal: AbortSignal.timeout(12000),
-          });
-          if (!videoResponse.ok) throw new Error(`video fetch failed (${videoResponse.status})`);
-          const videoBlob = await videoResponse.blob();
-          const sourceObjectUrl = URL.createObjectURL(videoBlob);
-          objectUrls.push(sourceObjectUrl);
-
           const video = document.createElement("video");
           video.muted = true;
           video.playsInline = true;
           video.preload = "auto";
-          video.src = sourceObjectUrl;
+          video.crossOrigin = "anonymous";
+          video.src = resolveMediaUrlForCurrentOrigin(String(candidateVideo?.url || "").trim());
           video.load();
 
-          await new Promise<void>((resolve, reject) => {
-            const onLoadedMetadata = () => resolve();
-            const onError = () => reject(new Error("video frame load failed"));
-            video.addEventListener("loadedmetadata", onLoadedMetadata, { once: true });
-            video.addEventListener("error", onError, { once: true });
-          });
+          await waitForVideoEvent(video, "loadeddata", 10000);
 
           const duration = Number.isFinite(video.duration) ? video.duration : 0;
-          const targetTime = Math.max(0.1, Math.min(1, duration > 0 ? duration * 0.15 : 0.5));
-          await new Promise<void>((resolve, reject) => {
-            const onSeeked = () => resolve();
-            const onError = () => reject(new Error("video seek failed"));
-            video.addEventListener("seeked", onSeeked, { once: true });
-            video.addEventListener("error", onError, { once: true });
+          const targetTime = duration > 0.35 ? Math.min(0.35, duration * 0.2) : 0;
+          if (targetTime > 0) {
             try {
               video.currentTime = targetTime;
-            } catch (error) {
-              reject(error);
+              await waitForVideoEvent(video, "seeked", 6000);
+            } catch {
+              // Some clips do not seek cleanly before enough data is buffered.
+              // We'll fall back to the first decodable frame already loaded.
             }
-          });
+          }
 
           const canvas = document.createElement("canvas");
           canvas.width = Math.max(1, video.videoWidth || 1280);
