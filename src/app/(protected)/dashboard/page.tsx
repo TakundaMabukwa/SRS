@@ -3323,15 +3323,6 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
     ));
 
     try {
-      void fetch(`${videoProxyBase}/alerts/${encodeURIComponent(alertId)}/collect-evidence`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ensureScreenshots: true,
-          ensureVideo: false,
-        }),
-      }).catch(() => undefined);
-
       const localRes = await fetch(`${videoProxyBase}/alerts/${encodeURIComponent(alertId)}/request-report-video`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -3428,40 +3419,6 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
           }
         };
         void poll();
-      }
-      try {
-        const shotsRes = await fetch(`${videoProxyBase}/alerts/${encodeURIComponent(alertId)}/screenshots?includeFallback=true`, {
-          cache: "no-store",
-          signal: AbortSignal.timeout(5000),
-        });
-        const shotsJson = shotsRes.ok ? await shotsRes.json() : null;
-        const fromDedicated = extractChannelAwareScreenshots(shotsJson);
-        const refreshedShots = fromDedicated
-          .map((shot: any) => normalizeModalScreenshotRecord(shot, alertRow?.timestamp))
-          .filter(Boolean);
-        if (refreshedShots.length > 0) {
-          setSelectedAlert((prev: any) => {
-            if (!prev || String(prev?.id || "").trim() !== alertId) return prev;
-            const existingShots = Array.isArray(prev?.media?.screenshots) ? prev.media.screenshots : [];
-            const seen = new Set(existingShots.map((shot: any) => String(shot?.id || shot?.url || "")));
-            const mergedShots = [...existingShots];
-            for (const shot of refreshedShots) {
-              const key = String(shot?.id || shot?.url || "");
-              if (!key || seen.has(key)) continue;
-              seen.add(key);
-              mergedShots.push(shot);
-            }
-            return {
-              ...prev,
-              media: {
-                ...(prev?.media || {}),
-                screenshots: mergedShots,
-              },
-            };
-          });
-        }
-      } catch {
-        // Keep replay running even if screenshot refresh fails.
       }
 
       return next;
@@ -3698,25 +3655,25 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
   })();
   const selectedAlertScreenshotsWithFallback = (() => {
     const existingChannels = new Set(
-      selectedAlertScreenshots
+      derivedAlertScreenshots
         .map((shot: any) => Number(shot?.channel || 0))
         .filter((channel) => Number.isFinite(channel) && channel > 0)
     );
     const existingUrls = new Set(
-      selectedAlertScreenshots
+      derivedAlertScreenshots
         .map((shot: any) => String(shot?.url || "").trim())
         .filter(Boolean)
     );
-    const merged = [...selectedAlertScreenshots];
-    for (const screenshot of derivedAlertScreenshots) {
+    const merged = [...derivedAlertScreenshots.map((screenshot: any, index: number) => ({
+      ...screenshot,
+      id: screenshot?.id || `derived-${Number(screenshot?.channel || 0) || index}-${String(screenshot?.url || "").trim()}`,
+    }))];
+    for (const screenshot of selectedAlertScreenshots) {
       const channel = Number(screenshot?.channel || 0);
       const url = String(screenshot?.url || "").trim();
       if (!url || existingUrls.has(url)) continue;
       if (channel > 0 && existingChannels.has(channel)) continue;
-      merged.push({
-        ...screenshot,
-        id: `derived-${channel || merged.length}-${url}`,
-      });
+      merged.push(screenshot);
       existingUrls.add(url);
       if (channel > 0) existingChannels.add(channel);
     }
