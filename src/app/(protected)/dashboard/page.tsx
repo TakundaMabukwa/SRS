@@ -1396,11 +1396,7 @@ function RoutingSection({ userRole, handleViewMap, setCurrentTripForNote, setNot
       : Array.isArray(mediaJson?.screenshots)
         ? mediaJson.screenshots
         : []
-    const fromDedicatedEndpoint = Array.isArray(screenshotsJson?.screenshots)
-      ? screenshotsJson.screenshots
-      : Array.isArray(screenshotsJson?.data?.screenshots)
-        ? screenshotsJson.data.screenshots
-        : []
+    const fromDedicatedEndpoint = extractChannelAwareScreenshots(screenshotsJson)
 
     const mergedByKey = new Map<string, any>()
     for (const shot of [...fromAlert, ...fromMedia, ...fromDedicatedEndpoint]) {
@@ -1414,7 +1410,7 @@ function RoutingSection({ userRole, handleViewMap, setCurrentTripForNote, setNot
     }
     const screenshots = Array.from(mergedByKey.values())
     return { detailAlert, screenshots, videosJson, mediaJson }
-  }, [normalizeId, videoProxyBase])
+  }, [extractChannelAwareScreenshots, normalizeId, videoProxyBase])
 
   const toBaseDashboardAlert = useCallback((activeAlert: any) => {
     const alert = activeAlert || {};
@@ -2926,6 +2922,36 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
   const [selectedAlertPlaceLoading, setSelectedAlertPlaceLoading] = useState(false);
   const geocodeCacheRef = useRef<Record<string, string>>({});
   const mapboxToken = process.env.NEXT_PUBLIC_MAPBOX_TOKEN || "";
+  const cleanAlertLocationText = useCallback((value: unknown) => String(value || "").trim(), []);
+  const looksLikeCoordinatePair = useCallback((value: unknown) => {
+    const clean = cleanAlertLocationText(value);
+    return /^-?\d+(?:\.\d+)?\s*,\s*-?\d+(?:\.\d+)?$/.test(clean);
+  }, [cleanAlertLocationText]);
+  const selectedAlertResolvedLocationName = useMemo(() => {
+    const metadata = selectedAlert?.metadata && typeof selectedAlert.metadata === "object" ? selectedAlert.metadata : undefined;
+    const locationObject =
+      selectedAlert?.location && typeof selectedAlert.location === "object"
+        ? selectedAlert.location
+        : metadata?.location && typeof metadata.location === "object"
+          ? metadata.location
+          : undefined;
+    const candidates = [
+      selectedAlertPlaceName,
+      selectedAlert?.location_name,
+      selectedAlert?.place_name,
+      selectedAlert?.locationName,
+      selectedAlert?.address,
+      selectedAlert?.location_address,
+      selectedAlert?.formatted_address,
+      locationObject?.address,
+      metadata?.address,
+      typeof selectedAlert?.location === "string" ? selectedAlert.location : "",
+      typeof metadata?.location === "string" ? metadata.location : "",
+    ]
+      .map((value) => cleanAlertLocationText(value))
+      .filter(Boolean);
+    return candidates.find((value) => !looksLikeCoordinatePair(value)) || "";
+  }, [cleanAlertLocationText, looksLikeCoordinatePair, selectedAlert, selectedAlertPlaceName]);
   const selectedAlertCoordinateKey = selectedAlertCoordinates
     ? `${selectedAlertCoordinates.latitude.toFixed(6)},${selectedAlertCoordinates.longitude.toFixed(6)}`
     : "";
@@ -2938,13 +2964,12 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
     selectedAlert?.created_at ||
     null;
   const selectedAlertLocationText =
-    selectedAlertCoordinates
-      ? selectedAlertPlaceName
-        ? `${selectedAlertPlaceName} (${selectedAlertCoordinates.longitude.toFixed(6)}, ${selectedAlertCoordinates.latitude.toFixed(6)})`
-        : `${selectedAlertCoordinates.longitude.toFixed(6)}, ${selectedAlertCoordinates.latitude.toFixed(6)}`
+    selectedAlertResolvedLocationName ||
+    (selectedAlertCoordinates
+      ? `${selectedAlertCoordinates.longitude.toFixed(6)}, ${selectedAlertCoordinates.latitude.toFixed(6)}`
       : typeof selectedAlert?.location === 'string'
       ? selectedAlert.location
-      : 'Location from alert';
+      : 'Location from alert');
   useEffect(() => {
     let cancelled = false;
     const run = async () => {
@@ -3161,6 +3186,35 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
       offset: shot?.offset ?? shot?.offsetSeconds ?? shot?.capture_offset ?? 0,
     };
   }, [toAbsoluteImageUrl]);
+  const extractChannelAwareScreenshots = useCallback((payload: any) => {
+    const directScreenshots = Array.isArray(payload?.screenshots)
+      ? payload.screenshots
+      : Array.isArray(payload?.data?.screenshots)
+        ? payload.data.screenshots
+        : [];
+    const byChannelSource =
+      payload?.byChannel && typeof payload.byChannel === "object"
+        ? payload.byChannel
+        : payload?.data?.byChannel && typeof payload.data.byChannel === "object"
+          ? payload.data.byChannel
+          : null;
+    const byChannelScreenshots = byChannelSource
+      ? Object.entries(byChannelSource).flatMap(([channelKey, shots]) => {
+          const numericChannel = Number(channelKey);
+          const list = Array.isArray(shots) ? shots : [];
+          return list.map((shot: any) => ({
+            ...shot,
+            channel:
+              Number.isFinite(Number(shot?.channel)) && Number(shot?.channel) > 0
+                ? Number(shot.channel)
+                : Number.isFinite(numericChannel) && numericChannel > 0
+                  ? numericChannel
+                  : shot?.channel,
+          }));
+        })
+      : [];
+    return [...directScreenshots, ...byChannelScreenshots];
+  }, []);
   const buildAlertVideoUrl = useCallback((alertId: string, type: "pre" | "post" | "camera") => {
     const encodedId = encodeURIComponent(String(alertId || "").trim());
     if (videoBaseUrl) return `${videoBaseUrl}/api/alerts/${encodedId}/video/${type}`;
@@ -3345,11 +3399,7 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
           signal: AbortSignal.timeout(5000),
         });
         const shotsJson = shotsRes.ok ? await shotsRes.json() : null;
-        const fromDedicated = Array.isArray(shotsJson?.screenshots)
-          ? shotsJson.screenshots
-          : Array.isArray(shotsJson?.data?.screenshots)
-            ? shotsJson.data.screenshots
-            : [];
+        const fromDedicated = extractChannelAwareScreenshots(shotsJson);
         const refreshedShots = fromDedicated
           .map((shot: any) => normalizeModalScreenshotRecord(shot, alertRow?.timestamp))
           .filter(Boolean);
@@ -3395,7 +3445,7 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
       ));
       return failed;
     }
-  }, [buildPlaybackJobFileUrl, normalizeModalScreenshotRecord, toAbsoluteVideoUrl, videoProxyBase]);
+  }, [buildPlaybackJobFileUrl, extractChannelAwareScreenshots, normalizeModalScreenshotRecord, toAbsoluteVideoUrl, videoProxyBase]);
   const loadTimelineAlertPlayback = useCallback(async (timelineEntry: any) => {
     const alertId = String(timelineEntry?.id || "").trim();
     if (!alertId) return;
@@ -3623,11 +3673,15 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
       selectedAlert?.vehicle_registration,
       selectedAlert?.registration_number,
       selectedAlert?.registration,
+      selectedAlert?.plate,
+      selectedAlert?.vehicleName,
       selectedAlert?.vehicle?.registration_number,
+      selectedAlert?.vehicle?.name,
     ].map(clean).filter(Boolean);
     const registration = registrationCandidates.find((value) => !isRawId(value)) || '';
     const fleetNumber =
       clean(selectedAlert?.fleet_number) ||
+      clean(selectedAlert?.fleetNumber) ||
       clean(selectedAlert?.vehicle?.fleet_number) ||
       registration ||
       clean(selectedAlert?.device_id) ||
@@ -3651,10 +3705,15 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
     type: selectedAlert?.type || selectedAlert?.alert_type,
     severity: selectedAlert?.priority || selectedAlert?.severity,
     timestamp: selectedAlertDisplayTs || selectedAlert?.timestamp,
-    location: selectedAlert?.location || selectedAlert?.metadata,
+    location: selectedAlertResolvedLocationName
+      ? {
+          address: selectedAlertResolvedLocationName,
+          ...(selectedAlertCoordinates || {}),
+        }
+      : selectedAlert?.location || selectedAlert?.metadata,
     screenshots: selectedAlertScreenshots || [],
     videos: selectedAlertVideoList || [],
-  }), [selectedAlert, selectedAlertDisplayTs, selectedAlertScreenshots, selectedAlertVideoList]);
+  }), [selectedAlert, selectedAlertCoordinates, selectedAlertDisplayTs, selectedAlertResolvedLocationName, selectedAlertScreenshots, selectedAlertVideoList]);
   const buildSelectedAlertClosurePayload = useCallback((artifact?: SavedAlertArtifact | null) => ({
     source: "dashboard_trip_routing",
     alertId: selectedAlert?.id || null,

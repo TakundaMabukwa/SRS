@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 import Image from 'next/image'
 import { Button } from '@/components/ui/button'
 import { Printer, X } from 'lucide-react'
-import { getSafeHtml2CanvasOptions, normalizeReportScreenshots, SavedAlertArtifact, saveAlertArtifactBundle } from '@/components/video-alerts/report-support'
+import { getSafeHtml2CanvasOptions, normalizeReportScreenshots, resolveReportLocationText, SavedAlertArtifact, saveAlertArtifactBundle } from '@/components/video-alerts/report-support'
 
 interface AlertDetails {
   id?: string
@@ -12,7 +12,7 @@ interface AlertDetails {
   severity?: string
   timestamp?: string
   location?: { latitude?: number; longitude?: number; address?: string } | string
-  screenshots?: Array<{ url: string; timestamp?: string }>
+  screenshots?: Array<{ url: string; timestamp?: string; channel?: number }>
 }
 
 interface NCRFormModalProps {
@@ -31,12 +31,7 @@ interface NCRFormModalProps {
 }
 
 export default function NCRFormModal({ isOpen, onClose, onSaved, driverInfo, alertDetails }: NCRFormModalProps) {
-  const locationText =
-    typeof alertDetails?.location === 'string'
-      ? alertDetails.location
-      : alertDetails?.location?.latitude && alertDetails?.location?.longitude
-      ? `${alertDetails.location.latitude}, ${alertDetails.location.longitude}`
-      : driverInfo.location || 'Unknown location'
+  const locationText = resolveReportLocationText(alertDetails?.location, driverInfo.location)
 
   const [formData, setFormData] = useState({
     description: `Alert ${alertDetails?.id || ''} generated for driver ${driverInfo.name} on fleet ${driverInfo.fleetNumber} at ${new Date(driverInfo.timestamp).toLocaleString()} (${locationText}). Further investigation required.`,
@@ -223,10 +218,13 @@ export default function NCRFormModal({ isOpen, onClose, onSaved, driverInfo, ale
                 </table>
                 {normalizedScreenshots.length > 0 && (
                   <div className="grid grid-cols-3 gap-2 p-2 border-t border-black">
-                    {normalizedScreenshots.slice(0, 3).map((shot, idx) => (
+                    {normalizedScreenshots.slice(0, 4).map((shot, idx) => (
                       <div key={`${shot.url}-${idx}`} className="border border-black p-1">
                         <img src={shot.url} alt={`Evidence ${idx + 1}`} style={{width: '100%', height: '80px', objectFit: 'cover'}} />
-                        <div className="text-[10px] mt-1">
+                        <div className="text-[10px] mt-1 font-semibold">
+                          {shot.channel ? `Camera CH${shot.channel}` : `Image ${idx + 1}`}
+                        </div>
+                        <div className="text-[10px]">
                           {shot.timestamp ? new Date(shot.timestamp).toLocaleTimeString('en-GB') : `Image ${idx + 1}`}
                         </div>
                       </div>

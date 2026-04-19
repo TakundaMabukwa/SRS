@@ -25,6 +25,11 @@ function cleanText(value?: string | null): string {
   return String(value || '').trim()
 }
 
+function looksLikeCoordinatePair(value?: string | null): boolean {
+  const clean = cleanText(value)
+  return /^-?\d+(?:\.\d+)?\s*,\s*-?\d+(?:\.\d+)?$/.test(clean)
+}
+
 export function isRawVehicleIdentifier(value?: string | null): boolean {
   const clean = cleanText(value)
   return !!clean && /^\d{8,}$/.test(clean)
@@ -66,14 +71,16 @@ export function resolveReportLocationText(
   location: ReportAlertDetails['location'],
   fallback?: string
 ): string {
-  if (typeof location === 'string' && location.trim()) return location.trim()
+  if (typeof location === 'string' && location.trim() && !looksLikeCoordinatePair(location)) return location.trim()
   const locationObject =
     location && typeof location === 'object' ? location : undefined
   if (locationObject?.address) return String(locationObject.address)
+  const cleanFallback = cleanText(fallback)
+  if (cleanFallback && !looksLikeCoordinatePair(cleanFallback)) return cleanFallback
   if (locationObject?.latitude !== undefined && locationObject?.longitude !== undefined) {
     return `${locationObject.latitude}, ${locationObject.longitude}`
   }
-  return fallback || 'Unknown location'
+  return cleanFallback || 'Unknown location'
 }
 
 export function normalizeReportScreenshots(
@@ -171,7 +178,7 @@ export function getReportVehicleDisplayText(driverInfo: ReportDriverInfo): strin
 
 export function deriveReportSiteLabel(locationText?: string): string {
   const clean = cleanText(locationText)
-  if (!clean) return ''
+  if (!clean || looksLikeCoordinatePair(clean)) return ''
   const segments = clean
     .split(',')
     .map((segment) => segment.trim())
@@ -189,7 +196,8 @@ export function buildAlertEventSummary(
   const type = cleanText(alertDetails?.type) || 'video alert'
   const severity = cleanText(alertDetails?.severity)
   const timestamp = formatReportDateTime(alertDetails?.timestamp || driverInfo.timestamp)
-  const location = cleanText(locationText || resolveReportLocationText(alertDetails?.location, driverInfo.location))
+  const resolvedLocation = cleanText(locationText || resolveReportLocationText(alertDetails?.location, driverInfo.location))
+  const location = looksLikeCoordinatePair(resolvedLocation) ? '' : resolvedLocation
   const subject = driverInfo.name && driverInfo.name !== 'Unknown Driver'
     ? `${driverInfo.name} operating ${vehicle}`
     : `${vehicle}`
