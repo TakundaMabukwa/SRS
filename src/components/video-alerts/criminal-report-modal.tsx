@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import Image from 'next/image'
 import { Button } from '@/components/ui/button'
 import { Printer, X } from 'lucide-react'
@@ -8,6 +8,8 @@ import EvidenceAnnexure from '@/components/video-alerts/evidence-annexure'
 import {
   ReportAlertDetails,
   SavedAlertArtifact,
+  buildAlertEventSummary,
+  deriveReportSiteLabel,
   formatReportDateTime,
   getSafeHtml2CanvasOptions,
   normalizeReportScreenshots,
@@ -55,6 +57,17 @@ export default function CriminalReportModal({ isOpen, onClose, onSaved, driverIn
     () => resolveReportLocationText(alertDetails?.location, driverInfo.location),
     [alertDetails?.location, driverInfo.location]
   )
+  const siteLabel = useMemo(() => deriveReportSiteLabel(locationText) || 'Event Site', [locationText])
+  const eventSummary = useMemo(
+    () => buildAlertEventSummary(alertDetails, driverInfo, locationText, 'criminal'),
+    [alertDetails, driverInfo, locationText]
+  )
+  useEffect(() => {
+    if (!isOpen) return
+    setCitySite(siteLabel)
+    setSpecificArea(locationText)
+    setDescription(eventSummary)
+  }, [eventSummary, isOpen, locationText, siteLabel])
   const annexureScreenshots = useMemo(() => normalizeReportScreenshots(alertDetails?.screenshots), [alertDetails?.screenshots])
   const annexureVideos = useMemo(() => normalizeReportVideos(alertDetails?.videos), [alertDetails?.videos])
 
@@ -121,7 +134,7 @@ export default function CriminalReportModal({ isOpen, onClose, onSaved, driverIn
                 <div className="col-span-6 border-r border-slate-500">
                   <div className="border-b border-slate-500 bg-slate-200 p-2 text-center text-xl font-medium text-slate-600">PREMIER LOGISTICS SOLUTIONS</div>
                   <div className="border-b border-slate-500 bg-slate-100 p-2 text-center text-2xl font-semibold text-slate-600">Criminal report template</div>
-                  <div className="p-2 text-center text-3xl font-medium text-slate-700">Meyerton</div>
+                  <div className="p-2 text-center text-3xl font-medium text-slate-700">{siteLabel}</div>
                 </div>
                 <div className="col-span-3 text-xs">
                   <div className="border-b border-slate-500 p-2 text-center text-slate-600">Document Number</div>

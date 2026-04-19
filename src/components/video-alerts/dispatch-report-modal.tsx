@@ -1,11 +1,13 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import Image from 'next/image'
 import { Button } from '@/components/ui/button'
 import { Printer, X } from 'lucide-react'
 import EvidenceAnnexure from '@/components/video-alerts/evidence-annexure'
 import {
+  buildAlertEventSummary,
+  deriveReportSiteLabel,
   getSafeHtml2CanvasOptions,
   ReportAlertDetails,
   SavedAlertArtifact,
@@ -74,11 +76,17 @@ export default function DispatchReportModal({
   const annexureScreenshots = useMemo(() => normalizeReportScreenshots(alertDetails?.screenshots), [alertDetails?.screenshots])
   const annexureVideos = useMemo(() => normalizeReportVideos(alertDetails?.videos), [alertDetails?.videos])
 
-  const cityText = useMemo(() => {
-    const base = driverInfo.location || (typeof alertDetails?.location === 'string' ? alertDetails.location : '')
-    const city = String(base || '').split(',').map((part) => part.trim()).filter(Boolean)[0]
-    return city || ''
-  }, [alertDetails?.location, driverInfo.location])
+  const cityText = useMemo(() => deriveReportSiteLabel(locationText), [locationText])
+  const eventSummary = useMemo(
+    () => buildAlertEventSummary(alertDetails, driverInfo, locationText, 'dispatch'),
+    [alertDetails, driverInfo, locationText]
+  )
+  useEffect(() => {
+    if (!isOpen) return
+    setReason(alertDetails?.type || '')
+    setSpecificArea(locationText)
+    setIncidentDescription(eventSummary)
+  }, [alertDetails?.type, eventSummary, isOpen, locationText])
 
   const handlePrint = () => window.print()
 

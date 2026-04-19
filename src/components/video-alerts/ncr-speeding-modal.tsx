@@ -6,6 +6,10 @@ import { Button } from '@/components/ui/button'
 import { Printer, X } from 'lucide-react'
 import EvidenceAnnexure from '@/components/video-alerts/evidence-annexure'
 import {
+  buildAlertEventSummary,
+  deriveReportSiteLabel,
+  formatReportDate,
+  formatReportTime,
   getSafeHtml2CanvasOptions,
   ReportAlertDetails as AlertDetails,
   normalizeReportScreenshots,
@@ -63,6 +67,18 @@ export default function NCRSpeedingModal({ isOpen, onClose, onSaved, driverInfo,
     () => resolveReportLocationText(alertDetails?.location, driverInfo.location),
     [alertDetails?.location, driverInfo.location]
   )
+  const siteLabel = useMemo(() => deriveReportSiteLabel(locationText) || 'Event Site', [locationText])
+  const eventDate = useMemo(() => formatReportDate(alertDetails?.timestamp || driverInfo.timestamp), [alertDetails?.timestamp, driverInfo.timestamp])
+  const eventTime = useMemo(() => formatReportTime(alertDetails?.timestamp || driverInfo.timestamp), [alertDetails?.timestamp, driverInfo.timestamp])
+  const eventSummary = useMemo(
+    () => buildAlertEventSummary(alertDetails, driverInfo, locationText, 'speeding'),
+    [alertDetails, driverInfo, locationText]
+  )
+  useEffect(() => {
+    if (!isOpen) return
+    setDescription(eventSummary)
+    setSection(alertDetails?.type || 'Road Safety')
+  }, [alertDetails?.type, eventSummary, isOpen])
   useEffect(() => {
     if (!isOpen) return
     try {
@@ -161,7 +177,7 @@ export default function NCRSpeedingModal({ isOpen, onClose, onSaved, driverInfo,
               <div className="col-span-6 border-r border-black">
                 <div className="border-b border-black p-2 text-center font-bold text-2xl">SOTERIA RISK SOLUTIONS</div>
                 <div className="border-b border-black p-2 text-center font-bold text-3xl">Risk - Non-Conformance Report</div>
-                <div className="p-2 text-center text-3xl">Meyerton</div>
+                <div className="p-2 text-center text-3xl">{siteLabel}</div>
               </div>
               <div className="col-span-3 text-xs">
                 <div className="grid grid-cols-2 border-b border-black"><div className="p-2 border-r border-black bg-slate-100">Document Number</div><div className="p-2 font-bold">Non - Conformance Report / 002</div></div>
@@ -193,17 +209,17 @@ export default function NCRSpeedingModal({ isOpen, onClose, onSaved, driverInfo,
                 </div>
                 <div className="grid grid-cols-8 border-b border-black text-sm">
                   <div className="col-span-1 border-r border-black p-2 bg-slate-100">Date</div>
-                  <div className="col-span-2 border-r border-black p-2">{new Date(driverInfo.timestamp).toLocaleDateString('en-GB')}</div>
+                  <div className="col-span-2 border-r border-black p-2">{eventDate || new Date(driverInfo.timestamp).toLocaleDateString('en-GB')}</div>
                   <div className="col-span-1 border-r border-black p-2 bg-slate-100">Time</div>
-                  <div className="col-span-1 border-r border-black p-2">Multiple</div>
+                  <div className="col-span-1 border-r border-black p-2">{eventTime || 'N/A'}</div>
                   <div className="col-span-1 border-r border-black p-2 bg-slate-100">Duration</div>
-                  <div className="col-span-2 p-2">N/A</div>
+                  <div className="col-span-2 p-2">Alert event time</div>
                 </div>
                 <div className="grid grid-cols-8 border-b border-black text-sm">
                   <div className="col-span-2 border-r border-black p-2 bg-slate-100">Vehicle Fleet Number</div>
                   <div className="col-span-2 border-r border-black p-2">{driverInfo.fleetNumber}</div>
                   <div className="col-span-1 border-r border-black p-2 bg-slate-100">Area</div>
-                  <div className="col-span-3 p-2">Road Network</div>
+                  <div className="col-span-3 p-2">{siteLabel}</div>
                 </div>
                 <div className="grid grid-cols-8 border-b border-black text-sm">
                   <div className="col-span-2 border-r border-black p-2 bg-slate-100">Vehicle Registration</div>

@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import Image from 'next/image'
 import { Button } from '@/components/ui/button'
 import { Printer, X } from 'lucide-react'
@@ -8,6 +8,8 @@ import EvidenceAnnexure from '@/components/video-alerts/evidence-annexure'
 import {
   ReportAlertDetails,
   SavedAlertArtifact,
+  buildAlertEventSummary,
+  deriveReportSiteLabel,
   formatReportDate,
   getSafeHtml2CanvasOptions,
   normalizeReportScreenshots,
@@ -100,7 +102,17 @@ export default function AccidentReportModal({
     () => resolveReportLocationText(alertDetails?.location, driverInfo.location),
     [alertDetails?.location, driverInfo.location]
   )
-  const cityText = useMemo(() => inferCity(locationText), [locationText])
+  const cityText = useMemo(() => deriveReportSiteLabel(locationText) || inferCity(locationText), [locationText])
+  const eventSummary = useMemo(
+    () => buildAlertEventSummary(alertDetails, driverInfo, locationText, 'accident'),
+    [alertDetails, driverInfo, locationText]
+  )
+  useEffect(() => {
+    if (!isOpen) return
+    setIncidentType(alertDetails?.type || 'Vehicle incident')
+    setSpecificArea(locationText)
+    setIncidentDescription(eventSummary)
+  }, [alertDetails?.type, eventSummary, isOpen, locationText])
   const annexureScreenshots = useMemo(() => normalizeReportScreenshots(alertDetails?.screenshots), [alertDetails?.screenshots])
   const annexureVideos = useMemo(() => normalizeReportVideos(alertDetails?.videos), [alertDetails?.videos])
 
@@ -189,7 +201,7 @@ export default function AccidentReportModal({
                 <div className="col-span-6 border-r border-black">
                   <div className="border-b border-black bg-slate-200 p-3 text-center text-[18px] font-medium text-slate-700">PREMIER LOGISTICS SOLUTIONS</div>
                   <div className="border-b border-black bg-slate-200 p-8 text-center text-[18px] font-semibold text-slate-700">Accident report template</div>
-                  <div className="p-2 text-center text-[18px] text-slate-700">Meyerton</div>
+                  <div className="p-2 text-center text-[18px] text-slate-700">{cityText || 'Event Site'}</div>
                 </div>
                 <div className="col-span-3 text-xs">
                   <div className="border-b border-black p-1 text-center text-slate-600">Document Number</div>

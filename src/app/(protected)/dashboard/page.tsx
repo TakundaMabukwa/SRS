@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import Hls from "hls.js";
@@ -3616,6 +3616,45 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
   const selectedAlertTimeline = Array.isArray((selectedAlert as any)?.resolution_timeline)
     ? (selectedAlert as any).resolution_timeline
     : [];
+  const selectedAlertDriverInfo = useMemo(() => {
+    const clean = (value: unknown) => String(value || '').trim();
+    const isRawId = (value: unknown) => /^\d{8,}$/.test(clean(value));
+    const registrationCandidates = [
+      selectedAlert?.vehicle_registration,
+      selectedAlert?.registration_number,
+      selectedAlert?.registration,
+      selectedAlert?.vehicle?.registration_number,
+    ].map(clean).filter(Boolean);
+    const registration = registrationCandidates.find((value) => !isRawId(value)) || '';
+    const fleetNumber =
+      clean(selectedAlert?.fleet_number) ||
+      clean(selectedAlert?.vehicle?.fleet_number) ||
+      registration ||
+      clean(selectedAlert?.device_id) ||
+      clean(selectedAlert?.vehicleId) ||
+      'Unknown Vehicle';
+    return {
+      name:
+        clean(selectedAlert?.driver_name) ||
+        clean(selectedAlert?.driverName) ||
+        clean(selectedAlert?.vehicle?.driver_name) ||
+        'Unknown Driver',
+      fleetNumber,
+      registration: registration || undefined,
+      department: clean(selectedAlert?.department) || 'Fleet Operations',
+      timestamp: selectedAlertDisplayTs || selectedAlert?.timestamp || '',
+      location: selectedAlertLocationText || undefined,
+    };
+  }, [selectedAlert, selectedAlertDisplayTs, selectedAlertLocationText]);
+  const selectedAlertReportDetails = useMemo(() => ({
+    id: selectedAlert?.id,
+    type: selectedAlert?.type || selectedAlert?.alert_type,
+    severity: selectedAlert?.priority || selectedAlert?.severity,
+    timestamp: selectedAlertDisplayTs || selectedAlert?.timestamp,
+    location: selectedAlert?.location || selectedAlert?.metadata,
+    screenshots: selectedAlertScreenshots || [],
+    videos: selectedAlertVideoList || [],
+  }), [selectedAlert, selectedAlertDisplayTs, selectedAlertScreenshots, selectedAlertVideoList]);
   const buildSelectedAlertClosurePayload = useCallback((artifact?: SavedAlertArtifact | null) => ({
     source: "dashboard_trip_routing",
     alertId: selectedAlert?.id || null,
@@ -6770,23 +6809,8 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
             setShowNCRModal(false)
             await closeSelectedAlert("ncr", artifact)
           }}
-          driverInfo={{
-            name: selectedAlert.driver_name || 'Unknown Driver',
-            fleetNumber: selectedAlert.fleet_number || selectedAlert.vehicle_registration || selectedAlert.device_id,
-            registration: selectedAlert.vehicle_registration || selectedAlert.fleet_number || selectedAlert.device_id,
-            department: 'Fleet Operations',
-            timestamp: selectedAlert.timestamp,
-            location: selectedAlertLocationText
-          }}
-          alertDetails={{
-            id: selectedAlert.id,
-            type: selectedAlert.type || selectedAlert.alert_type,
-            severity: selectedAlert.priority || selectedAlert.severity,
-            timestamp: selectedAlertDisplayTs || selectedAlert.timestamp,
-            location: selectedAlert.location || selectedAlert.metadata,
-            screenshots: selectedAlertScreenshots || [],
-            videos: selectedAlertVideoList || []
-          }}
+          driverInfo={selectedAlertDriverInfo}
+          alertDetails={selectedAlertReportDetails}
         />
       )}
       {showNCRModal && selectedAlert && selectedNcrForm === 'ncr-safety-violation' && (
@@ -6797,23 +6821,8 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
             setShowNCRModal(false)
             await closeSelectedAlert("ncr", artifact)
           }}
-          driverInfo={{
-            name: selectedAlert.driver_name || 'Unknown Driver',
-            fleetNumber: selectedAlert.fleet_number || selectedAlert.vehicle_registration || selectedAlert.device_id,
-            registration: selectedAlert.vehicle_registration || selectedAlert.fleet_number || selectedAlert.device_id,
-            department: 'Fleet Operations',
-            timestamp: selectedAlert.timestamp,
-            location: selectedAlertLocationText
-          }}
-          alertDetails={{
-            id: selectedAlert.id,
-            type: selectedAlert.type || selectedAlert.alert_type,
-            severity: selectedAlert.priority || selectedAlert.severity,
-            timestamp: selectedAlertDisplayTs || selectedAlert.timestamp,
-            location: selectedAlert.location || selectedAlert.metadata,
-            screenshots: selectedAlertScreenshots || [],
-            videos: selectedAlertVideoList || []
-          }}
+          driverInfo={selectedAlertDriverInfo}
+          alertDetails={selectedAlertReportDetails}
         />
       )}
       {showNCRModal && selectedAlert && selectedNcrForm === 'ncr-speeding' && (
@@ -6824,23 +6833,8 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
             setShowNCRModal(false)
             await closeSelectedAlert("ncr", artifact)
           }}
-          driverInfo={{
-            name: selectedAlert.driver_name || 'Unknown Driver',
-            fleetNumber: selectedAlert.fleet_number || selectedAlert.vehicle_registration || selectedAlert.device_id,
-            registration: selectedAlert.vehicle_registration || selectedAlert.fleet_number || selectedAlert.device_id,
-            department: 'Fleet Operations',
-            timestamp: selectedAlert.timestamp,
-            location: selectedAlertLocationText
-          }}
-          alertDetails={{
-            id: selectedAlert.id,
-            type: selectedAlert.type || selectedAlert.alert_type,
-            severity: selectedAlert.priority || selectedAlert.severity,
-            timestamp: selectedAlertDisplayTs || selectedAlert.timestamp,
-            location: selectedAlert.location || selectedAlert.metadata,
-            screenshots: selectedAlertScreenshots || [],
-            videos: selectedAlertVideoList || []
-          }}
+          driverInfo={selectedAlertDriverInfo}
+          alertDetails={selectedAlertReportDetails}
         />
       )}
       {showReportModal && selectedAlert && selectedReportForm === 'incident-report' && (
@@ -6851,23 +6845,8 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
             setShowReportModal(false)
             await closeSelectedAlert("report", artifact)
           }}
-          driverInfo={{
-            name: selectedAlert.driver_name || 'Unknown Driver',
-            fleetNumber: selectedAlert.fleet_number || selectedAlert.vehicle_registration || selectedAlert.device_id,
-            registration: selectedAlert.vehicle_registration || selectedAlert.fleet_number || selectedAlert.device_id,
-            department: 'Fleet Operations',
-            timestamp: selectedAlert.timestamp,
-            location: selectedAlertLocationText
-          }}
-          alertDetails={{
-            id: selectedAlert.id,
-            type: selectedAlert.type || selectedAlert.alert_type,
-            severity: selectedAlert.priority || selectedAlert.severity,
-            timestamp: selectedAlertDisplayTs || selectedAlert.timestamp,
-            location: selectedAlert.location || selectedAlert.metadata,
-            screenshots: selectedAlertScreenshots || [],
-            videos: selectedAlertVideoList || []
-          }}
+          driverInfo={selectedAlertDriverInfo}
+          alertDetails={selectedAlertReportDetails}
         />
       )}
       {showReportModal && selectedAlert && selectedReportForm === 'accident-report' && (
@@ -6878,23 +6857,8 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
             setShowReportModal(false)
             await closeSelectedAlert("report", artifact)
           }}
-          driverInfo={{
-            name: selectedAlert.driver_name || 'Unknown Driver',
-            fleetNumber: selectedAlert.fleet_number || selectedAlert.vehicle_registration || selectedAlert.device_id,
-            registration: selectedAlert.vehicle_registration || selectedAlert.fleet_number || selectedAlert.device_id,
-            department: 'Fleet Operations',
-            timestamp: selectedAlert.timestamp,
-            location: selectedAlertLocationText
-          }}
-          alertDetails={{
-            id: selectedAlert.id,
-            type: selectedAlert.type || selectedAlert.alert_type,
-            severity: selectedAlert.priority || selectedAlert.severity,
-            timestamp: selectedAlertDisplayTs || selectedAlert.timestamp,
-            location: selectedAlert.location || selectedAlert.metadata,
-            screenshots: selectedAlertScreenshots || [],
-            videos: selectedAlertVideoList || []
-          }}
+          driverInfo={selectedAlertDriverInfo}
+          alertDetails={selectedAlertReportDetails}
         />
       )}
       {showReportModal && selectedAlert && selectedReportForm === 'criminal-report' && (
@@ -6905,23 +6869,8 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
             setShowReportModal(false)
             await closeSelectedAlert("report", artifact)
           }}
-          driverInfo={{
-            name: selectedAlert.driver_name || 'Unknown Driver',
-            fleetNumber: selectedAlert.fleet_number || selectedAlert.vehicle_registration || selectedAlert.device_id,
-            registration: selectedAlert.vehicle_registration || selectedAlert.fleet_number || selectedAlert.device_id,
-            department: 'Fleet Operations',
-            timestamp: selectedAlert.timestamp,
-            location: selectedAlertLocationText
-          }}
-          alertDetails={{
-            id: selectedAlert.id,
-            type: selectedAlert.type || selectedAlert.alert_type,
-            severity: selectedAlert.priority || selectedAlert.severity,
-            timestamp: selectedAlertDisplayTs || selectedAlert.timestamp,
-            location: selectedAlert.location || selectedAlert.metadata,
-            screenshots: selectedAlertScreenshots || [],
-            videos: selectedAlertVideoList || []
-          }}
+          driverInfo={selectedAlertDriverInfo}
+          alertDetails={selectedAlertReportDetails}
         />
       )}
       {showReportModal && selectedAlert && selectedReportForm === 'dispatch-report' && (
@@ -6932,23 +6881,8 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
             setShowReportModal(false)
             await closeSelectedAlert("report", artifact)
           }}
-          driverInfo={{
-            name: selectedAlert.driver_name || 'Unknown Driver',
-            fleetNumber: selectedAlert.fleet_number || selectedAlert.vehicle_registration || selectedAlert.device_id,
-            registration: selectedAlert.vehicle_registration || selectedAlert.fleet_number || selectedAlert.device_id,
-            department: 'Fleet Operations',
-            timestamp: selectedAlert.timestamp,
-            location: selectedAlertLocationText
-          }}
-          alertDetails={{
-            id: selectedAlert.id,
-            type: selectedAlert.type || selectedAlert.alert_type,
-            severity: selectedAlert.priority || selectedAlert.severity,
-            timestamp: selectedAlertDisplayTs || selectedAlert.timestamp,
-            location: selectedAlert.location || selectedAlert.metadata,
-            screenshots: selectedAlertScreenshots || [],
-            videos: selectedAlertVideoList || []
-          }}
+          driverInfo={selectedAlertDriverInfo}
+          alertDetails={selectedAlertReportDetails}
         />
       )}
 

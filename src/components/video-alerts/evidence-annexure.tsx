@@ -1,6 +1,6 @@
 'use client'
 
-import { getReportVehicleDisplayText, ReportAlertDetails, ReportDriverInfo } from './report-support'
+import { formatReportDateTime, getReportVehicleDisplayText, getReportVehicleRegistrationText, ReportAlertDetails, ReportDriverInfo } from './report-support'
 
 interface EvidenceAnnexureProps {
   title?: string
@@ -33,9 +33,9 @@ export default function EvidenceAnnexure({
         <div><span className="font-semibold">Driver:</span> {driverInfo.name || 'N/A'}</div>
         <div><span className="font-semibold">Type:</span> {alertDetails?.type || 'N/A'}</div>
         <div><span className="font-semibold">Fleet Number:</span> {driverInfo.fleetNumber || 'N/A'}</div>
-        <div><span className="font-semibold">Registration:</span> {driverInfo.registration || 'N/A'}</div>
+        <div><span className="font-semibold">Registration:</span> {getReportVehicleRegistrationText(driverInfo.registration) || 'N/A'}</div>
         <div><span className="font-semibold">Severity:</span> {alertDetails?.severity || 'N/A'}</div>
-        <div><span className="font-semibold">Timestamp:</span> {alertDetails?.timestamp || driverInfo.timestamp || 'N/A'}</div>
+        <div><span className="font-semibold">Timestamp:</span> {formatReportDateTime(alertDetails?.timestamp || driverInfo.timestamp) || 'N/A'}</div>
         <div className="col-span-2"><span className="font-semibold">Location:</span> {locationText}</div>
       </div>
       <div className="grid grid-cols-2 gap-2">
@@ -43,7 +43,7 @@ export default function EvidenceAnnexure({
           <div key={`${shot.url}-${idx}`} className="border border-slate-500 p-2">
             <div className="mb-1 text-xs font-semibold">{formatCameraLabel(shot.channel, `Screenshot ${idx + 1}`)}</div>
             <img src={shot.url} alt={`Screenshot ${idx + 1}`} className="h-36 w-full border border-slate-500 object-cover" />
-            {shot.timestamp ? <div className="mt-1 text-[10px] text-slate-500">{shot.timestamp}</div> : null}
+            {shot.timestamp ? <div className="mt-1 text-[10px] text-slate-500">{formatReportDateTime(shot.timestamp) || shot.timestamp}</div> : null}
           </div>
         ))}
         {videos.map((video, idx) => (

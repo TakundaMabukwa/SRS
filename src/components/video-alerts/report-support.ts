@@ -21,6 +21,21 @@ export interface ReportDriverInfo {
   location?: string
 }
 
+function cleanText(value?: string | null): string {
+  return String(value || '').trim()
+}
+
+export function isRawVehicleIdentifier(value?: string | null): boolean {
+  const clean = cleanText(value)
+  return !!clean && /^\d{8,}$/.test(clean)
+}
+
+export function getReportVehicleRegistrationText(value?: string | null): string {
+  const clean = cleanText(value)
+  if (!clean || isRawVehicleIdentifier(clean)) return ''
+  return clean
+}
+
 export type ScreenshotInput = {
   url?: string
   storage_url?: string
@@ -146,12 +161,58 @@ function toResolvedMediaUrl(url?: string): string {
 }
 
 export function getReportVehicleDisplayText(driverInfo: ReportDriverInfo): string {
-  const fleet = String(driverInfo.fleetNumber || '').trim()
-  const registration = String(driverInfo.registration || '').trim()
+  const fleet = cleanText(driverInfo.fleetNumber)
+  const registration = getReportVehicleRegistrationText(driverInfo.registration)
   if (fleet && registration && fleet !== registration) {
     return `${fleet} - ${registration}`
   }
   return fleet || registration || 'N/A'
+}
+
+export function deriveReportSiteLabel(locationText?: string): string {
+  const clean = cleanText(locationText)
+  if (!clean) return ''
+  const segments = clean
+    .split(',')
+    .map((segment) => segment.trim())
+    .filter(Boolean)
+  return segments[0] || clean
+}
+
+export function buildAlertEventSummary(
+  alertDetails: ReportAlertDetails | undefined,
+  driverInfo: ReportDriverInfo,
+  locationText?: string,
+  focus: 'generic' | 'camera' | 'speeding' | 'criminal' | 'dispatch' | 'accident' = 'generic'
+): string {
+  const vehicle = getReportVehicleDisplayText(driverInfo)
+  const type = cleanText(alertDetails?.type) || 'video alert'
+  const severity = cleanText(alertDetails?.severity)
+  const timestamp = formatReportDateTime(alertDetails?.timestamp || driverInfo.timestamp)
+  const location = cleanText(locationText || resolveReportLocationText(alertDetails?.location, driverInfo.location))
+  const subject = driverInfo.name && driverInfo.name !== 'Unknown Driver'
+    ? `${driverInfo.name} operating ${vehicle}`
+    : `${vehicle}`
+
+  const base = `${subject} triggered a ${type}${severity ? ` (${severity})` : ''}${timestamp ? ` on ${timestamp}` : ''}${location ? ` near ${location}` : ''}.`
+
+  if (focus === 'camera') {
+    return `${base} The event indicates the driver-facing camera view may have been obstructed or covered, which prevents proper monitoring and breaches fleet camera compliance requirements.`
+  }
+  if (focus === 'speeding') {
+    return `${base} The alert points to excessive speed or unsafe road-speed behaviour that requires investigation against the applicable route and fleet speed policy.`
+  }
+  if (focus === 'criminal') {
+    return `${base} This event requires criminal incident assessment, evidence preservation, and follow-up with any witnesses or law enforcement involved.`
+  }
+  if (focus === 'dispatch') {
+    return `${base} This dispatch event should record the response trigger, exact location, responding teams, and any operational escalation taken.`
+  }
+  if (focus === 'accident') {
+    return `${base} This incident should be reviewed for accident circumstances, impact, injuries, property damage, and immediate response actions.`
+  }
+
+  return `${base} The event should be investigated against the recorded video evidence, screenshots, and alert timeline.`
 }
 
 export function buildAlertEvidencePayload(
