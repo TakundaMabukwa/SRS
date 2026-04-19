@@ -13,6 +13,7 @@ interface HLSPlayerProps {
 }
 
 export default function HLSPlayer({ vehicleId, channel, vehicleName, onStop, fallbackVehicleIds = [] }: HLSPlayerProps) {
+  const targetLiveDelaySeconds = 3;
   const videoRef = useRef<HTMLVideoElement>(null);
   const hlsRef = useRef<Hls | null>(null);
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -89,12 +90,12 @@ export default function HLSPlayer({ vehicleId, channel, vehicleName, onStop, fal
           enableWorker: true,
           lowLatencyMode: false,
           backBufferLength: 20,
-          maxBufferLength: 8,
-          maxMaxBufferLength: 12,
-          liveSyncDurationCount: 2,
-          liveMaxLatencyDurationCount: 5,
+          maxBufferLength: 10,
+          maxMaxBufferLength: 14,
+          liveSyncDurationCount: 3,
+          liveMaxLatencyDurationCount: 6,
           liveDurationInfinity: true,
-          maxLiveSyncPlaybackRate: 1.2,
+          maxLiveSyncPlaybackRate: 1.05,
         });
 
         hlsRef.current = hls;
@@ -113,8 +114,8 @@ export default function HLSPlayer({ vehicleId, channel, vehicleName, onStop, fal
           if (!mounted || !Number.isFinite(data.details?.edge)) return;
           const liveEdge = Number(data.details.edge);
           const latency = liveEdge - video.currentTime;
-          if (Number.isFinite(latency) && latency > 2.5) {
-            const targetTime = Math.max(0, liveEdge - 0.4);
+          if (Number.isFinite(latency) && latency > targetLiveDelaySeconds + 1.5) {
+            const targetTime = Math.max(0, liveEdge - targetLiveDelaySeconds);
             if (Math.abs(video.currentTime - targetTime) > 0.25) {
               video.currentTime = targetTime;
             }
@@ -214,8 +215,8 @@ export default function HLSPlayer({ vehicleId, channel, vehicleName, onStop, fal
         const bufferedEnd = video.buffered.end(video.buffered.length - 1);
         const buffered = Math.max(0, bufferedEnd - video.currentTime);
         const liveLag = Math.max(0, bufferedEnd - video.currentTime);
-        if (liveLag > 3 && !video.paused) {
-          video.currentTime = Math.max(0, bufferedEnd - 0.4);
+        if (liveLag > targetLiveDelaySeconds + 1.5 && !video.paused) {
+          video.currentTime = Math.max(0, bufferedEnd - targetLiveDelaySeconds);
         }
         setStats(`Buffer: ${buffered.toFixed(1)}s | Time: ${video.currentTime.toFixed(1)}s | Lag: ${liveLag.toFixed(1)}s`);
       }
