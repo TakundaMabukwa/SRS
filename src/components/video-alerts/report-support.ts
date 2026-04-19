@@ -63,7 +63,9 @@ export interface SavedAlertArtifact {
   documentUrl: string
   documentName: string
   documentType: string
+  storagePath?: string
   bundleUrl?: string
+  bundlePath?: string
   closurePayload: Record<string, any>
 }
 
@@ -282,15 +284,21 @@ export async function saveAlertArtifactBundle({
   priority?: string
   extraPayload?: Record<string, any>
 }): Promise<SavedAlertArtifact> {
-  const baseName = fileName.replace(/\.pdf$/i, '')
+  const originalFileName = sanitizePathSegment(fileName.replace(/\\/g, '/').split('/').pop() || fileName)
+  const baseName = originalFileName.replace(/\.pdf$/i, '')
   const safeBaseName = sanitizePathSegment(baseName)
+  const alertFolder = sanitizePathSegment(alertDetails?.id || driverInfo.fleetNumber || 'unlinked-alert')
+  const typeFolder = sanitizePathSegment(String(reportType || 'report').toLowerCase())
+  const timestampFolder = new Date().toISOString().replace(/[:.]/g, '-')
+  const storagePrefix = `video-alerts/${alertFolder}/${typeFolder}/${timestampFolder}`
+  const storageFileName = `${storagePrefix}/${safeBaseName}.pdf`
 
   const { error: uploadError } = await supabase.storage
     .from(storageBucket)
-    .upload(fileName, pdfBlob, { contentType: 'application/pdf' })
+    .upload(storageFileName, pdfBlob, { contentType: 'application/pdf', upsert: true })
   if (uploadError) throw uploadError
 
-  const { data: publicData } = supabase.storage.from(storageBucket).getPublicUrl(fileName)
+  const { data: publicData } = supabase.storage.from(storageBucket).getPublicUrl(storageFileName)
   const documentUrl = publicData?.publicUrl || ''
 
   const closurePayload: Record<string, any> = buildAlertEvidencePayload(driverInfo, alertDetails, {
@@ -303,8 +311,9 @@ export async function saveAlertArtifactBundle({
   })
 
   let bundleUrl = ''
+  let bundlePath = ''
   try {
-    const bundleName = `${safeBaseName}.json`
+    const bundleName = `${storagePrefix}/${safeBaseName}.json`
     const bundleBlob = new Blob([JSON.stringify(closurePayload, null, 2)], {
       type: 'application/json',
     })
@@ -315,6 +324,7 @@ export async function saveAlertArtifactBundle({
         upsert: true,
       })
     if (!bundleError) {
+      bundlePath = bundleName
       const { data: bundlePublicData } = supabase.storage.from(storageBucket).getPublicUrl(bundleName)
       bundleUrl = bundlePublicData?.publicUrl || ''
       closurePayload.bundleUrl = bundleUrl
@@ -356,9 +366,11 @@ export async function saveAlertArtifactBundle({
 
   return {
     documentUrl,
-    documentName: fileName,
+    documentName: originalFileName,
     documentType: reportType,
+    storagePath: storageFileName,
     bundleUrl,
+    bundlePath,
     closurePayload,
   }
 }
