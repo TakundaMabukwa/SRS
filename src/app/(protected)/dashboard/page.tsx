@@ -3089,33 +3089,69 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
           decodeURIComponent(getCookieValue("email") || "") ||
           decodeURIComponent(getCookieValue("name") || "") ||
           "dashboard_user";
+        const closePayload = {
+          closureType,
+          notes,
+          actor,
+          reasonCode,
+          reasonLabel: closureLabel,
+          documentUrl: artifact?.documentUrl || undefined,
+          documentName: artifact?.documentName || undefined,
+          documentType: artifact?.documentType || undefined,
+          payload: {
+            ...buildSelectedAlertClosurePayload(artifact),
+            ncrForm: closureType === "ncr" ? selectedNcrForm : undefined,
+            reportForm: closureType === "report" ? selectedReportForm : undefined,
+          },
+        };
 
-        const res = await fetch(
-          `${videoProxyBase}/alerts/${encodeURIComponent(String(selectedAlert.id))}/close`,
-          {
+        const postClosure = async (path: string, body: Record<string, any>) => {
+          const res = await fetch(`${videoProxyBase}${path}`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             signal: AbortSignal.timeout(9000),
-            body: JSON.stringify({
-              closureType,
-              notes,
-              actor,
-              reasonCode,
-              reasonLabel: closureLabel,
-              documentUrl: artifact?.documentUrl || undefined,
-              documentName: artifact?.documentName || undefined,
-              documentType: artifact?.documentType || undefined,
-              payload: {
-                ...buildSelectedAlertClosurePayload(artifact),
-                ncrForm: closureType === "ncr" ? selectedNcrForm : undefined,
-                reportForm: closureType === "report" ? selectedReportForm : undefined,
-              },
-            }),
-          }
+            body: JSON.stringify(body),
+          });
+          const parsed = await res.json().catch(() => ({}));
+          return { res, body: parsed };
+        };
+
+        let response = await postClosure(
+          `/alerts/${encodeURIComponent(String(selectedAlert.id))}/close`,
+          closePayload
         );
-        const body = await res.json().catch(() => ({}));
-        if (!res.ok || !body?.success) {
-          throw new Error(body?.message || `Failed to close alert (${res.status})`);
+
+        if (!response.res.ok && response.res.status === 404) {
+          if (closureType === "false_alert") {
+            response = await postClosure(
+              `/alerts/${encodeURIComponent(String(selectedAlert.id))}/mark-false`,
+              {
+                reason: notes,
+                markedBy: actor,
+                reasonCode,
+              }
+            );
+          } else {
+            response = await postClosure(
+              `/alerts/${encodeURIComponent(String(selectedAlert.id))}/resolve-with-notes`,
+              {
+                notes,
+                resolvedBy: actor,
+                ncrDocumentUrl: artifact?.documentUrl || undefined,
+                ncrDocumentName: artifact?.documentName || undefined,
+              }
+            );
+            if (!response.res.ok && response.res.status === 404) {
+              response = await postClosure(
+                `/alerts/${encodeURIComponent(String(selectedAlert.id))}/resolve`,
+                {}
+              );
+            }
+          }
+        }
+
+        if (!response.res.ok || !response.body?.success) {
+          throw new Error(response.body?.message || `Failed to close alert (${response.res.status})`);
         }
         setAlertActionSuccess(`Alert closed as ${closureType.replace(/_/g, " ")}.`);
         setCurrentTripAlerts((prev: any) => {
@@ -6424,7 +6460,7 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
                           <h3 className="text-lg font-semibold text-slate-900">
                             Camera Screenshots
                           </h3>
-                          {selectedAlertScreenshotsWithFallback.length > visibleAlertScreenshots.length ? (
+                          {selectedAlertScreenshots.length > visibleAlertScreenshots.length ? (
                             <Button
                               type="button"
                               variant="outline"
@@ -6433,12 +6469,12 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
                             >
                               {alertScreenshotsExpanded
                                 ? "Show less"
-                                : `View more (${selectedAlertScreenshotsWithFallback.length - visibleAlertScreenshots.length})`}
+                                : `View more (${selectedAlertScreenshots.length - visibleAlertScreenshots.length})`}
                             </Button>
                           ) : null}
                         </div>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                          {alertRealtimeLoading && selectedAlertScreenshotsWithFallback.length === 0 ? (
+                          {alertRealtimeLoading && selectedAlertScreenshots.length === 0 ? (
                             <>
                               {[0, 1].map((idx) => (
                                 <Card key={`shot-skeleton-${idx}`} className="overflow-hidden border-slate-200 shadow-sm">
@@ -6449,7 +6485,7 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
                                 </Card>
                               ))}
                             </>
-                          ) : selectedAlertScreenshotsWithFallback.length > 0 ? (
+                          ) : selectedAlertScreenshots.length > 0 ? (
                             visibleAlertScreenshots.map((screenshot, idx) => (
                               <Card key={String(screenshot.id || screenshot.url || idx)} className="overflow-hidden border-slate-200 shadow-sm hover:shadow-md transition-shadow">
                                 <div className="relative aspect-video bg-slate-900">
@@ -6478,6 +6514,28 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
                                 </div>
                               </Card>
                             ))
+                          ) : derivedAlertScreenshotUrl ? (
+                            <Card className="overflow-hidden border-slate-200 shadow-sm">
+                              <div className="relative aspect-video bg-slate-900">
+                                <img
+                                  src={derivedAlertScreenshotUrl}
+                                  alt="Derived alert screenshot"
+                                  className="w-full h-full object-cover"
+                                />
+                                <div className="absolute top-2 left-2 bg-black/80 text-white px-3 py-1 rounded text-xs font-medium">
+                                  Event Video Snapshot
+                                </div>
+                                <div className="absolute bottom-2 right-2 bg-black/80 text-white px-3 py-1 rounded text-xs">
+                                  {new Date(selectedAlert.timestamp).toLocaleTimeString()}
+                                </div>
+                              </div>
+                              <div className="p-2 border-t flex justify-between items-center">
+                                <span className="text-xs text-slate-600">Derived from completed alert video</span>
+                                <Button variant="ghost" size="sm" onClick={() => window.open(derivedAlertScreenshotUrl, '_blank')}>
+                                  <Download className="w-3 h-3" />
+                                </Button>
+                              </div>
+                            </Card>
                           ) : (
                             <div className="col-span-2 text-center py-12 text-slate-500">
                               {selectedAlertPlaybackLoading

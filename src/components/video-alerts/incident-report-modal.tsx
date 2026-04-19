@@ -13,9 +13,9 @@ import {
   formatReportDate,
   formatReportDateTime,
   formatReportTime,
-  getSafeHtml2CanvasOptions,
   normalizeReportScreenshots,
   normalizeReportVideos,
+  renderElementToPdfBlob,
   resolveReportLocationText,
   saveAlertArtifactBundle,
 } from '@/components/video-alerts/report-support'
@@ -80,19 +80,9 @@ export default function IncidentReportModal({ isOpen, onClose, onSaved, driverIn
       const element = document.getElementById('incident-report-content')
       if (!element) throw new Error('Form content not found')
 
-      const html2canvas = (await import('html2canvas')).default
-      const jsPDF = (await import('jspdf')).default
-
-      const canvas = await html2canvas(element, getSafeHtml2CanvasOptions(element))
-      const imgData = canvas.toDataURL('image/png')
-      const pdf = new jsPDF('p', 'mm', 'a4')
-      const width = pdf.internal.pageSize.getWidth()
-      const height = (canvas.height * width) / canvas.width
-      pdf.addImage(imgData, 'PNG', 0, 0, width, height)
-      const blob = pdf.output('blob')
+      const blob = await renderElementToPdfBlob(element)
 
       const fileName = `incident-report-${driverInfo.fleetNumber}-${Date.now()}.pdf`
-      pdf.save(fileName)
 
       const artifact = await saveAlertArtifactBundle({
         supabase,

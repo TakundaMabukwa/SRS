@@ -8,11 +8,11 @@ import EvidenceAnnexure from '@/components/video-alerts/evidence-annexure'
 import {
   buildAlertEventSummary,
   deriveReportSiteLabel,
-  getSafeHtml2CanvasOptions,
   ReportAlertDetails,
   SavedAlertArtifact,
   normalizeReportScreenshots,
   normalizeReportVideos,
+  renderElementToPdfBlob,
   resolveReportLocationText,
   saveAlertArtifactBundle,
 } from '@/components/video-alerts/report-support'
@@ -98,19 +98,9 @@ export default function DispatchReportModal({
       const element = document.getElementById('dispatch-report-content')
       if (!element) throw new Error('Form content not found')
 
-      const html2canvas = (await import('html2canvas')).default
-      const jsPDF = (await import('jspdf')).default
-
-      const canvas = await html2canvas(element, getSafeHtml2CanvasOptions(element))
-      const imgData = canvas.toDataURL('image/png')
-      const pdf = new jsPDF('p', 'mm', 'a4')
-      const width = pdf.internal.pageSize.getWidth()
-      const height = (canvas.height * width) / canvas.width
-      pdf.addImage(imgData, 'PNG', 0, 0, width, height)
-      const blob = pdf.output('blob')
+      const blob = await renderElementToPdfBlob(element)
 
       const fileName = `dispatch-report-${driverInfo.fleetNumber}-${Date.now()}.pdf`
-      pdf.save(fileName)
 
       const artifact = await saveAlertArtifactBundle({
         supabase,

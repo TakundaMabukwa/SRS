@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 import Image from 'next/image'
 import { Button } from '@/components/ui/button'
 import { Printer, X } from 'lucide-react'
-import { getSafeHtml2CanvasOptions, normalizeReportScreenshots, resolveReportLocationText, SavedAlertArtifact, saveAlertArtifactBundle } from '@/components/video-alerts/report-support'
+import { normalizeReportScreenshots, renderElementToPdfBlob, resolveReportLocationText, SavedAlertArtifact, saveAlertArtifactBundle } from '@/components/video-alerts/report-support'
 
 interface AlertDetails {
   id?: string
@@ -66,23 +66,9 @@ export default function NCRFormModal({ isOpen, onClose, onSaved, driverInfo, ale
       const element = document.getElementById('ncr-form-content')
       if (!element) throw new Error('Form content not found')
       
-      const html2canvas = (await import('html2canvas')).default
-      const jsPDF = (await import('jspdf')).default
-      
-      const canvas = await html2canvas(element, getSafeHtml2CanvasOptions(element))
-      
-      const imgData = canvas.toDataURL('image/png')
-      const pdf = new jsPDF('p', 'mm', 'a4')
-      const pdfWidth = pdf.internal.pageSize.getWidth()
-      const pdfHeight = (canvas.height * pdfWidth) / canvas.width
-      
-      pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight)
-      const pdfBlob = pdf.output('blob')
+      const pdfBlob = await renderElementToPdfBlob(element)
       
       const fileName = `NCR-${driverInfo.fleetNumber}-${Date.now()}.pdf`
-      
-      // Download the PDF
-      pdf.save(fileName)
       
       const artifact = await saveAlertArtifactBundle({
         supabase,

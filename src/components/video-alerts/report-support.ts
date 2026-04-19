@@ -431,3 +431,31 @@ export function getSafeHtml2CanvasOptions(element: HTMLElement) {
     },
   }
 }
+
+export async function renderElementToPdfBlob(element: HTMLElement): Promise<Blob> {
+  const html2canvas = (await import('html2canvas')).default
+  const jsPDF = (await import('jspdf')).default
+
+  const canvas = await html2canvas(element, getSafeHtml2CanvasOptions(element))
+  const imgData = canvas.toDataURL('image/png')
+  const pdf = new jsPDF('p', 'mm', 'a4')
+  const pageWidth = pdf.internal.pageSize.getWidth()
+  const pageHeight = pdf.internal.pageSize.getHeight()
+  const imgWidth = pageWidth
+  const imgHeight = (canvas.height * imgWidth) / canvas.width
+
+  let heightLeft = imgHeight
+  let position = 0
+
+  pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight)
+  heightLeft -= pageHeight
+
+  while (heightLeft > 0) {
+    position = heightLeft - imgHeight
+    pdf.addPage()
+    pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight)
+    heightLeft -= pageHeight
+  }
+
+  return pdf.output('blob')
+}
