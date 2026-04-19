@@ -7,8 +7,8 @@ interface EvidenceAnnexureProps {
   alertDetails?: ReportAlertDetails
   driverInfo: ReportDriverInfo
   locationText: string
-  screenshots: Array<{ url: string; timestamp?: string }>
-  videos: Array<{ key?: string; label?: string; url?: string }>
+  screenshots: Array<{ url: string; timestamp?: string; channel?: number }>
+  videos: Array<{ key?: string; label?: string; url?: string; channel?: number }>
 }
 
 export default function EvidenceAnnexure({
@@ -19,6 +19,11 @@ export default function EvidenceAnnexure({
   screenshots,
   videos,
 }: EvidenceAnnexureProps) {
+  const formatCameraLabel = (channel?: number, fallback?: string) => {
+    if (channel && Number.isFinite(channel) && channel > 0) return `Camera CH${channel}`
+    return fallback || 'Camera'
+  }
+
   return (
     <div className="space-y-2 border border-slate-500 p-3">
       <p className="font-semibold text-slate-800">{title}</p>
@@ -36,17 +41,19 @@ export default function EvidenceAnnexure({
       <div className="grid grid-cols-2 gap-2">
         {screenshots.map((shot, idx) => (
           <div key={`${shot.url}-${idx}`} className="border border-slate-500 p-2">
-            <div className="mb-1 text-xs font-semibold">Screenshot {idx + 1}</div>
+            <div className="mb-1 text-xs font-semibold">{formatCameraLabel(shot.channel, `Screenshot ${idx + 1}`)}</div>
             <img src={shot.url} alt={`Screenshot ${idx + 1}`} className="h-36 w-full border border-slate-500 object-cover" />
             {shot.timestamp ? <div className="mt-1 text-[10px] text-slate-500">{shot.timestamp}</div> : null}
           </div>
         ))}
         {videos.map((video, idx) => (
           <div key={`${video.url}-${idx}`} className="border border-slate-500 p-2">
-            <div className="mb-1 text-xs font-semibold">{video.label || `Video ${idx + 1}`}</div>
+            <div className="mb-1 text-xs font-semibold">
+              {video.label || `${formatCameraLabel(video.channel, 'Video')} Link`}
+            </div>
             {video.url ? (
               <div className="space-y-2 border border-slate-500 p-3 text-xs">
-                <p className="font-medium text-slate-700">Video link</p>
+                <p className="font-medium text-slate-700">{formatCameraLabel(video.channel, 'Video')} link</p>
                 <a
                   href={video.url}
                   target="_blank"

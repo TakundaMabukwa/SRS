@@ -8,8 +8,8 @@ export interface ReportAlertDetails {
   severity?: string
   timestamp?: string
   location?: { latitude?: number; longitude?: number; address?: string } | string
-  screenshots?: Array<{ url?: string; timestamp?: string; storage_url?: string; signed_url?: string; image_url?: string }>
-  videos?: Array<{ key?: string; label?: string; url?: string; src?: string; path?: string }>
+  screenshots?: Array<{ url?: string; timestamp?: string; storage_url?: string; signed_url?: string; image_url?: string; channel?: number }>
+  videos?: Array<{ key?: string; label?: string; url?: string; src?: string; path?: string; channel?: number }>
 }
 
 export interface ReportDriverInfo {
@@ -27,6 +27,7 @@ export type ScreenshotInput = {
   signed_url?: string
   image_url?: string
   timestamp?: string
+  channel?: number
 }
 
 export type VideoInput = {
@@ -35,6 +36,7 @@ export type VideoInput = {
   url?: string
   src?: string
   path?: string
+  channel?: number
 }
 
 export interface SavedAlertArtifact {
@@ -61,9 +63,9 @@ export function resolveReportLocationText(
 
 export function normalizeReportScreenshots(
   input?: ReportAlertDetails['screenshots']
-): Array<{ url: string; timestamp?: string }> {
+): Array<{ url: string; timestamp?: string; channel?: number }> {
   const screenshots = Array.isArray(input) ? (input as ScreenshotInput[]) : []
-  const out: Array<{ url: string; timestamp?: string }> = []
+  const out: Array<{ url: string; timestamp?: string; channel?: number }> = []
   const seen = new Set<string>()
   for (const shot of screenshots) {
     const rawUrl = String(shot?.url || shot?.storage_url || shot?.signed_url || shot?.image_url || '').trim()
@@ -71,16 +73,21 @@ export function normalizeReportScreenshots(
     if (!url || (!/^https?:\/\//i.test(url) && !url.startsWith('/'))) continue
     if (seen.has(url)) continue
     seen.add(url)
-    out.push({ url, timestamp: shot?.timestamp })
+    const channel = Number(shot?.channel || 0)
+    out.push({ url, timestamp: shot?.timestamp, channel: Number.isFinite(channel) && channel > 0 ? channel : undefined })
   }
-  return out
+  return out.sort((a, b) => {
+    const channelDelta = Number(a.channel || Number.MAX_SAFE_INTEGER) - Number(b.channel || Number.MAX_SAFE_INTEGER)
+    if (channelDelta !== 0) return channelDelta
+    return String(a.timestamp || '').localeCompare(String(b.timestamp || ''))
+  })
 }
 
 export function normalizeReportVideos(
   input?: ReportAlertDetails['videos']
-): Array<{ key?: string; label?: string; url?: string }> {
+): Array<{ key?: string; label?: string; url?: string; channel?: number }> {
   const videos = Array.isArray(input) ? (input as VideoInput[]) : []
-  const out: Array<{ key?: string; label?: string; url?: string }> = []
+  const out: Array<{ key?: string; label?: string; url?: string; channel?: number }> = []
   const seen = new Set<string>()
   for (const video of videos) {
     const rawUrl = String(video?.url || video?.src || video?.path || '').trim()
@@ -88,9 +95,27 @@ export function normalizeReportVideos(
     if (!url || (!/^https?:\/\//i.test(url) && !url.startsWith('/'))) continue
     if (seen.has(url)) continue
     seen.add(url)
-    out.push({ key: video?.key, label: video?.label, url })
+    const inferredChannel = inferMediaChannel(video)
+    out.push({ key: video?.key, label: video?.label, url, channel: inferredChannel || undefined })
   }
-  return out
+  return out.sort((a, b) => {
+    const channelDelta = Number(a.channel || Number.MAX_SAFE_INTEGER) - Number(b.channel || Number.MAX_SAFE_INTEGER)
+    if (channelDelta !== 0) return channelDelta
+    return String(a.label || '').localeCompare(String(b.label || ''))
+  })
+}
+
+function inferMediaChannel(value: { channel?: number; label?: string; key?: string; url?: string; src?: string; path?: string }) {
+  const candidates = [
+    Number(value?.channel || 0),
+    Number(String(value?.label || '').match(/\bch(?:annel)?\s*([1-9]\d*)\b/i)?.[1] || 0),
+    Number(String(value?.key || '').match(/\bch(?:annel)?[_-]?([1-9]\d*)\b/i)?.[1] || 0),
+    Number(String(value?.url || value?.src || value?.path || '').match(/channel[_-](\d+)/i)?.[1] || 0),
+  ]
+  for (const candidate of candidates) {
+    if (Number.isFinite(candidate) && candidate > 0) return candidate
+  }
+  return null
 }
 
 function sanitizePathSegment(value: string): string {
@@ -138,12 +163,14 @@ export function buildAlertEvidencePayload(
     index: index + 1,
     url: toResolvedMediaUrl(shot.url),
     timestamp: shot.timestamp || null,
+    channel: shot.channel || null,
   }))
   const videos = normalizeReportVideos(alertDetails?.videos).map((video, index) => ({
     index: index + 1,
     key: video.key || null,
     label: video.label || `Video ${index + 1}`,
     url: toResolvedMediaUrl(video.url),
+    channel: video.channel || null,
   }))
 
   return {
