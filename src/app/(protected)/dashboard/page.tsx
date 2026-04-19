@@ -118,16 +118,19 @@ function UniversalVideoPlayer({
   fallbackUrls = [],
   className = "w-full rounded mb-3",
   onPlayableChange,
+  onScreenshotCapture,
   autoPlay = false,
 }: {
   url: string;
   fallbackUrls?: string[];
   className?: string;
   onPlayableChange?: (playable: boolean) => void;
+  onScreenshotCapture?: (blob: Blob) => void;
   autoPlay?: boolean;
 }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const [playbackError, setPlaybackError] = useState("");
+  const screenshotCapturedForRef = useRef("");
   const candidateSources = React.useMemo(() => {
     const out: string[] = [];
     const push = (v?: string) => {
@@ -148,6 +151,7 @@ function UniversalVideoPlayer({
   useEffect(() => {
     setPlaybackError("");
     setSourceIndex(0);
+    screenshotCapturedForRef.current = "";
   }, [url, fallbackUrls]);
 
   useEffect(() => {
@@ -212,63 +216,77 @@ function UniversalVideoPlayer({
       // Browser autoplay policy can still block; user can press play.
     });
   }, [autoPlay]);
+  const tryCaptureScreenshot = useCallback(() => {
+    const videoEl = videoRef.current;
+    if (!videoEl || !onScreenshotCapture || !activeUrl) return;
+    if (screenshotCapturedForRef.current === activeUrl) return;
+    if ((videoEl.videoWidth || 0) <= 0 || (videoEl.videoHeight || 0) <= 0) return;
+
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, videoEl.videoWidth || 1280);
+    canvas.height = Math.max(1, videoEl.videoHeight || 720);
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.drawImage(videoEl, 0, 0, canvas.width, canvas.height);
+    canvas.toBlob((blob) => {
+      if (!blob) return;
+      screenshotCapturedForRef.current = activeUrl;
+      onScreenshotCapture(blob);
+    }, "image/jpeg", 0.9);
+  }, [activeUrl, onScreenshotCapture]);
 
   return (
     <div className="mb-3">
-      {isJobMp4Url ? (
-        <div className="space-y-2">
-          <iframe
-            key={activeUrl}
-            src={resolveMediaUrlForCurrentOrigin(activeUrl)}
-            title="Browser-native video playback"
-            className={`${className} min-h-[360px] rounded-xl border border-cyan-400/20 bg-black`}
-            allow="autoplay; fullscreen"
-          />
-          <div className="flex justify-end">
-            <Button
-              variant="outline"
-              size="sm"
-              className="border-cyan-400/40 bg-slate-900 text-cyan-200 hover:bg-slate-800"
-              onClick={() => window.open(resolveMediaUrlForCurrentOrigin(activeUrl), "_blank")}
-            >
-              Open In Browser
-            </Button>
-          </div>
-        </div>
-      ) : (
-        <video
-          ref={videoRef}
-          controls
-          preload="metadata"
-          playsInline
-          autoPlay={autoPlay}
-          muted={autoPlay}
-          className={className}
-          src={!activeUrl || isHlsUrl ? undefined : activeUrl}
-          onLoadedMetadata={() => {
-            onPlayableChange?.(true);
-            tryAutoplay();
-          }}
-          onCanPlay={() => {
-            onPlayableChange?.(true);
-            tryAutoplay();
-          }}
-          onError={() => {
-            if (sourceIndex < candidateSources.length - 1) {
-              setSourceIndex((prev) => prev + 1);
-              return;
-            }
-            setPlaybackError("Browser could not decode this format. Use Open/Download for this clip.");
-            onPlayableChange?.(false);
-          }}
-        >
-          Your browser does not support video playback.
-        </video>
-      )}
+      <video
+        ref={videoRef}
+        controls
+        preload="metadata"
+        playsInline
+        autoPlay={autoPlay}
+        muted={autoPlay}
+        className={className}
+        src={!activeUrl || isHlsUrl ? undefined : resolveMediaUrlForCurrentOrigin(activeUrl)}
+        onLoadedMetadata={() => {
+          onPlayableChange?.(true);
+          tryAutoplay();
+        }}
+        onLoadedData={() => {
+          onPlayableChange?.(true);
+          tryAutoplay();
+          tryCaptureScreenshot();
+        }}
+        onCanPlay={() => {
+          onPlayableChange?.(true);
+          tryAutoplay();
+          tryCaptureScreenshot();
+        }}
+        onError={() => {
+          if (sourceIndex < candidateSources.length - 1) {
+            setSourceIndex((prev) => prev + 1);
+            return;
+          }
+          setPlaybackError("Browser could not decode this format. Use Open/Download for this clip.");
+          onPlayableChange?.(false);
+        }}
+      >
+        Your browser does not support video playback.
+      </video>
       {candidateSources.length > 1 && (
         <p className="text-xs text-slate-400">
           Trying source {sourceIndex + 1}/{candidateSources.length}
         </p>
+      )}
+      {isJobMp4Url && (
+        <div className="flex justify-end">
+          <Button
+            variant="outline"
+            size="sm"
+            className="border-cyan-400/40 bg-slate-900 text-cyan-200 hover:bg-slate-800"
+            onClick={() => window.open(resolveMediaUrlForCurrentOrigin(activeUrl), "_blank")}
+          >
+            Open In Browser
+          </Button>
+        </div>
       )}
       {looksLikeRawH264 && (
         <p className="text-xs text-amber-700">Raw H264 clip detected. If it does not play, use Download/Open.</p>
@@ -3611,6 +3629,13 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
         return String(a?.label || "").localeCompare(String(b?.label || ""));
       });
   })();
+  const selectedAlertScreenshotCandidateCount = selectedAlertEventVideos
+    .filter((video) => {
+      const channel = getAlertMediaChannel(video);
+      if (channel && selectedAlertScreenshots.some((shot: any) => Number(shot?.channel || 0) === channel)) return false;
+      return !!String(video?.url || "").trim();
+    })
+    .slice(0, 2).length;
   const primaryAlertVideo = selectedAlertEventVideos[0] || null;
   const shouldShowOnlySdCard =
     !!cameraSdVideo &&
@@ -3809,149 +3834,49 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
       setAlertScreenshotsExpanded(false);
     }
   }, [alertDetailModalOpen, selectedAlert?.id]);
+  const derivedAlertScreenshotObjectUrlsRef = useRef<string[]>([]);
   useEffect(() => {
-    let cancelled = false;
-    const objectUrls: string[] = [];
-
-    const waitForVideoEvent = (video: HTMLVideoElement, eventName: "loadeddata" | "canplay" | "seeked", timeoutMs = 8000) =>
-      new Promise<void>((resolve, reject) => {
-        const timer = window.setTimeout(() => {
-          cleanup();
-          reject(new Error(`video ${eventName} timeout`));
-        }, timeoutMs);
-
-        const cleanup = () => {
-          window.clearTimeout(timer);
-          video.removeEventListener(eventName, onReady);
-          video.removeEventListener("error", onError);
-        };
-
-        const onReady = () => {
-          cleanup();
-          resolve();
-        };
-
-        const onError = () => {
-          cleanup();
-          reject(new Error(`video ${eventName} failed`));
-        };
-
-        video.addEventListener(eventName, onReady, { once: true });
-        video.addEventListener("error", onError, { once: true });
-      });
-
-    async function deriveAlertScreenshotsFromVideos() {
-      if (!alertDetailModalOpen || !selectedAlert?.id) {
-        setDerivedAlertScreenshots([]);
-        setDerivedAlertScreenshotLoading(false);
-        return;
-      }
-
-      if (selectedAlertPlaybackLoading) {
-        setDerivedAlertScreenshots([]);
-        setDerivedAlertScreenshotLoading(true);
-        return;
-      }
-
-      const existingChannels = new Set(
-        selectedAlertScreenshots
-          .map((shot: any) => Number(shot?.channel || 0))
-          .filter((channel) => Number.isFinite(channel) && channel > 0)
-      );
-      const candidateVideos = selectedAlertEventVideos.filter((video) => {
-        const channel = getAlertMediaChannel(video);
-        if (channel && existingChannels.has(channel)) return false;
-        return !!String(video?.url || "").trim();
-      });
-
-      if (candidateVideos.length === 0) {
-        setDerivedAlertScreenshots([]);
-        setDerivedAlertScreenshotLoading(false);
-        return;
-      }
-
-      setDerivedAlertScreenshotLoading(true);
-      setDerivedAlertScreenshots([]);
-
-      try {
-        const nextDerived: Array<{ url: string; channel?: number; timestamp?: string; offset?: number }> = [];
-        for (const candidateVideo of candidateVideos.slice(0, 2)) {
-          const video = document.createElement("video");
-          video.muted = true;
-          video.playsInline = true;
-          video.preload = "auto";
-          video.crossOrigin = "anonymous";
-          video.src = resolveMediaUrlForCurrentOrigin(String(candidateVideo?.url || "").trim());
-          video.load();
-
-          await waitForVideoEvent(video, "loadeddata", 10000);
-
-          const duration = Number.isFinite(video.duration) ? video.duration : 0;
-          const targetTime = duration > 0.35 ? Math.min(0.35, duration * 0.2) : 0;
-          if (targetTime > 0) {
-            try {
-              video.currentTime = targetTime;
-              await waitForVideoEvent(video, "seeked", 6000);
-            } catch {
-              // Some clips do not seek cleanly before enough data is buffered.
-              // We'll fall back to the first decodable frame already loaded.
-            }
-          }
-
-          const canvas = document.createElement("canvas");
-          canvas.width = Math.max(1, video.videoWidth || 1280);
-          canvas.height = Math.max(1, video.videoHeight || 720);
-          const ctx = canvas.getContext("2d");
-          if (!ctx) throw new Error("canvas context unavailable");
-          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-          const blob = await new Promise<Blob | null>((resolve) => {
-            canvas.toBlob((value) => resolve(value), "image/jpeg", 0.9);
-          });
-          if (!blob) throw new Error("screenshot blob generation failed");
-
-          const objectUrl = URL.createObjectURL(blob);
-          objectUrls.push(objectUrl);
-          nextDerived.push({
-            url: objectUrl,
-            channel: getAlertMediaChannel(candidateVideo) || undefined,
-            timestamp: selectedAlertDisplayTs || selectedAlert?.timestamp,
-            offset: 0,
-          });
-        }
-        if (!cancelled) {
-          setDerivedAlertScreenshots(nextDerived);
-        }
-      } catch (error) {
-        if (!cancelled) {
-          console.warn("[Dashboard Alert Modal] Failed to derive screenshots from event videos", {
-            alertId: selectedAlert?.id,
-            message: error instanceof Error ? error.message : String(error),
-          });
-          setDerivedAlertScreenshots([]);
-        }
-      } finally {
-        if (!cancelled) {
-          setDerivedAlertScreenshotLoading(false);
-        }
-      }
-    }
-
-    void deriveAlertScreenshotsFromVideos();
-
-    return () => {
-      cancelled = true;
-      objectUrls.forEach((url) => URL.revokeObjectURL(url));
-    };
+    derivedAlertScreenshotObjectUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
+    derivedAlertScreenshotObjectUrlsRef.current = [];
+    setDerivedAlertScreenshots([]);
+    setDerivedAlertScreenshotLoading(
+      !!alertDetailModalOpen &&
+      !selectedAlertPlaybackLoading &&
+      selectedAlertScreenshotCandidateCount > 0
+    );
   }, [
     alertDetailModalOpen,
-    selectedAlertEventVideoSignature,
     selectedAlert?.id,
-    selectedAlert?.timestamp,
-    selectedAlertDisplayTs,
+    selectedAlertEventVideoSignature,
     selectedAlertPlaybackLoading,
-    selectedAlertScreenshotChannelSignature,
+    selectedAlertScreenshotCandidateCount,
   ]);
+  useEffect(() => {
+    if (!derivedAlertScreenshotLoading) return;
+    if (derivedAlertScreenshots.length >= selectedAlertScreenshotCandidateCount && selectedAlertScreenshotCandidateCount > 0) {
+      setDerivedAlertScreenshotLoading(false);
+    }
+  }, [derivedAlertScreenshotLoading, derivedAlertScreenshots.length, selectedAlertScreenshotCandidateCount]);
+  useEffect(() => {
+    return () => {
+      derivedAlertScreenshotObjectUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
+      derivedAlertScreenshotObjectUrlsRef.current = [];
+    };
+  }, []);
+  const handleDerivedAlertScreenshotCapture = useCallback((channel: number | null, blob: Blob) => {
+    const objectUrl = URL.createObjectURL(blob);
+    derivedAlertScreenshotObjectUrlsRef.current.push(objectUrl);
+    setDerivedAlertScreenshots((prev) => {
+      const next = prev.filter((shot: any) => Number(shot?.channel || 0) !== Number(channel || 0));
+      next.push({
+        url: objectUrl,
+        channel: channel || undefined,
+        timestamp: selectedAlertDisplayTs || selectedAlert?.timestamp,
+        offset: 0,
+      });
+      return next.sort((a: any, b: any) => Number(a?.channel || 0) - Number(b?.channel || 0));
+    });
+  }, [selectedAlert?.timestamp, selectedAlertDisplayTs]);
   useEffect(() => {
     let cancelled = false;
 
@@ -6551,6 +6476,7 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
                                       url={video.url}
                                       fallbackUrls={video.fallbackUrls || []}
                                       autoPlay={true}
+                                      onScreenshotCapture={(blob) => handleDerivedAlertScreenshotCapture(channel, blob)}
                                       className="w-full rounded mb-3 border border-slate-700"
                                     />
                                     <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
