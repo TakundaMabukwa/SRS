@@ -2799,7 +2799,7 @@ const [alertDetailModalOpen, setAlertDetailModalOpen] = useState(false);
 const [alertRealtimeLoading, setAlertRealtimeLoading] = useState(false);
 const [alertNotesDraft, setAlertNotesDraft] = useState("");
 const [alertScreenshotsExpanded, setAlertScreenshotsExpanded] = useState(false);
-const [derivedAlertScreenshotUrl, setDerivedAlertScreenshotUrl] = useState("");
+const [derivedAlertScreenshots, setDerivedAlertScreenshots] = useState<Array<{ url: string; channel?: number; timestamp?: string; offset?: number }>>([]);
 const [derivedAlertScreenshotLoading, setDerivedAlertScreenshotLoading] = useState(false);
 const [alertActionLoading, setAlertActionLoading] = useState(false);
 const [alertActionError, setAlertActionError] = useState("");
@@ -3660,9 +3660,55 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
     }
     return Array.from(byChannel.values()).sort((a: any, b: any) => Number(a?.channel || 0) - Number(b?.channel || 0));
   })();
+  const selectedAlertScreenshotsWithFallback = (() => {
+    const existingChannels = new Set(
+      selectedAlertScreenshots
+        .map((shot: any) => Number(shot?.channel || 0))
+        .filter((channel) => Number.isFinite(channel) && channel > 0)
+    );
+    const existingUrls = new Set(
+      selectedAlertScreenshots
+        .map((shot: any) => String(shot?.url || "").trim())
+        .filter(Boolean)
+    );
+    const merged = [...selectedAlertScreenshots];
+    for (const screenshot of derivedAlertScreenshots) {
+      const channel = Number(screenshot?.channel || 0);
+      const url = String(screenshot?.url || "").trim();
+      if (!url || existingUrls.has(url)) continue;
+      if (channel > 0 && existingChannels.has(channel)) continue;
+      merged.push({
+        ...screenshot,
+        id: `derived-${channel || merged.length}-${url}`,
+      });
+      existingUrls.add(url);
+      if (channel > 0) existingChannels.add(channel);
+    }
+    return merged.sort((a: any, b: any) => {
+      const channelDelta = Number(a?.channel || Number.MAX_SAFE_INTEGER) - Number(b?.channel || Number.MAX_SAFE_INTEGER);
+      if (channelDelta !== 0) return channelDelta;
+      return String(a?.timestamp || "").localeCompare(String(b?.timestamp || ""));
+    });
+  })();
+  const selectedAlertPrimaryScreenshotsWithFallback = (() => {
+    const sorted = [...selectedAlertScreenshotsWithFallback].sort((a: any, b: any) => {
+      const channelDelta = Number(a?.channel || 0) - Number(b?.channel || 0);
+      if (channelDelta !== 0) return channelDelta;
+      const aOffset = Math.abs(Number(a?.offsetSeconds ?? a?.offset ?? Number.MAX_SAFE_INTEGER));
+      const bOffset = Math.abs(Number(b?.offsetSeconds ?? b?.offset ?? Number.MAX_SAFE_INTEGER));
+      return aOffset - bOffset;
+    });
+    const byChannel = new Map<number, any>();
+    for (const screenshot of sorted) {
+      const channel = Number(screenshot?.channel || 0);
+      if (!Number.isFinite(channel) || channel <= 0 || byChannel.has(channel)) continue;
+      byChannel.set(channel, screenshot);
+    }
+    return Array.from(byChannel.values()).sort((a: any, b: any) => Number(a?.channel || 0) - Number(b?.channel || 0));
+  })();
   const visibleAlertScreenshots = alertScreenshotsExpanded
-    ? selectedAlertScreenshots
-    : (selectedAlertPrimaryScreenshots.length > 0 ? selectedAlertPrimaryScreenshots : selectedAlertScreenshots.slice(0, 4));
+    ? selectedAlertScreenshotsWithFallback
+    : (selectedAlertPrimaryScreenshotsWithFallback.length > 0 ? selectedAlertPrimaryScreenshotsWithFallback : selectedAlertScreenshotsWithFallback.slice(0, 4));
   const selectedAlertTimeline = Array.isArray((selectedAlert as any)?.resolution_timeline)
     ? (selectedAlert as any).resolution_timeline
     : [];
@@ -3748,6 +3794,22 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
     selectedAlertVideoList,
     selectedAlertVideoRequestState,
   ]);
+  const selectedAlertScreenshotChannelSignature = React.useMemo(
+    () =>
+      selectedAlertScreenshots
+        .map((shot: any) => `${Number(shot?.channel || 0)}:${String(shot?.url || "").trim()}`)
+        .sort()
+        .join("|"),
+    [selectedAlertScreenshots]
+  );
+  const selectedAlertEventVideoSignature = React.useMemo(
+    () =>
+      selectedAlertEventVideos
+        .map((video) => `${getAlertMediaChannel(video) || 0}:${String(video?.url || "").trim()}`)
+        .sort()
+        .join("|"),
+    [getAlertMediaChannel, selectedAlertEventVideos]
+  );
   useEffect(() => {
     if (alertDetailModalOpen) {
       setVideoPlaybackFailures({});
@@ -3756,88 +3818,102 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
   }, [alertDetailModalOpen, selectedAlert?.id]);
   useEffect(() => {
     let cancelled = false;
-    let objectUrl = "";
+    const objectUrls: string[] = [];
 
-    async function deriveAlertScreenshotFromVideo() {
+    async function deriveAlertScreenshotsFromVideos() {
       if (!alertDetailModalOpen || !selectedAlert?.id) {
-        setDerivedAlertScreenshotUrl("");
-        setDerivedAlertScreenshotLoading(false);
-        return;
-      }
-
-      if (selectedAlertScreenshots.length > 0) {
-        setDerivedAlertScreenshotUrl("");
+        setDerivedAlertScreenshots([]);
         setDerivedAlertScreenshotLoading(false);
         return;
       }
 
       if (selectedAlertPlaybackLoading) {
-        setDerivedAlertScreenshotUrl("");
+        setDerivedAlertScreenshots([]);
         setDerivedAlertScreenshotLoading(true);
         return;
       }
 
-      const primaryVideoUrl = String(primaryAlertVideo?.url || "").trim();
-      if (!primaryVideoUrl) {
-        setDerivedAlertScreenshotUrl("");
+      const existingChannels = new Set(
+        selectedAlertScreenshots
+          .map((shot: any) => Number(shot?.channel || 0))
+          .filter((channel) => Number.isFinite(channel) && channel > 0)
+      );
+      const candidateVideos = selectedAlertEventVideos.filter((video) => {
+        const channel = getAlertMediaChannel(video);
+        if (channel && existingChannels.has(channel)) return false;
+        return !!String(video?.url || "").trim();
+      });
+
+      if (candidateVideos.length === 0) {
+        setDerivedAlertScreenshots([]);
         setDerivedAlertScreenshotLoading(false);
         return;
       }
 
       setDerivedAlertScreenshotLoading(true);
-      setDerivedAlertScreenshotUrl("");
+      setDerivedAlertScreenshots([]);
 
       try {
-        const video = document.createElement("video");
-        video.crossOrigin = "anonymous";
-        video.muted = true;
-        video.playsInline = true;
-        video.preload = "auto";
-        video.src = resolveMediaUrlForCurrentOrigin(primaryVideoUrl);
+        const nextDerived: Array<{ url: string; channel?: number; timestamp?: string; offset?: number }> = [];
+        for (const candidateVideo of candidateVideos.slice(0, 2)) {
+          const video = document.createElement("video");
+          video.crossOrigin = "anonymous";
+          video.muted = true;
+          video.playsInline = true;
+          video.preload = "auto";
+          video.src = resolveMediaUrlForCurrentOrigin(String(candidateVideo?.url || "").trim());
 
-        await new Promise<void>((resolve, reject) => {
-          const onLoadedData = () => resolve();
-          const onError = () => reject(new Error("video frame load failed"));
-          video.addEventListener("loadeddata", onLoadedData, { once: true });
-          video.addEventListener("error", onError, { once: true });
-        });
+          await new Promise<void>((resolve, reject) => {
+            const onLoadedData = () => resolve();
+            const onError = () => reject(new Error("video frame load failed"));
+            video.addEventListener("loadeddata", onLoadedData, { once: true });
+            video.addEventListener("error", onError, { once: true });
+          });
 
-        const targetTime = Math.max(0.2, Math.min(2, Number.isFinite(video.duration) ? video.duration * 0.25 : 1));
-        await new Promise<void>((resolve, reject) => {
-          const onSeeked = () => resolve();
-          const onError = () => reject(new Error("video seek failed"));
-          video.addEventListener("seeked", onSeeked, { once: true });
-          video.addEventListener("error", onError, { once: true });
-          try {
-            video.currentTime = targetTime;
-          } catch (error) {
-            reject(error);
-          }
-        });
+          const targetTime = Math.max(0.2, Math.min(2, Number.isFinite(video.duration) ? video.duration * 0.25 : 1));
+          await new Promise<void>((resolve, reject) => {
+            const onSeeked = () => resolve();
+            const onError = () => reject(new Error("video seek failed"));
+            video.addEventListener("seeked", onSeeked, { once: true });
+            video.addEventListener("error", onError, { once: true });
+            try {
+              video.currentTime = targetTime;
+            } catch (error) {
+              reject(error);
+            }
+          });
 
-        const canvas = document.createElement("canvas");
-        canvas.width = Math.max(1, video.videoWidth || 1280);
-        canvas.height = Math.max(1, video.videoHeight || 720);
-        const ctx = canvas.getContext("2d");
-        if (!ctx) throw new Error("canvas context unavailable");
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+          const canvas = document.createElement("canvas");
+          canvas.width = Math.max(1, video.videoWidth || 1280);
+          canvas.height = Math.max(1, video.videoHeight || 720);
+          const ctx = canvas.getContext("2d");
+          if (!ctx) throw new Error("canvas context unavailable");
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-        const blob = await new Promise<Blob | null>((resolve) => {
-          canvas.toBlob((value) => resolve(value), "image/jpeg", 0.9);
-        });
-        if (!blob) throw new Error("screenshot blob generation failed");
+          const blob = await new Promise<Blob | null>((resolve) => {
+            canvas.toBlob((value) => resolve(value), "image/jpeg", 0.9);
+          });
+          if (!blob) throw new Error("screenshot blob generation failed");
 
-        objectUrl = URL.createObjectURL(blob);
+          const objectUrl = URL.createObjectURL(blob);
+          objectUrls.push(objectUrl);
+          nextDerived.push({
+            url: objectUrl,
+            channel: getAlertMediaChannel(candidateVideo) || undefined,
+            timestamp: selectedAlertDisplayTs || selectedAlert?.timestamp,
+            offset: 0,
+          });
+        }
         if (!cancelled) {
-          setDerivedAlertScreenshotUrl(objectUrl);
+          setDerivedAlertScreenshots(nextDerived);
         }
       } catch (error) {
         if (!cancelled) {
-          console.warn("[Dashboard Alert Modal] Failed to derive screenshot from event video", {
+          console.warn("[Dashboard Alert Modal] Failed to derive screenshots from event videos", {
             alertId: selectedAlert?.id,
             message: error instanceof Error ? error.message : String(error),
           });
-          setDerivedAlertScreenshotUrl("");
+          setDerivedAlertScreenshots([]);
         }
       } finally {
         if (!cancelled) {
@@ -3846,18 +3922,20 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
       }
     }
 
-    void deriveAlertScreenshotFromVideo();
+    void deriveAlertScreenshotsFromVideos();
 
     return () => {
       cancelled = true;
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
+      objectUrls.forEach((url) => URL.revokeObjectURL(url));
     };
   }, [
     alertDetailModalOpen,
-    primaryAlertVideo?.url,
+    selectedAlertEventVideoSignature,
     selectedAlert?.id,
+    selectedAlert?.timestamp,
+    selectedAlertDisplayTs,
     selectedAlertPlaybackLoading,
-    selectedAlertScreenshots.length,
+    selectedAlertScreenshotChannelSignature,
   ]);
   useEffect(() => {
     let cancelled = false;
@@ -6346,7 +6424,7 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
                           <h3 className="text-lg font-semibold text-slate-900">
                             Camera Screenshots
                           </h3>
-                          {selectedAlertScreenshots.length > visibleAlertScreenshots.length ? (
+                          {selectedAlertScreenshotsWithFallback.length > visibleAlertScreenshots.length ? (
                             <Button
                               type="button"
                               variant="outline"
@@ -6355,12 +6433,12 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
                             >
                               {alertScreenshotsExpanded
                                 ? "Show less"
-                                : `View more (${selectedAlertScreenshots.length - visibleAlertScreenshots.length})`}
+                                : `View more (${selectedAlertScreenshotsWithFallback.length - visibleAlertScreenshots.length})`}
                             </Button>
                           ) : null}
                         </div>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                          {alertRealtimeLoading && selectedAlertScreenshots.length === 0 ? (
+                          {alertRealtimeLoading && selectedAlertScreenshotsWithFallback.length === 0 ? (
                             <>
                               {[0, 1].map((idx) => (
                                 <Card key={`shot-skeleton-${idx}`} className="overflow-hidden border-slate-200 shadow-sm">
@@ -6371,7 +6449,7 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
                                 </Card>
                               ))}
                             </>
-                          ) : selectedAlertScreenshots.length > 0 ? (
+                          ) : selectedAlertScreenshotsWithFallback.length > 0 ? (
                             visibleAlertScreenshots.map((screenshot, idx) => (
                               <Card key={String(screenshot.id || screenshot.url || idx)} className="overflow-hidden border-slate-200 shadow-sm hover:shadow-md transition-shadow">
                                 <div className="relative aspect-video bg-slate-900">
@@ -6400,28 +6478,6 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
                                 </div>
                               </Card>
                             ))
-                          ) : derivedAlertScreenshotUrl ? (
-                            <Card className="overflow-hidden border-slate-200 shadow-sm">
-                              <div className="relative aspect-video bg-slate-900">
-                                <img
-                                  src={derivedAlertScreenshotUrl}
-                                  alt="Derived alert screenshot"
-                                  className="w-full h-full object-cover"
-                                />
-                                <div className="absolute top-2 left-2 bg-black/80 text-white px-3 py-1 rounded text-xs font-medium">
-                                  Event Video Snapshot
-                                </div>
-                                <div className="absolute bottom-2 right-2 bg-black/80 text-white px-3 py-1 rounded text-xs">
-                                  {new Date(selectedAlert.timestamp).toLocaleTimeString()}
-                                </div>
-                              </div>
-                              <div className="p-2 border-t flex justify-between items-center">
-                                <span className="text-xs text-slate-600">Derived from completed alert video</span>
-                                <Button variant="ghost" size="sm" onClick={() => window.open(derivedAlertScreenshotUrl, '_blank')}>
-                                  <Download className="w-3 h-3" />
-                                </Button>
-                              </div>
-                            </Card>
                           ) : (
                             <div className="col-span-2 text-center py-12 text-slate-500">
                               {selectedAlertPlaybackLoading
