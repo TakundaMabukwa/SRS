@@ -3892,21 +3892,31 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
       try {
         const nextDerived: Array<{ url: string; channel?: number; timestamp?: string; offset?: number }> = [];
         for (const candidateVideo of candidateVideos.slice(0, 2)) {
+          const videoResponse = await fetch(resolveMediaUrlForCurrentOrigin(String(candidateVideo?.url || "").trim()), {
+            cache: "force-cache",
+            signal: AbortSignal.timeout(12000),
+          });
+          if (!videoResponse.ok) throw new Error(`video fetch failed (${videoResponse.status})`);
+          const videoBlob = await videoResponse.blob();
+          const sourceObjectUrl = URL.createObjectURL(videoBlob);
+          objectUrls.push(sourceObjectUrl);
+
           const video = document.createElement("video");
-          video.crossOrigin = "anonymous";
           video.muted = true;
           video.playsInline = true;
           video.preload = "auto";
-          video.src = resolveMediaUrlForCurrentOrigin(String(candidateVideo?.url || "").trim());
+          video.src = sourceObjectUrl;
+          video.load();
 
           await new Promise<void>((resolve, reject) => {
-            const onLoadedData = () => resolve();
+            const onLoadedMetadata = () => resolve();
             const onError = () => reject(new Error("video frame load failed"));
-            video.addEventListener("loadeddata", onLoadedData, { once: true });
+            video.addEventListener("loadedmetadata", onLoadedMetadata, { once: true });
             video.addEventListener("error", onError, { once: true });
           });
 
-          const targetTime = Math.max(0.2, Math.min(2, Number.isFinite(video.duration) ? video.duration * 0.25 : 1));
+          const duration = Number.isFinite(video.duration) ? video.duration : 0;
+          const targetTime = Math.max(0.1, Math.min(1, duration > 0 ? duration * 0.15 : 0.5));
           await new Promise<void>((resolve, reject) => {
             const onSeeked = () => resolve();
             const onError = () => reject(new Error("video seek failed"));
