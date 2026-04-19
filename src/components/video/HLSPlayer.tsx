@@ -16,6 +16,7 @@ export default function HLSPlayer({ vehicleId, channel, vehicleName, onStop, fal
   const videoRef = useRef<HTMLVideoElement>(null);
   const hlsRef = useRef<Hls | null>(null);
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const statsTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [status, setStatus] = useState('Starting stream...');
   const [stats, setStats] = useState('Waiting for stream...');
   const [error, setError] = useState(false);
@@ -34,8 +35,16 @@ export default function HLSPlayer({ vehicleId, channel, vehicleName, onStop, fal
       }
     };
 
+    const clearStatsTimer = () => {
+      if (statsTimerRef.current) {
+        clearInterval(statsTimerRef.current);
+        statsTimerRef.current = null;
+      }
+    };
+
     const cleanupHls = () => {
       clearRetry();
+      clearStatsTimer();
       if (hlsRef.current) {
         hlsRef.current.destroy();
         hlsRef.current = null;
@@ -77,7 +86,13 @@ export default function HLSPlayer({ vehicleId, channel, vehicleName, onStop, fal
         const hls = new Hls({
           enableWorker: true,
           lowLatencyMode: true,
-          backBufferLength: 90,
+          backBufferLength: 30,
+          maxBufferLength: 6,
+          maxMaxBufferLength: 8,
+          liveSyncDurationCount: 1,
+          liveMaxLatencyDurationCount: 3,
+          liveDurationInfinity: true,
+          maxLiveSyncPlaybackRate: 1.5,
         });
 
         hlsRef.current = hls;
@@ -89,6 +104,18 @@ export default function HLSPlayer({ vehicleId, channel, vehicleName, onStop, fal
           setStatus('Streaming');
           setError(false);
           video.play().catch(() => {});
+        });
+
+        hls.on(Hls.Events.LEVEL_UPDATED, (_event, data) => {
+          if (!mounted || !Number.isFinite(data.details?.edge)) return;
+          const liveEdge = Number(data.details.edge);
+          const latency = liveEdge - video.currentTime;
+          if (Number.isFinite(latency) && latency > 2.5) {
+            const targetTime = Math.max(0, liveEdge - 0.4);
+            if (Math.abs(video.currentTime - targetTime) > 0.25) {
+              video.currentTime = targetTime;
+            }
+          }
         });
 
         hls.on(Hls.Events.ERROR, (_event, data) => {
@@ -156,17 +183,24 @@ export default function HLSPlayer({ vehicleId, channel, vehicleName, onStop, fal
     const updateStats = () => {
       if (!video) return;
       if (video.buffered.length > 0) {
-        const buffered = video.buffered.end(0) - video.currentTime;
-        setStats(`Buffer: ${buffered.toFixed(1)}s | Time: ${video.currentTime.toFixed(1)}s`);
+        const bufferedEnd = video.buffered.end(video.buffered.length - 1);
+        const buffered = Math.max(0, bufferedEnd - video.currentTime);
+        const liveLag = Math.max(0, bufferedEnd - video.currentTime);
+        if (liveLag > 2.5 && !video.paused) {
+          video.currentTime = Math.max(0, bufferedEnd - 0.4);
+        }
+        setStats(`Buffer: ${buffered.toFixed(1)}s | Time: ${video.currentTime.toFixed(1)}s | Lag: ${liveLag.toFixed(1)}s`);
       }
     };
 
     video?.addEventListener('timeupdate', updateStats);
+    statsTimerRef.current = setInterval(updateStats, 1000);
     void startStreamAndAttach();
 
     return () => {
       mounted = false;
       video?.removeEventListener('timeupdate', updateStats);
+      clearStatsTimer();
       cleanupHls();
     };
   }, [vehicleId, channel, fallbackVehicleIds]);
