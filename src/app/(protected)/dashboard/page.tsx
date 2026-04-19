@@ -3629,13 +3629,6 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
         return String(a?.label || "").localeCompare(String(b?.label || ""));
       });
   })();
-  const selectedAlertScreenshotCandidateCount = selectedAlertEventVideos
-    .filter((video) => {
-      const channel = getAlertMediaChannel(video);
-      if (channel && selectedAlertScreenshots.some((shot: any) => Number(shot?.channel || 0) === channel)) return false;
-      return !!String(video?.url || "").trim();
-    })
-    .slice(0, 2).length;
   const primaryAlertVideo = selectedAlertEventVideos[0] || null;
   const shouldShowOnlySdCard =
     !!cameraSdVideo &&
@@ -3662,6 +3655,13 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
     }
     return out;
   })();
+  const selectedAlertScreenshotCandidateCount = selectedAlertEventVideos
+    .filter((video) => {
+      const channel = getAlertMediaChannel(video);
+      if (channel && selectedAlertScreenshots.some((shot: any) => Number(shot?.channel || 0) === channel)) return false;
+      return !!String(video?.url || "").trim();
+    })
+    .slice(0, 2).length;
   const selectedAlertPrimaryScreenshots = (() => {
     const sorted = [...selectedAlertScreenshots].sort((a: any, b: any) => {
       const channelDelta = Number(a?.channel || 0) - Number(b?.channel || 0);
