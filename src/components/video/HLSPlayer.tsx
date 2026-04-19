@@ -17,6 +17,7 @@ export default function HLSPlayer({ vehicleId, channel, vehicleName, onStop, fal
   const hlsRef = useRef<Hls | null>(null);
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const statsTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const fatalErrorCountRef = useRef(0);
   const [status, setStatus] = useState('Starting stream...');
   const [stats, setStats] = useState('Waiting for stream...');
   const [error, setError] = useState(false);
@@ -45,6 +46,7 @@ export default function HLSPlayer({ vehicleId, channel, vehicleName, onStop, fal
     const cleanupHls = () => {
       clearRetry();
       clearStatsTimer();
+      fatalErrorCountRef.current = 0;
       if (hlsRef.current) {
         hlsRef.current.destroy();
         hlsRef.current = null;
@@ -85,14 +87,14 @@ export default function HLSPlayer({ vehicleId, channel, vehicleName, onStop, fal
       if (Hls.isSupported()) {
         const hls = new Hls({
           enableWorker: true,
-          lowLatencyMode: true,
-          backBufferLength: 30,
-          maxBufferLength: 6,
-          maxMaxBufferLength: 8,
-          liveSyncDurationCount: 1,
-          liveMaxLatencyDurationCount: 3,
+          lowLatencyMode: false,
+          backBufferLength: 20,
+          maxBufferLength: 8,
+          maxMaxBufferLength: 12,
+          liveSyncDurationCount: 2,
+          liveMaxLatencyDurationCount: 5,
           liveDurationInfinity: true,
-          maxLiveSyncPlaybackRate: 1.5,
+          maxLiveSyncPlaybackRate: 1.2,
         });
 
         hlsRef.current = hls;
@@ -101,6 +103,7 @@ export default function HLSPlayer({ vehicleId, channel, vehicleName, onStop, fal
 
         hls.on(Hls.Events.MANIFEST_PARSED, () => {
           if (!mounted) return;
+          fatalErrorCountRef.current = 0;
           setStatus('Streaming');
           setError(false);
           video.play().catch(() => {});
@@ -120,13 +123,38 @@ export default function HLSPlayer({ vehicleId, channel, vehicleName, onStop, fal
 
         hls.on(Hls.Events.ERROR, (_event, data) => {
           if (!data.fatal || !mounted) return;
+
+          fatalErrorCountRef.current += 1;
+
+          if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+            setStatus('Recovering stream...');
+            setError(false);
+            try {
+              hls.startLoad();
+            } catch {}
+            if (fatalErrorCountRef.current < 3) {
+              return;
+            }
+          }
+
+          if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+            setStatus('Recovering stream...');
+            setError(false);
+            try {
+              hls.recoverMediaError();
+            } catch {}
+            if (fatalErrorCountRef.current < 3) {
+              return;
+            }
+          }
+
           setStatus('Reconnecting stream...');
           setError(false);
           cleanupHls();
           retryTimerRef.current = setTimeout(() => {
             if (!mounted) return;
             void startStreamAndAttach();
-          }, 5000);
+          }, 2500);
         });
 
         return;
@@ -186,7 +214,7 @@ export default function HLSPlayer({ vehicleId, channel, vehicleName, onStop, fal
         const bufferedEnd = video.buffered.end(video.buffered.length - 1);
         const buffered = Math.max(0, bufferedEnd - video.currentTime);
         const liveLag = Math.max(0, bufferedEnd - video.currentTime);
-        if (liveLag > 2.5 && !video.paused) {
+        if (liveLag > 3 && !video.paused) {
           video.currentTime = Math.max(0, bufferedEnd - 0.4);
         }
         setStats(`Buffer: ${buffered.toFixed(1)}s | Time: ${video.currentTime.toFixed(1)}s | Lag: ${liveLag.toFixed(1)}s`);
@@ -194,12 +222,16 @@ export default function HLSPlayer({ vehicleId, channel, vehicleName, onStop, fal
     };
 
     video?.addEventListener('timeupdate', updateStats);
+    video?.addEventListener('waiting', updateStats);
+    video?.addEventListener('stalled', updateStats);
     statsTimerRef.current = setInterval(updateStats, 1000);
     void startStreamAndAttach();
 
     return () => {
       mounted = false;
       video?.removeEventListener('timeupdate', updateStats);
+      video?.removeEventListener('waiting', updateStats);
+      video?.removeEventListener('stalled', updateStats);
       clearStatsTimer();
       cleanupHls();
     };
