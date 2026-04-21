@@ -195,6 +195,7 @@ export default function VideoAlertsDashboardTab({
   const [sourceAlerts, setSourceAlerts] = useState<any[]>([]);
   const [realtimeAlerts, setRealtimeAlerts] = useState<any[]>([]);
   const [pinnedHistoryAlerts, setPinnedHistoryAlerts] = useState<any[]>([]);
+  const [closedHistoryAlerts, setClosedHistoryAlerts] = useState<any[]>([]);
   const [videoAvailability, setVideoAvailability] = useState<Record<string, boolean>>({});
   const [exactVideoReady, setExactVideoReady] = useState<Record<string, boolean>>({});
   const [vehicleIdentityLookup, setVehicleIdentityLookup] = useState<Map<string, VehicleIdentity>>(new Map());
@@ -705,6 +706,67 @@ export default function VideoAlertsDashboardTab({
     }
   }, [pinnedVehicleIds, readJsonSafely, videoProxyBase]);
 
+  const fetchClosedHistoryAlerts = useCallback(async () => {
+    if (suspendBackgroundWork) return;
+
+    const normalizeHistoryList = (items: any[]) =>
+      items.map((alert: any) => ({
+        ...alert,
+        vehicleId: alert?.vehicleId || alert?.device_id,
+        device_id: alert?.device_id || alert?.vehicleId,
+        title: alert?.title || alert?.alert_type || alert?.type,
+      }));
+
+    const readAlertArray = (json: any) =>
+      Array.isArray(json?.alerts)
+        ? json.alerts
+        : Array.isArray(json?.data?.alerts)
+          ? json.data.alerts
+          : Array.isArray(json?.data)
+            ? json.data
+            : [];
+
+    try {
+      const [closedRes, resolvedRes] = await Promise.all([
+        fetch(`${videoProxyBase}/alerts?status=closed&limit=200`, { cache: "no-store" }),
+        fetch(`${videoProxyBase}/alerts?status=resolved&limit=200`, { cache: "no-store" }),
+      ]);
+
+      const closedJson = closedRes.ok ? await readJsonSafely(closedRes) : null;
+      const resolvedJson = resolvedRes.ok ? await readJsonSafely(resolvedRes) : null;
+      const merged = dedupeByIdAndSort([
+        ...normalizeHistoryList(readAlertArray(closedJson)),
+        ...normalizeHistoryList(readAlertArray(resolvedJson)),
+      ]);
+
+      if (merged.length > 0) {
+        setClosedHistoryAlerts((prev) => (areAlertListsEquivalent(prev, merged) ? prev : merged));
+        return;
+      }
+
+      const historyRes = await fetch(`${videoProxyBase}/alerts/history?days=30&limit=200`, { cache: "no-store" });
+      if (!historyRes.ok) {
+        setClosedHistoryAlerts((prev) => (prev.length === 0 ? prev : []));
+        return;
+      }
+
+      const historyJson = await readJsonSafely(historyRes);
+      const historyAlerts = normalizeHistoryList(readAlertArray(historyJson)).filter((alert: any) =>
+        ["closed", "resolved"].includes(String(alert?.status || "").toLowerCase())
+      );
+      const dedupedHistory = dedupeByIdAndSort(historyAlerts);
+      setClosedHistoryAlerts((prev) => (areAlertListsEquivalent(prev, dedupedHistory) ? prev : dedupedHistory));
+    } catch (error) {
+      console.error("Failed to fetch closed alert history:", error);
+      setClosedHistoryAlerts((prev) => (prev.length === 0 ? prev : []));
+    }
+  }, [dedupeByIdAndSort, readJsonSafely, suspendBackgroundWork, videoProxyBase]);
+
+  const handleClosedAlertEvent = useCallback((detail: any) => {
+    removeClosedAlertFromBoard(detail);
+    void fetchClosedHistoryAlerts();
+  }, [fetchClosedHistoryAlerts, removeClosedAlertFromBoard]);
+
   useEffect(() => {
     fetchTripRoutingStyleAlerts();
   }, [fetchTripRoutingStyleAlerts, filters]);
@@ -714,9 +776,13 @@ export default function VideoAlertsDashboardTab({
   }, [fetchPinnedVehicleHistoryAlerts]);
 
   useEffect(() => {
+    void fetchClosedHistoryAlerts();
+  }, [fetchClosedHistoryAlerts]);
+
+  useEffect(() => {
     const identifiers = Array.from(
       new Set(
-        [...sourceAlerts, ...realtimeAlerts, ...pinnedHistoryAlerts]
+        [...sourceAlerts, ...realtimeAlerts, ...pinnedHistoryAlerts, ...closedHistoryAlerts]
           .flatMap((alert) => getAlertVehicleIdentifiers(alert))
           .filter(Boolean)
       )
@@ -769,28 +835,29 @@ export default function VideoAlertsDashboardTab({
     return () => {
       cancelled = true;
     };
-  }, [getAlertVehicleIdentifiers, pinnedHistoryAlerts, readJsonSafely, realtimeAlerts, sourceAlerts]);
+  }, [closedHistoryAlerts, getAlertVehicleIdentifiers, pinnedHistoryAlerts, readJsonSafely, realtimeAlerts, sourceAlerts]);
 
   useEffect(() => {
     if (suspendBackgroundWork) return;
     const interval = setInterval(() => {
       fetchTripRoutingStyleAlerts();
+      void fetchClosedHistoryAlerts();
     }, 30000);
 
     return () => clearInterval(interval);
-  }, [fetchTripRoutingStyleAlerts, suspendBackgroundWork]);
+  }, [fetchClosedHistoryAlerts, fetchTripRoutingStyleAlerts, suspendBackgroundWork]);
 
   useEffect(() => {
     const handleClosed = (event: Event) => {
       const customEvent = event as CustomEvent<any>;
-      removeClosedAlertFromBoard(customEvent?.detail);
+      handleClosedAlertEvent(customEvent?.detail);
     };
 
     window.addEventListener("video-alert-closed", handleClosed as EventListener);
     return () => {
       window.removeEventListener("video-alert-closed", handleClosed as EventListener);
     };
-  }, [removeClosedAlertFromBoard]);
+  }, [handleClosedAlertEvent]);
 
   const normalizeRealtimeAlert = useCallback((incoming: any) => normalizeAlert(incoming), [normalizeAlert]);
 
@@ -836,7 +903,8 @@ export default function VideoAlertsDashboardTab({
     ...realtimeAlerts,
     ...sourceAlerts,
     ...pinnedHistoryAlerts,
-  ]), [dedupeByIdAndSort, pinnedHistoryAlerts, realtimeAlerts, sourceAlerts]);
+    ...closedHistoryAlerts,
+  ]), [closedHistoryAlerts, dedupeByIdAndSort, pinnedHistoryAlerts, realtimeAlerts, sourceAlerts]);
 
   const groupedAlerts = useMemo(() => {
     const groups = new Map<string, any>();
@@ -959,6 +1027,7 @@ export default function VideoAlertsDashboardTab({
 
   const handleRefresh = () => {
     fetchTripRoutingStyleAlerts();
+    void fetchClosedHistoryAlerts();
   };
 
   const handleViewAlert = async (alert: any) => {
@@ -1136,6 +1205,10 @@ export default function VideoAlertsDashboardTab({
       iconClass: "text-slate-600",
     },
   ];
+
+  const isStatusCardActive = (key: string) =>
+    (key === "open" && activeTab !== "history") ||
+    (key === "closed" && activeTab === "history");
 
   const boardColumns = [
     {
@@ -1580,7 +1653,19 @@ export default function VideoAlertsDashboardTab({
         {statusCards.map((card) => (
           <Card
             key={card.key}
-            className={cn("p-3 border-l-4 bg-white shadow-sm transition-all", card.cardClass)}
+            className={cn(
+              "p-3 border-l-4 bg-white shadow-sm transition-all cursor-pointer hover:shadow-md",
+              card.cardClass,
+              isStatusCardActive(card.key) && "ring-2 ring-slate-300 bg-slate-50"
+            )}
+            onClick={() => {
+              setBoardLevelFilter(null);
+              if (card.key === "closed") {
+                setActiveTab("history");
+              } else {
+                setActiveTab("all");
+              }
+            }}
           >
             <div className="flex items-center justify-between">
               <div>
