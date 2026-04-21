@@ -6364,7 +6364,7 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
                           <h3 className="text-lg font-semibold text-slate-900">
                             Camera Screenshots
                           </h3>
-                          {selectedAlertScreenshots.length > visibleAlertScreenshots.length ? (
+                          {selectedAlertScreenshotsWithFallback.length > visibleAlertScreenshots.length ? (
                             <Button
                               type="button"
                               variant="outline"
@@ -6373,12 +6373,12 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
                             >
                               {alertScreenshotsExpanded
                                 ? "Show less"
-                                : `View more (${selectedAlertScreenshots.length - visibleAlertScreenshots.length})`}
+                                : `View more (${selectedAlertScreenshotsWithFallback.length - visibleAlertScreenshots.length})`}
                             </Button>
                           ) : null}
                         </div>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                          {alertRealtimeLoading && selectedAlertScreenshots.length === 0 ? (
+                          {alertRealtimeLoading && visibleAlertScreenshots.length === 0 ? (
                             <>
                               {[0, 1].map((idx) => (
                                 <Card key={`shot-skeleton-${idx}`} className="overflow-hidden border-slate-200 shadow-sm">
@@ -6389,7 +6389,7 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
                                 </Card>
                               ))}
                             </>
-                          ) : selectedAlertScreenshots.length > 0 ? (
+                          ) : visibleAlertScreenshots.length > 0 ? (
                             visibleAlertScreenshots.map((screenshot, idx) => (
                               <Card key={String(screenshot.id || screenshot.url || idx)} className="overflow-hidden border-slate-200 shadow-sm hover:shadow-md transition-shadow">
                                 <div className="relative aspect-video bg-slate-900">
