@@ -132,10 +132,12 @@ export default function DriverPerformanceDashboard() {
 
   useEffect(() => {
     let cancelled = false
+    let pollTimer: ReturnType<typeof setTimeout> | null = null
 
-    const loadDriverStandings = async () => {
-      setIsLoading(true)
-      setError('')
+    const loadDriverStandings = async (showLoading = false) => {
+      if (showLoading) {
+        setIsLoading(true)
+      }
 
       try {
         const response = await fetch('/api/video-server/drivers/standings?limit=250', {
@@ -152,24 +154,30 @@ export default function DriverPerformanceDashboard() {
 
         if (!cancelled) {
           setDrivers(mapped)
+          setError('')
         }
       } catch (fetchError) {
         console.error('Failed to load driver standings:', fetchError)
         if (!cancelled) {
-          setDrivers([])
           setError('Unable to load vehicle profiles right now')
         }
       } finally {
         if (!cancelled) {
           setIsLoading(false)
+          pollTimer = setTimeout(() => {
+            void loadDriverStandings(false)
+          }, 30000)
         }
       }
     }
 
-    void loadDriverStandings()
+    void loadDriverStandings(true)
 
     return () => {
       cancelled = true
+      if (pollTimer) {
+        clearTimeout(pollTimer)
+      }
     }
   }, [])
 
