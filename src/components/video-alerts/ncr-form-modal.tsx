@@ -82,6 +82,20 @@ export default function NCRFormModal({ isOpen, onClose, onSaved, driverInfo, ale
               videos: [],
             }
           : undefined,
+        extraPayload: {
+          ncrForm: 'vehicle-general',
+          description: formData.description,
+          correctiveAction: formData.correctiveAction,
+          correctiveResponsibility: formData.correctiveResponsibility,
+          correctiveTargetDate: formData.correctiveTargetDate,
+          preventiveAction: formData.preventiveAction,
+          preventiveResponsibility: formData.preventiveResponsibility,
+          preventiveTargetDate: formData.preventiveTargetDate,
+          investigator: formData.investigator,
+          manager: formData.manager,
+          actionTaken: formData.actionTaken,
+          actionEffective: formData.actionEffective,
+        }
       })
       if (onSaved) await onSaved(artifact)
       

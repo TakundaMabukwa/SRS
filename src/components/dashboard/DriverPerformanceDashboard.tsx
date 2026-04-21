@@ -1,12 +1,16 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Trophy, AlertTriangle, Search } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { Trophy, AlertTriangle, Search, FilePlus2 } from 'lucide-react'
+import { toast } from 'sonner'
 import { type DriverPerformanceData } from '@/lib/actions/driver-performance'
+import NCRFormModal from '@/components/video-alerts/ncr-form-modal'
+import { type SavedAlertArtifact } from '@/components/video-alerts/report-support'
 
 type DriverStandingRow = {
   vehicle_id: string
@@ -40,6 +44,17 @@ type DriverStandingsResponse = {
   data?: DriverStandingRow[]
 }
 
+type DriverCardData = DriverPerformanceData & {
+  vehicleId: string
+  deviceId: string | null
+  displayName: string
+  registrationNumber: string | null
+  fleetNumber: string | null
+  ncrTotal: number
+  ncrOpen: number
+  lastAlertAt: string | null
+}
+
 type BehaviorMetric = {
   label: string
   value: number
@@ -69,7 +84,7 @@ const toNumber = (value: unknown, fallback = 0) => {
   return Number.isFinite(parsed) ? parsed : fallback
 }
 
-const mapStandingToCard = (standing: DriverStandingRow): DriverPerformanceData => {
+const mapStandingToCard = (standing: DriverStandingRow): DriverCardData => {
   const rating = toNumber(standing.rating, 100)
   const riskScore = toNumber(standing.risk_score)
   const fatigueScore = toNumber(standing.fatigue_score, 100)
@@ -77,17 +92,26 @@ const mapStandingToCard = (standing: DriverStandingRow): DriverPerformanceData =
   const laneDeviationScore = toNumber(standing.lane_deviation_score, 100)
   const possibleFatigueScore = toNumber(standing.possible_fatigue_score, 100)
   const speedingScore = toNumber(standing.speeding_score, 100)
+  const displayName =
+    String(
+      standing.display_name ||
+        standing.registration_number ||
+        standing.fleet_number ||
+        standing.vehicle_id ||
+        standing.device_id ||
+        'Unknown Vehicle'
+    ).trim()
 
   return {
-    driverName:
-      String(
-        standing.display_name ||
-          standing.registration_number ||
-          standing.fleet_number ||
-          standing.vehicle_id ||
-          standing.device_id ||
-          'Unknown Vehicle'
-      ).trim(),
+    vehicleId: String(standing.vehicle_id || '').trim(),
+    deviceId: standing.device_id ? String(standing.device_id).trim() : null,
+    displayName,
+    registrationNumber: standing.registration_number ? String(standing.registration_number).trim() : null,
+    fleetNumber: standing.fleet_number ? String(standing.fleet_number).trim() : null,
+    ncrTotal: toNumber(standing.ncr_total),
+    ncrOpen: toNumber(standing.ncr_open),
+    lastAlertAt: standing.last_alert_at || null,
+    driverName: displayName,
     plate: String(standing.registration_number || standing.fleet_number || standing.vehicle_id || '').trim() || null,
     currentPoints: toNumber(standing.current_points, 100),
     performanceLevel: String(standing.performance_level || 'Gold').trim(),
@@ -124,62 +148,63 @@ const getBehaviorScores = (driver: DriverPerformanceData): BehaviorMetric[] => [
 ]
 
 export default function DriverPerformanceDashboard() {
-  const [drivers, setDrivers] = useState<DriverPerformanceData[]>([])
+  const [drivers, setDrivers] = useState<DriverCardData[]>([])
   const [searchTerm, setSearchTerm] = useState('')
   const [dateRange, setDateRange] = useState('mtd')
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState('')
+  const [selectedVehicle, setSelectedVehicle] = useState<DriverCardData | null>(null)
+  const [showVehicleNcrModal, setShowVehicleNcrModal] = useState(false)
+
+  const loadDriverStandings = useCallback(async (showLoading = false) => {
+    if (showLoading) {
+      setIsLoading(true)
+    }
+
+    try {
+      const response = await fetch('/api/video-server/drivers/standings?limit=250', {
+        cache: 'no-store',
+      })
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`)
+      }
+
+      const json = (await response.json()) as DriverStandingsResponse
+      const rows = Array.isArray(json?.data) ? json.data : []
+      const mapped = rows.map(mapStandingToCard)
+
+      setDrivers(mapped)
+      setError('')
+    } catch (fetchError) {
+      console.error('Failed to load driver standings:', fetchError)
+      setError('Unable to load vehicle profiles right now')
+    } finally {
+      setIsLoading(false)
+    }
+  }, [])
 
   useEffect(() => {
     let cancelled = false
     let pollTimer: ReturnType<typeof setTimeout> | null = null
 
-    const loadDriverStandings = async (showLoading = false) => {
-      if (showLoading) {
-        setIsLoading(true)
-      }
-
-      try {
-        const response = await fetch('/api/video-server/drivers/standings?limit=250', {
-          cache: 'no-store',
-        })
-
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}`)
-        }
-
-        const json = (await response.json()) as DriverStandingsResponse
-        const rows = Array.isArray(json?.data) ? json.data : []
-        const mapped = rows.map(mapStandingToCard)
-
-        if (!cancelled) {
-          setDrivers(mapped)
-          setError('')
-        }
-      } catch (fetchError) {
-        console.error('Failed to load driver standings:', fetchError)
-        if (!cancelled) {
-          setError('Unable to load vehicle profiles right now')
-        }
-      } finally {
-        if (!cancelled) {
-          setIsLoading(false)
-          pollTimer = setTimeout(() => {
-            void loadDriverStandings(false)
-          }, 30000)
-        }
+    const run = async (showLoading = false) => {
+      if (cancelled) return
+      await loadDriverStandings(showLoading)
+      if (!cancelled) {
+        pollTimer = setTimeout(() => {
+          void run(false)
+        }, 30000)
       }
     }
 
-    void loadDriverStandings(true)
+    void run(true)
 
     return () => {
       cancelled = true
-      if (pollTimer) {
-        clearTimeout(pollTimer)
-      }
+      if (pollTimer) clearTimeout(pollTimer)
     }
-  }, [])
+  }, [loadDriverStandings])
 
   const filteredDrivers = useMemo(() => {
     const query = searchTerm.trim().toLowerCase()
@@ -188,9 +213,51 @@ export default function DriverPerformanceDashboard() {
     return drivers.filter((driver) => {
       const driverName = String(driver.driverName || '').toLowerCase()
       const plate = String(driver.plate || '').toLowerCase()
-      return driverName.includes(query) || plate.includes(query)
+      const vehicleId = String(driver.vehicleId || '').toLowerCase()
+      return driverName.includes(query) || plate.includes(query) || vehicleId.includes(query)
     })
   }, [drivers, searchTerm])
+
+  const handleVehicleNcrSaved = useCallback(async (artifact?: SavedAlertArtifact) => {
+    if (!selectedVehicle || !artifact) {
+      setShowVehicleNcrModal(false)
+      return
+    }
+
+    try {
+      const response = await fetch(`/api/video-server/drivers/${encodeURIComponent(selectedVehicle.vehicleId)}/ncrs`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          vehicleId: selectedVehicle.vehicleId,
+          deviceId: selectedVehicle.deviceId || selectedVehicle.vehicleId,
+          registrationNumber: selectedVehicle.registrationNumber,
+          fleetNumber: selectedVehicle.fleetNumber,
+          title: `Vehicle NCR - ${selectedVehicle.displayName}`,
+          description: String(artifact.closurePayload?.description || '').trim() || `NCR created for ${selectedVehicle.displayName}`,
+          severity: selectedVehicle.scores.riskCategory,
+          documentUrl: artifact.documentUrl,
+          documentName: artifact.documentName,
+          createdBy: 'SRS Dashboard',
+          metadata: artifact.closurePayload,
+        }),
+      })
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`)
+      }
+
+      toast.success(`NCR saved for ${selectedVehicle.displayName}`)
+      setShowVehicleNcrModal(false)
+      setSelectedVehicle(null)
+      await loadDriverStandings(false)
+    } catch (saveError) {
+      console.error('Failed to register vehicle NCR:', saveError)
+      toast.error('NCR document saved, but linking it to the vehicle failed')
+    }
+  }, [loadDriverStandings, selectedVehicle])
 
   return (
     <div className="space-y-6">
@@ -235,12 +302,13 @@ export default function DriverPerformanceDashboard() {
       ) : (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           {filteredDrivers.map((driver, index) => (
-            <Card key={`${driver.driverName}-${driver.plate || index}`} className="hover:shadow-lg transition-shadow">
+            <Card key={`${driver.vehicleId}-${driver.plate || index}`} className="hover:shadow-lg transition-shadow">
               <CardHeader className="pb-2">
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0 flex-1">
                     <CardTitle className="text-sm font-semibold leading-tight break-words">{driver.driverName}</CardTitle>
                     <p className="mt-1 text-xs text-muted-foreground">{driver.plate || 'No registration'}</p>
+                    <p className="mt-1 text-[11px] text-slate-500">Vehicle ID: {driver.vehicleId}</p>
                   </div>
                   <Badge className={`${getPerformanceLevelColor(driver.performanceLevel)} shrink-0 px-2 py-1 text-xs`}>
                     {driver.performanceLevel}
@@ -318,10 +386,48 @@ export default function DriverPerformanceDashboard() {
                     </Badge>
                   </div>
                 </div>
+
+                <div className="flex items-center justify-between rounded-lg border bg-slate-50 px-3 py-2 text-xs">
+                  <span className="font-medium text-slate-600">Open NCRs</span>
+                  <Badge variant={driver.ncrOpen > 0 ? 'destructive' : 'secondary'} className="px-1.5 py-0.5 text-xs">
+                    {driver.ncrOpen}
+                  </Badge>
+                </div>
+
+                <Button
+                  type="button"
+                  className="w-full"
+                  variant="outline"
+                  onClick={() => {
+                    setSelectedVehicle(driver)
+                    setShowVehicleNcrModal(true)
+                  }}
+                >
+                  <FilePlus2 className="h-4 w-4" />
+                  Create NCR
+                </Button>
               </CardContent>
             </Card>
           ))}
         </div>
+      )}
+
+      {showVehicleNcrModal && selectedVehicle && (
+        <NCRFormModal
+          isOpen={showVehicleNcrModal}
+          onClose={() => {
+            setShowVehicleNcrModal(false)
+            setSelectedVehicle(null)
+          }}
+          onSaved={handleVehicleNcrSaved}
+          driverInfo={{
+            name: selectedVehicle.displayName,
+            fleetNumber: selectedVehicle.fleetNumber || selectedVehicle.vehicleId,
+            registration: selectedVehicle.registrationNumber || undefined,
+            department: 'Fleet Operations',
+            timestamp: selectedVehicle.lastAlertAt || new Date().toISOString(),
+          }}
+        />
       )}
     </div>
   )
