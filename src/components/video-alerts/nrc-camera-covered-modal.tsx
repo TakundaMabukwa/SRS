@@ -36,19 +36,19 @@ interface CameraCoveredModalProps {
 
 export default function NRCCameraCoveredModal({ isOpen, onClose, onSaved, driverInfo, alertDetails }: CameraCoveredModalProps) {
   const [saving, setSaving] = useState(false)
-  const [ncrNo, setNcrNo] = useState(`NCR-CAMERA-${Date.now()}`)
+  const [ncrNo, setNcrNo] = useState(`NCR-${Date.now()}`)
   const [section, setSection] = useState('Fleet Operations')
   const [responsibleManager, setResponsibleManager] = useState('Fleet Manager')
-  const [duration, setDuration] = useState('While vehicle was in motion')
-  const [area, setArea] = useState('In-cab camera system')
-  const [otherClass, setOtherClass] = useState('The driver obstructed the camera.')
+  const [duration, setDuration] = useState('Observed during vehicle operation')
+  const [area, setArea] = useState('Fleet operation / monitored journey')
+  const [otherClass, setOtherClass] = useState('Operational non-conformance requiring investigation.')
   const [description, setDescription] = useState(
-    'The driver was found to have intentionally obstructed the in-cab camera while the vehicle was in motion. This is a direct breach of company SOP and safety policy.'
+    'A fleet non-conformance was identified during vehicle operations and requires formal investigation, corrective action, and management follow-up.'
   )
-  const [correctiveAction, setCorrectiveAction] = useState('Immediate removal of obstruction, driver counselling and disciplinary process.')
+  const [correctiveAction, setCorrectiveAction] = useState('Investigate the event, brief the responsible crew, and implement immediate corrective controls.')
   const [correctiveResponsibility, setCorrectiveResponsibility] = useState('Fleet Supervisor')
   const [correctiveTargetDate, setCorrectiveTargetDate] = useState('')
-  const [preventiveAction, setPreventiveAction] = useState('Daily camera visibility checks and random compliance audits.')
+  const [preventiveAction, setPreventiveAction] = useState('Review procedures, reinforce compliance expectations, and schedule follow-up monitoring.')
   const [preventiveResponsibility, setPreventiveResponsibility] = useState('Operations Control')
   const [preventiveTargetDate, setPreventiveTargetDate] = useState('')
   const [investigator, setInvestigator] = useState('')
@@ -76,7 +76,7 @@ export default function NRCCameraCoveredModal({ isOpen, onClose, onSaved, driver
   const eventDate = useMemo(() => formatReportDate(alertDetails?.timestamp || driverInfo.timestamp), [alertDetails?.timestamp, driverInfo.timestamp])
   const eventTime = useMemo(() => formatReportTime(alertDetails?.timestamp || driverInfo.timestamp), [alertDetails?.timestamp, driverInfo.timestamp])
   const eventSummary = useMemo(
-    () => buildAlertEventSummary(alertDetails, driverInfo, locationText, 'camera'),
+    () => buildAlertEventSummary(alertDetails, driverInfo, locationText, 'generic'),
     [alertDetails, driverInfo, locationText]
   )
   useEffect(() => {
@@ -84,7 +84,7 @@ export default function NRCCameraCoveredModal({ isOpen, onClose, onSaved, driver
     setDescription(eventSummary)
     setArea(siteLabel)
     setDuration(eventTime ? `Observed at ${eventTime}` : 'Observed at alert time')
-    setOtherClass(alertDetails?.type || 'Camera obstruction / visibility breach')
+    setOtherClass(alertDetails?.type || 'General fleet non-conformance')
   }, [alertDetails?.type, eventSummary, eventTime, isOpen, siteLabel])
   useEffect(() => {
     if (!isOpen) return
@@ -132,7 +132,7 @@ export default function NRCCameraCoveredModal({ isOpen, onClose, onSaved, driver
       if (!element) throw new Error('Form content not found')
 
       const blob = await renderElementToPdfBlob(element)
-      const fileName = `nrc-camera-covered-${driverInfo.fleetNumber}-${Date.now()}.pdf`
+      const fileName = `ncr-generic-${driverInfo.fleetNumber}-${Date.now()}.pdf`
 
       const artifact = await saveAlertArtifactBundle({
         supabase,
@@ -159,7 +159,7 @@ export default function NRCCameraCoveredModal({ isOpen, onClose, onSaved, driver
     <div className="fixed inset-0 z-50 bg-black/50 p-4 flex items-center justify-center">
       <div className="bg-white rounded-lg shadow-2xl w-[95vw] h-[90vh] flex flex-col">
         <div className="flex items-center justify-between p-4 border-b">
-          <h2 className="text-xl font-bold">NRC Camera Covered</h2>
+          <h2 className="text-xl font-bold">Generic NCR</h2>
           <div className="flex gap-2">
             <Button size="sm" onClick={handleSave} disabled={saving}>{saving ? 'Saving...' : 'Save Report'}</Button>
             <Button size="sm" variant="outline" onClick={handlePrint}><Printer className="w-4 h-4 mr-2" />Print</Button>

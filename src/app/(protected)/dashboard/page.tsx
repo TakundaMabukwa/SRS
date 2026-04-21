@@ -81,8 +81,6 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContaine
 import { EditTripModal } from "@/components/ui/edit-trip-modal";
 import { NCRTemplate } from '@/components/reports/ncr-template';
 import NRCCameraCoveredModal from '@/components/video-alerts/nrc-camera-covered-modal';
-import NCRSafetyViolationModal from '@/components/video-alerts/ncr-safety-violation-modal';
-import NCRSpeedingModal from '@/components/video-alerts/ncr-speeding-modal';
 import IncidentReportModal from '@/components/video-alerts/incident-report-modal';
 import AccidentReportModal from '@/components/video-alerts/accident-report-modal';
 import CriminalReportModal from '@/components/video-alerts/criminal-report-modal';
@@ -2933,7 +2931,7 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
   const videoProxyBase = "/api/video-server";
   const EVENT_VIDEO_READY_MIN_SECONDS = 25;
   const [showNCRModal, setShowNCRModal] = useState(false);
-  const [selectedNcrForm, setSelectedNcrForm] = useState<'' | 'nrc-camera-covered' | 'ncr-safety-violation' | 'ncr-speeding'>('');
+  const [selectedNcrForm, setSelectedNcrForm] = useState<'' | 'nrc-camera-covered'>('');
   const [showReportModal, setShowReportModal] = useState(false);
   const [selectedReportForm, setSelectedReportForm] = useState<'' | 'incident-report' | 'accident-report' | 'criminal-report' | 'dispatch-report'>('');
   const [incidentReportModalOpen, setIncidentReportModalOpen] = useState(false);
@@ -2982,9 +2980,7 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
     "Optix Fatigue",
   ];
   const ncrFormOptions = [
-    { value: "nrc-camera-covered", label: "NCR CAMERA COVERED" },
-    { value: "ncr-safety-violation", label: "NCR SAFETY VIOLATION" },
-    { value: "ncr-speeding", label: "NCR SPEEDING" },
+    { value: "nrc-camera-covered", label: "GENERIC NCR" },
   ] as const;
   const reportFormOptions = [
     { value: "incident-report", label: "INCIDENT REPORT" },
@@ -6488,7 +6484,7 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
                         className="h-7 min-w-[170px] rounded-md border border-white/20 bg-white/10 px-2 text-xs text-white outline-none focus:border-white/40"
                         value={selectedNcrForm}
                         onChange={(e) => {
-                          const formType = (e.target.value || '') as '' | 'nrc-camera-covered' | 'ncr-safety-violation' | 'ncr-speeding';
+                          const formType = (e.target.value || '') as '' | 'nrc-camera-covered';
                           setSelectedNcrForm(formType);
                           if (formType) setShowNCRModal(true);
                         }}
@@ -7033,30 +7029,6 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
       {/* Close Alert Modal */}
       {showNCRModal && selectedAlert && selectedNcrForm === 'nrc-camera-covered' && (
         <NRCCameraCoveredModal
-          isOpen={showNCRModal}
-          onClose={() => setShowNCRModal(false)}
-          onSaved={async (artifact) => {
-            setShowNCRModal(false)
-            await closeSelectedAlert("ncr", artifact)
-          }}
-          driverInfo={selectedAlertDriverInfo}
-          alertDetails={selectedAlertReportDetails}
-        />
-      )}
-      {showNCRModal && selectedAlert && selectedNcrForm === 'ncr-safety-violation' && (
-        <NCRSafetyViolationModal
-          isOpen={showNCRModal}
-          onClose={() => setShowNCRModal(false)}
-          onSaved={async (artifact) => {
-            setShowNCRModal(false)
-            await closeSelectedAlert("ncr", artifact)
-          }}
-          driverInfo={selectedAlertDriverInfo}
-          alertDetails={selectedAlertReportDetails}
-        />
-      )}
-      {showNCRModal && selectedAlert && selectedNcrForm === 'ncr-speeding' && (
-        <NCRSpeedingModal
           isOpen={showNCRModal}
           onClose={() => setShowNCRModal(false)}
           onSaved={async (artifact) => {
