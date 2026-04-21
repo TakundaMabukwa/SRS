@@ -91,6 +91,7 @@ import IncidentReportTemplateModal from '@/components/video-alerts/incident-repo
 import type { SavedAlertArtifact } from '@/components/video-alerts/report-support';
 import { useVideoWebSocket } from "@/hooks/use-video-websocket";
 import { formatRawAlertTimestamp, getAlertDisplayTimestamp as getSharedAlertDisplayTimestamp, getAlertPlaybackSignature, resolveAlertPlaybackVideos, resolveMediaUrlForCurrentOrigin } from "@/lib/video-alert-playback";
+import { toast } from "sonner";
 
 const VideoAlertsDashboardTab = dynamic(
   () => import("@/components/dashboard/video-alerts-dashboard-tab"),
@@ -112,6 +113,85 @@ const FinancialsPanel = dynamic(
   () => import("@/components/financials/FinancialsPanel"),
   { ssr: false, loading: () => <div className="h-40 animate-pulse rounded-lg bg-slate-100" /> }
 );
+
+type DashboardStructuredAlertDomain = "ADAS" | "DMS";
+type DashboardAlertNameMapping = {
+  title: string;
+  domain?: DashboardStructuredAlertDomain;
+  code?: number;
+};
+
+const DASHBOARD_SIGNAL_CODE_MAP: Record<string, DashboardAlertNameMapping> = {
+  platform_video_alarm_0101: { title: "Video Signal Lost", code: 0x0101 },
+  platform_video_alarm_0102: { title: "Video Signal Occlusion", code: 0x0102 },
+  platform_video_alarm_0103: { title: "Storage Failure", code: 0x0103 },
+  platform_video_alarm_0104: { title: "Other Video Equipment Failure", code: 0x0104 },
+  platform_video_alarm_0105: { title: "Passenger Overload", code: 0x0105 },
+  platform_video_alarm_0106: { title: "Abnormal Driving Behavior", code: 0x0106 },
+  platform_video_alarm_0107: { title: "Special Alarm Recording Threshold", code: 0x0107 },
+  jtt1078_storage_failure: { title: "Storage Failure", code: 0x0103 },
+};
+
+const DASHBOARD_STRUCTURED_ALERT_TITLE_MAP: Record<DashboardStructuredAlertDomain, Record<number, string>> = {
+  ADAS: {
+    1: "ADAS: Forward Collision Alert",
+    2: "ADAS: Lane Departure Alert",
+    3: "ADAS: Too Close Distance Alert",
+    4: "ADAS: Pedestrian Collision Alert",
+    5: "ADAS: Frequent Lane Change Alert",
+    6: "ADAS: Road Sign Exceedance Alert",
+    7: "ADAS: Obstacle Alert",
+    16: "ADAS: Road Sign Recognition Event",
+    17: "ADAS: Active Snapshot Event",
+  },
+  DMS: {
+    1: "DMS: Fatigue Driving Alert",
+    2: "DMS: Calling Alert",
+    3: "DMS: Smoking Alert",
+    4: "DMS: Distracted Driving Alert",
+    5: "DMS: Driver Abnormality Alert",
+    6: "DMS: Steering Wheel Alert",
+    7: "DMS: Infrared Blocking",
+    8: "DMS: Seat Belt Alert",
+    10: "DMS: Device Blocking",
+    13: "DMS: Play Phone",
+    16: "DMS: Automatic Snapshot Event",
+    17: "DMS: Driver Change Event",
+  },
+};
+
+const DASHBOARD_OFFICIAL_ALERT_ALIAS_MAP: Record<string, DashboardAlertNameMapping> = {
+  "adas: forward collision alert": { title: "ADAS: Forward Collision Alert", domain: "ADAS", code: 1 },
+  "adas: lane departure alert": { title: "ADAS: Lane Departure Alert", domain: "ADAS", code: 2 },
+  "adas: too close distance alert": { title: "ADAS: Too Close Distance Alert", domain: "ADAS", code: 3 },
+  "adas: pedestrian collision alert": { title: "ADAS: Pedestrian Collision Alert", domain: "ADAS", code: 4 },
+  "adas: frequent lane change alert": { title: "ADAS: Frequent Lane Change Alert", domain: "ADAS", code: 5 },
+  "adas: road sign exceedance alert": { title: "ADAS: Road Sign Exceedance Alert", domain: "ADAS", code: 6 },
+  "adas: obstruction alarm": { title: "ADAS: Obstacle Alert", domain: "ADAS", code: 7 },
+  "adas: road sign identification event": { title: "ADAS: Road Sign Recognition Event", domain: "ADAS", code: 16 },
+  "adas: active capture event": { title: "ADAS: Active Snapshot Event", domain: "ADAS", code: 17 },
+  "dms: fatigue driving alert": { title: "DMS: Fatigue Driving Alert", domain: "DMS", code: 1 },
+  "dms: fatigue driving alarm": { title: "DMS: Fatigue Driving Alert", domain: "DMS", code: 1 },
+  "dms: calling alert": { title: "DMS: Calling Alert", domain: "DMS", code: 2 },
+  "dms: handheld phone alarm": { title: "DMS: Calling Alert", domain: "DMS", code: 2 },
+  "dms: smoking alert": { title: "DMS: Smoking Alert", domain: "DMS", code: 3 },
+  "dms: smoking alarm": { title: "DMS: Smoking Alert", domain: "DMS", code: 3 },
+  "dms: distracted driving alert": { title: "DMS: Distracted Driving Alert", domain: "DMS", code: 4 },
+  "dms: driver abnormal alarm": { title: "DMS: Driver Abnormality Alert", domain: "DMS", code: 5 },
+  "dms: steering wheel alert": { title: "DMS: Steering Wheel Alert", domain: "DMS", code: 6 },
+  "dms: infrared blocking": { title: "DMS: Infrared Blocking", domain: "DMS", code: 7 },
+  "dms: seat belt alert": { title: "DMS: Seat Belt Alert", domain: "DMS", code: 8 },
+  "dms: device blocking": { title: "DMS: Device Blocking", domain: "DMS", code: 10 },
+  "dms: play phone": { title: "DMS: Play Phone", domain: "DMS", code: 13 },
+  "dms: automatic capture event": { title: "DMS: Automatic Snapshot Event", domain: "DMS", code: 16 },
+  "dms: driver change event": { title: "DMS: Driver Change Event", domain: "DMS", code: 17 },
+  "storage failure": { title: "Storage Failure", code: 0x0103 },
+  "video signal lost": { title: "Video Signal Lost", code: 0x0101 },
+  "video signal occlusion": { title: "Video Signal Occlusion", code: 0x0102 },
+  "other video equipment failure": { title: "Other Video Equipment Failure", code: 0x0104 },
+  "passenger overload": { title: "Passenger Overload", code: 0x0105 },
+  "special alarm recording threshold": { title: "Special Alarm Recording Threshold", code: 0x0107 },
+};
 
 function UniversalVideoPlayer({
   url,
@@ -3046,13 +3126,72 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
     };
   }, [alertDetailModalOpen, mapboxToken, selectedAlertCoordinateKey]);
   const selectedAlertSeverity = String(selectedAlert?.priority || selectedAlert?.severity || "info").toLowerCase();
+  const getDashboardStructuredAlertMapping = useCallback((value: string) => {
+    const text = String(value || "").trim();
+    if (!text) return null;
+
+    const signalMapped = DASHBOARD_SIGNAL_CODE_MAP[text];
+    if (signalMapped) {
+      return {
+        title: signalMapped.title,
+        domain: signalMapped.domain || null,
+        code: signalMapped.code ?? null,
+        level: null,
+      };
+    }
+
+    const structuredMatch = text.match(/^(ADAS|DMS)\s+Alert\s+Type\s+(\d+)(?:\s*\(Level\s*(\d+)\))?$/i);
+    if (structuredMatch) {
+      const domain = structuredMatch[1].toUpperCase() as DashboardStructuredAlertDomain;
+      const code = Number(structuredMatch[2]);
+      const level = structuredMatch[3] ? Number(structuredMatch[3]) : null;
+      return {
+        title: DASHBOARD_STRUCTURED_ALERT_TITLE_MAP[domain]?.[code] || `${domain} Alert Type ${code}`,
+        domain,
+        code,
+        level,
+      };
+    }
+
+    const alias = DASHBOARD_OFFICIAL_ALERT_ALIAS_MAP[text.toLowerCase()];
+    if (alias) {
+      return {
+        title: alias.title,
+        domain: alias.domain || null,
+        code: alias.code ?? null,
+        level: null,
+      };
+    }
+
+    return null;
+  }, []);
   const selectedAlertType = String(selectedAlert?.alert_type || selectedAlert?.type || "alert").toLowerCase();
-  const selectedAlertTitle =
-    selectedAlertType.includes("smok") ? "Smoking Violation" :
-    selectedAlertType.includes("speed") ? "Speeding Violation" :
-    String(selectedAlert?.type || selectedAlert?.alert_type || "Alert")
+  const selectedAlertTitle = useMemo(() => {
+    const metadata = selectedAlert?.metadata || {};
+    const candidateValues = [
+      selectedAlert?.title,
+      selectedAlert?.alert_type,
+      selectedAlert?.type,
+      metadata?.primaryAlertType,
+      ...(Array.isArray(metadata?.alertSignalDetails) ? metadata.alertSignalDetails.map((detail: any) => detail?.label) : []),
+      ...(Array.isArray(metadata?.alertSignals) ? metadata.alertSignals : []),
+      ...(Array.isArray(metadata?.alertSignalDetails) ? metadata.alertSignalDetails.map((detail: any) => detail?.code) : []),
+    ]
+      .map((value) => String(value || "").trim())
+      .filter(Boolean);
+
+    for (const value of candidateValues) {
+      const structured = getDashboardStructuredAlertMapping(value);
+      if (structured?.title) return structured.title;
+    }
+
+    if (selectedAlertType.includes("smok")) return "Smoking Violation";
+    if (selectedAlertType.includes("speed")) return "Speeding Violation";
+
+    return String(selectedAlert?.type || selectedAlert?.alert_type || "Alert")
       .replace(/_/g, " ")
       .replace(/\b\w/g, (c: string) => c.toUpperCase());
+  }, [getDashboardStructuredAlertMapping, selectedAlert, selectedAlertType]);
   const getCookieValue = (name: string) => {
     if (typeof document === "undefined") return "";
     const value = `; ${document.cookie}`;
@@ -3070,32 +3209,49 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
       const manualNotes = alertNotesDraft.trim();
       const ncrLabel = String(selectedNcrForm || "").trim();
       const reportLabel = String(selectedReportForm || "").trim();
+      const defaultClosureLabel =
+        closureType === "false_alert"
+          ? `False alert - ${selectedAlertTitle || "Alert"}`
+          : closureType === "resolved"
+          ? `Resolved - ${selectedAlertTitle || "Alert"}`
+          : closureType === "ncr"
+          ? (artifact?.documentType || "ncr")
+          : closureType === "report"
+          ? (artifact?.documentType || "report")
+          : "resolved";
       const closureLabel =
         closureType === "ncr"
-          ? (ncrLabel || reasonLabel)
+          ? (ncrLabel || reasonLabel || defaultClosureLabel)
           : closureType === "report"
-          ? (reportLabel || reasonLabel)
-          : reasonLabel;
+          ? (reportLabel || reasonLabel || defaultClosureLabel)
+          : (reasonLabel || defaultClosureLabel);
       const reasonCode = closureLabel
         ? String(closureLabel).toLowerCase().replace(/[^a-z0-9]+/g, "_")
         : null;
 
-      if (!closureLabel) {
+      if ((closureType === "ncr" || closureType === "report") && !closureLabel) {
         const missingMessage =
           closureType === "ncr"
             ? "Select NCR form (or reason) before closing."
-            : closureType === "report"
-            ? "Select report type (or reason) before closing."
-            : "Select a reason before closing this alert.";
+            : "Select report type (or reason) before closing.";
         setAlertActionError(missingMessage);
         setAlertActionSuccess("");
+        toast.error(missingMessage);
         return;
       }
 
-      const notes = manualNotes || closureLabel;
+      const defaultNotes =
+        closureType === "false_alert"
+          ? `Marked as false alert from dashboard for ${selectedAlertTitle || "alert"}.`
+          : closureType === "resolved"
+          ? `Resolved from dashboard for ${selectedAlertTitle || "alert"}.`
+          : `Closed from dashboard for ${selectedAlertTitle || "alert"} via ${closureLabel}.`;
+      const notes = manualNotes || closureLabel || defaultNotes;
       if (notes.length < 5) {
-        setAlertActionError("Reason/notes must be at least 5 characters.");
+        const message = "Reason/notes must be at least 5 characters.";
+        setAlertActionError(message);
         setAlertActionSuccess("");
+        toast.error(message);
         return;
       }
 
@@ -3171,7 +3327,9 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
         if (!response.res.ok || !response.body?.success) {
           throw new Error(response.body?.message || `Failed to close alert (${response.res.status})`);
         }
-        setAlertActionSuccess(`Alert closed as ${closureType.replace(/_/g, " ")}.`);
+        const successMessage = `Alert closed as ${closureType.replace(/_/g, " ")}.`;
+        setAlertActionSuccess(successMessage);
+        toast.success(successMessage);
         setCurrentTripAlerts((prev: any) => {
           if (!prev || !Array.isArray(prev.alerts)) return prev;
           const remainingAlerts = prev.alerts.filter((a: any) => String(a?.id) !== closingAlertId);
@@ -3199,11 +3357,14 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
         setSelectedReportForm("");
         setRefreshTrigger((prev) => prev + 1);
       } catch (error: any) {
+        let message = error?.message || "Failed to close alert.";
         if (error?.name === "TimeoutError" || /aborted|timeout/i.test(String(error?.message || ""))) {
-          setAlertActionError("Close request timed out. Please retry.");
-        } else {
-          setAlertActionError(error?.message || "Failed to close alert.");
+          message = "Close request timed out. Please retry.";
+        } else if (/not found/i.test(String(error?.message || ""))) {
+          message = "This alert was not found on the server. It may already be closed or the board is stale. Refresh alerts and try again.";
         }
+        setAlertActionError(message);
+        toast.error(message);
       } finally {
         setAlertActionLoading(false);
       }
@@ -3781,10 +3942,18 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
   const buildSelectedAlertClosurePayload = useCallback((artifact?: SavedAlertArtifact | null) => ({
     source: "dashboard_trip_routing",
     alertId: selectedAlert?.id || null,
+    deviceId:
+      selectedAlert?.device_id ||
+      selectedAlert?.vehicleId ||
+      selectedAlert?.vehicle_id ||
+      selectedAlert?.vehicle?.device_id ||
+      null,
+    channel: selectedAlert?.channel ?? selectedAlert?.metadata?.channel ?? null,
     alertType: selectedAlert?.type || selectedAlert?.alert_type || null,
     severity: selectedAlert?.priority || selectedAlert?.severity || null,
     timestamp: selectedAlertDisplayTs || selectedAlert?.timestamp || null,
     locationText: selectedAlertLocationText || null,
+    coordinates: selectedAlertCoordinates || null,
     screenshots: selectedAlertScreenshots || [],
     videos: selectedAlertVideoList || [],
     videoRequestState: selectedAlertVideoRequestState || null,
@@ -3800,11 +3969,18 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
       : undefined,
   }), [
     selectedAlert?.alert_type,
+    selectedAlert?.channel,
+    selectedAlert?.device_id,
     selectedAlert?.id,
     selectedAlert?.priority,
     selectedAlert?.severity,
     selectedAlert?.timestamp,
     selectedAlert?.type,
+    selectedAlert?.vehicle?.device_id,
+    selectedAlert?.vehicleId,
+    selectedAlert?.vehicle_id,
+    selectedAlert?.metadata?.channel,
+    selectedAlertCoordinates,
     selectedAlertDisplayTs,
     selectedAlertLocationText,
     selectedAlertScreenshots,
@@ -6688,9 +6864,7 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
                         <AlertTriangle className="w-4 h-4 text-slate-500 mt-0.5" />
                         <div>
                           <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Alert Type</p>
-                          <p className="mt-1 font-semibold text-slate-900">
-                            {selectedAlert.type || selectedAlert.alert_type?.replace(/_/g, " ").toUpperCase() || "N/A"}
-                          </p>
+                          <p className="mt-1 font-semibold text-slate-900">{selectedAlertTitle || "N/A"}</p>
                         </div>
                       </div>
                       {selectedAlert.metadata && (
@@ -6816,7 +6990,7 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
                             variant="outline"
                             size="sm"
                             className="w-full justify-center"
-                            disabled={alertActionLoading || !selectedAlert?.id || !String(alertReason || "").trim()}
+                            disabled={alertActionLoading || !selectedAlert?.id}
                             onClick={() => closeSelectedAlert("resolved")}
                           >
                             {alertActionLoading ? "Closing..." : "Close Alert"}

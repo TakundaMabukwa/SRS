@@ -34,6 +34,16 @@ export function getVideoHubBaseUrl() {
 export function resolveVideoServerProxyBase(pathArray: string[]) {
   const [first = "", second = "", third = "", fourth = ""] = pathArray;
   const joined = pathArray.join("/").toLowerCase();
+  const isAlertMutationPath =
+    first === "alerts" &&
+    (
+      third === "acknowledge" ||
+      third === "resolve" ||
+      third === "resolve-with-notes" ||
+      third === "close" ||
+      third === "mark-false" ||
+      third === "escalate"
+    );
   const isAlertMediaPath =
     first === "alerts" &&
     (
@@ -46,6 +56,7 @@ export function resolveVideoServerProxyBase(pathArray: string[]) {
     );
 
   const isLiveCommandPath =
+    isAlertMutationPath ||
     (first === "vehicles" &&
       (third === "start-live" ||
         third === "stop-live" ||
