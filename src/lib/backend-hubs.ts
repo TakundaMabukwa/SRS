@@ -150,7 +150,6 @@ export function resolveVideoServerProxyBase(pathArray: string[]) {
   const isAlertPath =
     first === "alerts" ||
     first === "dashboard" ||
-    first === "screenshots" ||
     first === "drivers" ||
     first === "speeding";
 

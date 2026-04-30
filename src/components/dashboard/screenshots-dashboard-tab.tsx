@@ -35,6 +35,7 @@ type ScreenshotItem = {
 
 type CaptureTarget = {
   vehicleId: string;
+  candidateVehicleIds: string[];
   channel: number;
 };
 
@@ -110,8 +111,12 @@ function buildTargets(vehicles: ConnectedVehicle[]): CaptureTarget[] {
     const channels = getScreenshotChannels(vehicle.channels);
 
     for (const channel of channels) {
+      const candidateVehicleIds = Array.from(
+        new Set([vehicle.id, vehicle.phone].map((value) => String(value || "").trim()).filter(Boolean))
+      );
       const target = {
         vehicleId,
+        candidateVehicleIds,
         channel,
       };
       const key = toTargetKey(target);
@@ -344,7 +349,13 @@ export default function ScreenshotsDashboardTab({ detachable = true }: Screensho
       return false;
     }
 
-    const candidateVehicleIds = [String(target.vehicleId || "").trim()].filter(Boolean);
+    const candidateVehicleIds = Array.from(
+      new Set(
+        [target.vehicleId, ...(Array.isArray(target.candidateVehicleIds) ? target.candidateVehicleIds : [])]
+          .map((value) => String(value || "").trim())
+          .filter(Boolean)
+      )
+    );
 
     for (const candidateId of candidateVehicleIds) {
       const response = await fetch(`/api/video-server/vehicles/${candidateId}/screenshot`, {
