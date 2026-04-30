@@ -224,9 +224,13 @@ function isVehicleActive(vehicle: ConnectedVehicle): boolean {
   return getActiveStreamCount(vehicle) > 0;
 }
 
+function isVehicleOnline(vehicle: ConnectedVehicle): boolean {
+  return vehicle.connected !== false;
+}
+
 function getVehicleStatusRank(vehicle: ConnectedVehicle): number {
   if (isVehicleActive(vehicle)) return 0;
-  if (vehicle.connected !== false) return 1;
+  if (isVehicleOnline(vehicle)) return 1;
   return 2;
 }
 
@@ -305,11 +309,7 @@ export default function LiveStreamTab() {
   }, [supabase]);
 
   const fetchRuntimeVehicles = useCallback(async () => {
-    const runtimeEndpoints = [
-      "/api/video-server/vehicles/connected",
-      "/api/video/streams",
-      "/api/video-server/vehicles",
-    ];
+    const runtimeEndpoints = ["/api/video-server/vehicles/connected"];
 
     for (const endpoint of runtimeEndpoints) {
       try {
@@ -362,12 +362,17 @@ export default function LiveStreamTab() {
   }, [fetchConnectedVehicles]);
 
   const toggleVehicle = (vehicleId: string) => {
+    const vehicle = vehicles.find((entry) => entry.id === vehicleId);
+    if (!vehicle) return;
+
     const next = new Set(selectedVehicles);
     if (next.has(vehicleId)) {
       next.delete(vehicleId);
       if (pinnedFeed?.vehicleId === vehicleId) {
         setPinnedFeed(null);
       }
+    } else if (!isVehicleOnline(vehicle)) {
+      return;
     } else {
       next.add(vehicleId);
     }
@@ -387,8 +392,10 @@ export default function LiveStreamTab() {
       return String(a.displayLabel || "").localeCompare(String(b.displayLabel || ""));
     });
 
-  const activeVehicleCount = filteredVehicles.filter((vehicle) => isVehicleActive(vehicle)).length;
-  const inactiveVehicleCount = Math.max(0, filteredVehicles.length - activeVehicleCount);
+  const onlineVehicles = filteredVehicles.filter((vehicle) => isVehicleOnline(vehicle));
+  const offlineVehicles = filteredVehicles.filter((vehicle) => !isVehicleOnline(vehicle));
+  const onlineVehicleCount = onlineVehicles.length;
+  const offlineVehicleCount = offlineVehicles.length;
 
   const liveChannelCount = filteredVehicles.reduce(
     (acc, vehicle) => acc + getActiveStreamCount(vehicle),
@@ -414,6 +421,150 @@ export default function LiveStreamTab() {
       };
     });
   });
+
+  const renderVehicleCard = (vehicle: ConnectedVehicle) => {
+    const online = isVehicleOnline(vehicle);
+    const selected = selectedVehicles.has(vehicle.id);
+
+    return (
+      <Card
+        key={vehicle.id}
+        className={`p-4 transition-all ${
+          selected
+            ? "border-emerald-400 bg-emerald-50 shadow-md"
+            : "border-slate-200 bg-white hover:border-slate-300 hover:shadow-sm"
+        } ${online ? "cursor-pointer" : "opacity-90"}`}
+        onClick={() => {
+          if (online) toggleVehicle(vehicle.id);
+        }}
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex items-start gap-3">
+            <div className="rounded-lg bg-slate-900 p-2 text-white">
+              <Video className="h-5 w-5" />
+            </div>
+            <div>
+              <p className="font-bold text-slate-900">{vehicle.displayLabel}</p>
+            </div>
+          </div>
+          {online ? (
+            <Badge className={`${isVehicleActive(vehicle) ? "bg-cyan-600 hover:bg-cyan-600" : "bg-emerald-600 hover:bg-emerald-600"} text-white`}>
+              <Wifi className="mr-1 h-3 w-3" />
+              {isVehicleActive(vehicle) ? "Active" : "Online"}
+            </Badge>
+          ) : (
+            <Badge variant="outline">
+              <WifiOff className="mr-1 h-3 w-3" />
+              Offline
+            </Badge>
+          )}
+        </div>
+
+        <div className="mt-3 flex items-center justify-between">
+          <div className="flex items-center gap-2 text-xs text-slate-600">
+            <Activity className="h-3.5 w-3.5" />
+            {online
+              ? isVehicleActive(vehicle)
+                ? `${getActiveStreamCount(vehicle)} live stream(s)`
+                : `${getLiveChannels(vehicle.channels).length} channel(s) ready`
+              : "No active listener session"}
+          </div>
+          <Button
+            size="sm"
+            disabled={!online}
+            variant={selected ? "destructive" : "default"}
+            className={
+              !online
+                ? "bg-slate-200 text-slate-500 hover:bg-slate-200"
+                : selected
+                  ? ""
+                  : "bg-slate-900 hover:bg-slate-800"
+            }
+          >
+            {selected ? "Stop" : online ? "Stream" : "Offline"}
+          </Button>
+        </div>
+      </Card>
+    );
+  };
+
+  const renderVehicleTableSection = (title: string, sectionVehicles: ConnectedVehicle[]) => {
+    if (sectionVehicles.length === 0) return null;
+
+    return (
+      <div className="space-y-3">
+        <div className="flex items-center gap-2">
+          {title === "Online Vehicles" ? (
+            <Wifi className="h-4 w-4 text-emerald-600" />
+          ) : (
+            <WifiOff className="h-4 w-4 text-slate-500" />
+          )}
+          <h4 className="text-base font-semibold text-slate-900">
+            {title} ({sectionVehicles.length})
+          </h4>
+        </div>
+        <Card className="overflow-hidden border-slate-200">
+          <table className="w-full">
+            <thead className="bg-slate-50">
+              <tr>
+                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Status</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Registration</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">SIM ID</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Channels</th>
+                <th className="px-4 py-3 text-center text-xs font-semibold uppercase tracking-wide text-slate-600">Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sectionVehicles.map((vehicle) => {
+                const online = isVehicleOnline(vehicle);
+                const selected = selectedVehicles.has(vehicle.id);
+
+                return (
+                  <tr key={vehicle.id} className="border-t hover:bg-slate-50">
+                    <td className="px-4 py-3">
+                      {online ? (
+                        <Badge className={`${isVehicleActive(vehicle) ? "bg-cyan-600 hover:bg-cyan-600" : "bg-emerald-600 hover:bg-emerald-600"} text-white`}>
+                          {isVehicleActive(vehicle) ? "Active" : "Online"}
+                        </Badge>
+                      ) : (
+                        <Badge variant="outline">Offline</Badge>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 font-medium text-slate-900">{vehicle.displayLabel}</td>
+                    <td className="px-4 py-3 font-mono text-xs text-slate-600">{vehicle.phone || vehicle.id}</td>
+                    <td className="px-4 py-3 text-slate-600">
+                      {online
+                        ? isVehicleActive(vehicle)
+                          ? `${getActiveStreamCount(vehicle)} active / ${getLiveChannels(vehicle.channels).length}`
+                          : `${getLiveChannels(vehicle.channels).length} ready`
+                        : "Unavailable"}
+                    </td>
+                    <td className="px-4 py-3 text-center">
+                      <Button
+                        size="sm"
+                        disabled={!online}
+                        variant={selected ? "destructive" : "default"}
+                        onClick={() => toggleVehicle(vehicle.id)}
+                        className={
+                          !online
+                            ? "bg-slate-200 text-slate-500 hover:bg-slate-200"
+                            : selected
+                              ? ""
+                              : "bg-slate-900 hover:bg-slate-800"
+                        }
+                      >
+                        {selected ? "Stop" : online ? "Stream" : "Offline"}
+                      </Button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </Card>
+      </div>
+    );
+  };
 
   const gridClassName = (() => {
     switch (gridColumns) {
@@ -483,7 +634,7 @@ export default function LiveStreamTab() {
               <div className="rounded-lg border border-slate-700 bg-slate-900/70 px-4 py-3">
                 <p className="text-[11px] uppercase tracking-wide text-slate-400">Total Vehicles</p>
                 <p className="mt-1 text-2xl font-bold text-emerald-300">{filteredVehicles.length}</p>
-                <p className="mt-1 text-[11px] text-slate-400">{activeVehicleCount} active - {inactiveVehicleCount} inactive</p>
+                <p className="mt-1 text-[11px] text-slate-400">{onlineVehicleCount} online - {offlineVehicleCount} offline</p>
               </div>
               <div className="rounded-lg border border-slate-700 bg-slate-900/70 px-4 py-3">
                 <p className="text-[11px] uppercase tracking-wide text-slate-400">Active Channels</p>
@@ -665,7 +816,7 @@ export default function LiveStreamTab() {
         <div className="mb-4 flex items-center gap-2">
           <RadioTower className="h-5 w-5 text-slate-700" />
           <h3 className="text-lg font-semibold text-slate-900">
-            All Vehicles ({filteredVehicles.length})
+            Vehicle Status Overview
           </h3>
         </div>
 
@@ -674,103 +825,43 @@ export default function LiveStreamTab() {
         ) : filteredVehicles.length === 0 ? (
           <Card className="p-8 text-center text-slate-500">No vehicles found</Card>
         ) : viewMode === "grid" ? (
-          <div className={gridClassName}>
-            {filteredVehicles.map((vehicle) => (
-              <Card
-                key={vehicle.id}
-                className={`cursor-pointer p-4 transition-all ${
-                  selectedVehicles.has(vehicle.id)
-                    ? "border-emerald-400 bg-emerald-50 shadow-md"
-                    : "border-slate-200 bg-white hover:border-slate-300 hover:shadow-sm"
-                }`}
-                onClick={() => toggleVehicle(vehicle.id)}
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex items-start gap-3">
-                    <div className="rounded-lg bg-slate-900 p-2 text-white">
-                      <Video className="h-5 w-5" />
-                    </div>
-                    <div>
-                      <p className="font-bold text-slate-900">{vehicle.displayLabel}</p>
-                    </div>
-                  </div>
-                  {vehicle.connected !== false ? (
-                    <Badge className={`${isVehicleActive(vehicle) ? "bg-cyan-600 hover:bg-cyan-600" : "bg-emerald-600 hover:bg-emerald-600"} text-white`}>
-                      <Wifi className="mr-1 h-3 w-3" />
-                      {isVehicleActive(vehicle) ? "Active" : "Connected"}
-                    </Badge>
-                  ) : (
-                    <Badge variant="outline">
-                      <WifiOff className="mr-1 h-3 w-3" />
-                      Inactive
-                    </Badge>
-                  )}
+          <div className="space-y-6">
+            <div>
+              <div className="mb-3 flex items-center gap-2">
+                <Wifi className="h-4 w-4 text-emerald-600" />
+                <h4 className="text-base font-semibold text-slate-900">
+                  Online Vehicles ({onlineVehicles.length})
+                </h4>
+              </div>
+              {onlineVehicles.length > 0 ? (
+                <div className={gridClassName}>
+                  {onlineVehicles.map(renderVehicleCard)}
                 </div>
-
-                <div className="mt-3 flex items-center justify-between">
-                  <div className="flex items-center gap-2 text-xs text-slate-600">
-                    <Activity className="h-3.5 w-3.5" />
-                    {isVehicleActive(vehicle)
-                      ? `${getActiveStreamCount(vehicle)} live stream(s)`
-                      : `${getLiveChannels(vehicle.channels).length} channel(s)`}
-                  </div>
-                  <Button
-                    size="sm"
-                    variant={selectedVehicles.has(vehicle.id) ? "destructive" : "default"}
-                    className={selectedVehicles.has(vehicle.id) ? "" : "bg-slate-900 hover:bg-slate-800"}
-                  >
-                    {selectedVehicles.has(vehicle.id) ? "Stop" : "Stream"}
-                  </Button>
+              ) : (
+                <Card className="p-6 text-center text-slate-500">No online vehicles found.</Card>
+              )}
+            </div>
+            <div>
+              <div className="mb-3 flex items-center gap-2">
+                <WifiOff className="h-4 w-4 text-slate-500" />
+                <h4 className="text-base font-semibold text-slate-900">
+                  Offline Vehicles ({offlineVehicles.length})
+                </h4>
+              </div>
+              {offlineVehicles.length > 0 ? (
+                <div className={gridClassName}>
+                  {offlineVehicles.map(renderVehicleCard)}
                 </div>
-              </Card>
-            ))}
+              ) : (
+                <Card className="p-6 text-center text-slate-500">No offline vehicles found.</Card>
+              )}
+            </div>
           </div>
         ) : (
-          <Card className="overflow-hidden border-slate-200">
-            <table className="w-full">
-              <thead className="bg-slate-50">
-                <tr>
-                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Status</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Registration</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">SIM ID</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Channels</th>
-                  <th className="px-4 py-3 text-center text-xs font-semibold uppercase tracking-wide text-slate-600">Action</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredVehicles.map((vehicle) => (
-                  <tr key={vehicle.id} className="border-t hover:bg-slate-50">
-                    <td className="px-4 py-3">
-                      {vehicle.connected !== false ? (
-                        <Badge className={`${isVehicleActive(vehicle) ? "bg-cyan-600 hover:bg-cyan-600" : "bg-emerald-600 hover:bg-emerald-600"} text-white`}>
-                          {isVehicleActive(vehicle) ? "Active" : "Connected"}
-                        </Badge>
-                      ) : (
-                        <Badge variant="outline">Inactive</Badge>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 font-medium text-slate-900">{vehicle.displayLabel}</td>
-                    <td className="px-4 py-3 font-mono text-xs text-slate-600">{vehicle.phone || vehicle.id}</td>
-                    <td className="px-4 py-3 text-slate-600">
-                      {isVehicleActive(vehicle)
-                        ? `${getActiveStreamCount(vehicle)} active / ${getLiveChannels(vehicle.channels).length}`
-                        : `${getLiveChannels(vehicle.channels).length}`}
-                    </td>
-                    <td className="px-4 py-3 text-center">
-                      <Button
-                        size="sm"
-                        variant={selectedVehicles.has(vehicle.id) ? "destructive" : "default"}
-                        onClick={() => toggleVehicle(vehicle.id)}
-                        className={selectedVehicles.has(vehicle.id) ? "" : "bg-slate-900 hover:bg-slate-800"}
-                      >
-                        {selectedVehicles.has(vehicle.id) ? "Stop" : "Stream"}
-                      </Button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </Card>
+          <div className="space-y-6">
+            {renderVehicleTableSection("Online Vehicles", onlineVehicles)}
+            {renderVehicleTableSection("Offline Vehicles", offlineVehicles)}
+          </div>
         )}
       </div>
     </div>

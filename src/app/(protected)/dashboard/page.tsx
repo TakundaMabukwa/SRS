@@ -1906,6 +1906,39 @@ function RoutingSection({ userRole, handleViewMap, setCurrentTripForNote, setNot
       const status = String(alert?.status || '').toLowerCase()
       return !!alert?.resolved || status === 'resolved' || status === 'closed' || !!alert?.resolved_at || !!alert?.closed_at
     }
+    const isSuppressedAlert = (alert: any) => {
+      const metadata = alert?.metadata || {}
+      const candidates = [
+        alert?.title,
+        alert?.alert_type,
+        alert?.type,
+        metadata?.primaryAlertType,
+      ]
+        .map((value: any) => String(value || '').trim().toLowerCase())
+        .filter(Boolean)
+      const signals = [
+        ...(Array.isArray(metadata?.alertSignals) ? metadata.alertSignals : []),
+        ...(Array.isArray(metadata?.alertSignalDetails) ? metadata.alertSignalDetails.map((detail: any) => detail?.code) : []),
+      ]
+        .map((value: any) => String(value || '').trim().toLowerCase())
+        .filter(Boolean)
+
+      return (
+        candidates.some((value: string) =>
+          value.includes('dms: forward camera invisible too long') ||
+          value.includes('forward camera invisible too long') ||
+          value.includes('other video equipment failure') ||
+          value.includes('special alarm recording threshold') ||
+          value.includes('storage failure') ||
+          value.includes('storage unit failure')
+        ) ||
+        signals.includes('dms_10104_forward_invisible_too_long') ||
+        signals.includes('platform_video_alarm_0103') ||
+        signals.includes('platform_video_alarm_0104') ||
+        signals.includes('platform_video_alarm_0107') ||
+        signals.includes('jtt1078_storage_failure')
+      )
+    }
     const getAlertDisplayTimestamp = (alert: any) =>
       alert?.timestamp ||
       alert?.created_at ||
@@ -1915,7 +1948,7 @@ function RoutingSection({ userRole, handleViewMap, setCurrentTripForNote, setNot
       null
 
     return tripLevelAlerts
-      .filter((alert: any) => !isResolvedAlert(alert))
+      .filter((alert: any) => !isResolvedAlert(alert) && !isSuppressedAlert(alert))
       .sort((a: any, b: any) => new Date(getAlertDisplayTimestamp(b) || 0).getTime() - new Date(getAlertDisplayTimestamp(a) || 0).getTime())
   }
 

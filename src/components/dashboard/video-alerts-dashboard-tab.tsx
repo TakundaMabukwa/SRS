@@ -171,6 +171,27 @@ const OFFICIAL_ALERT_ALIAS_MAP: Record<string, AlertNameMapping> = {
 
 const MIN_READY_VIDEO_BYTES = 500 * 1024;
 const MAX_EXACT_READY_CHECKS = 12;
+const SILENCED_ALERT_LABELS = [
+  "storage failure",
+  "storage unit failure",
+  "dms: forward camera invisible too long",
+  "forward camera invisible too long",
+  "other video equipment failure",
+  "special alarm recording threshold",
+];
+const SILENCED_ALERT_SIGNALS = new Set([
+  "jtt1078_storage_failure",
+  "platform_video_alarm_0103",
+  "platform_video_alarm_0104",
+  "platform_video_alarm_0107",
+  "custom_keyword_storage_failure",
+  "dms_10104_forward_invisible_too_long",
+]);
+
+function shouldSilenceAlertValue(value: unknown) {
+  const normalized = String(value || "").trim().toLowerCase();
+  return !!normalized && SILENCED_ALERT_LABELS.some((matcher) => normalized.includes(matcher));
+}
 
 export default function VideoAlertsDashboardTab({
   onOpenAlertDetail,
@@ -280,6 +301,22 @@ export default function VideoAlertsDashboardTab({
     ]
       .map((value) => String(value || "").trim())
       .filter(Boolean);
+
+    const signalValues = [
+      ...(Array.isArray(metadata?.alertSignals) ? metadata.alertSignals : []),
+      ...(Array.isArray(metadata?.alertSignalDetails) ? metadata.alertSignalDetails.map((detail: any) => detail?.code) : []),
+    ]
+      .map((value) => String(value || "").trim().toLowerCase())
+      .filter(Boolean);
+
+    if (candidateValues.some((value) => shouldSilenceAlertValue(value)) || signalValues.some((value) => SILENCED_ALERT_SIGNALS.has(value))) {
+      return {
+        title: "",
+        typeLabel: "",
+        codeLabel: "",
+        silent: true,
+      };
+    }
 
     const silent = candidateValues.some((value) => /abnormal\s+driving/i.test(value));
     if (silent) {
@@ -1098,13 +1135,20 @@ export default function VideoAlertsDashboardTab({
 
   // Filtering
   const filteredAlerts = alertCollection.filter((alert: any) => {
+    const status = String(alert?.status || "").toLowerCase();
+    const isClosedAlert = ["closed", "resolved"].includes(status);
+
     // 1. Tab Filter
     if (activeTab === 'unattended') {
       if (!isUnattended(alert)) return false;
     } else if (activeTab === 'history') {
-      if (!['closed', 'resolved'].includes(alert.status)) return false;
+      if (!isClosedAlert) return false;
     } else if (activeTab !== 'all') {
-      if (alert.status !== activeTab) return false;
+      if (status !== activeTab) return false;
+    }
+
+    if (activeTab !== "history" && isClosedAlert) {
+      return false;
     }
 
     // 2. Search

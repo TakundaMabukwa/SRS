@@ -12,21 +12,27 @@ interface HLSPlayerProps {
   fallbackVehicleIds?: string[];
 }
 
+const resolvedVehicleIdCache = new Map<string, string>();
+
 export default function HLSPlayer({ vehicleId, channel, vehicleName, onStop, fallbackVehicleIds = [] }: HLSPlayerProps) {
   const targetLiveDelaySeconds = 3;
   const videoRef = useRef<HTMLVideoElement>(null);
   const hlsRef = useRef<Hls | null>(null);
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const statsTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const startLiveCooldownUntilRef = useRef(0);
   const fatalErrorCountRef = useRef(0);
   const [status, setStatus] = useState('Starting stream...');
   const [stats, setStats] = useState('Waiting for stream...');
   const [error, setError] = useState(false);
+  const fallbackKey = fallbackVehicleIds.map((value) => String(value || '').trim()).filter(Boolean).join('|');
 
   useEffect(() => {
     let mounted = true;
+    const cacheKey = `${vehicleId}:${channel}`;
+    const cachedCandidate = resolvedVehicleIdCache.get(cacheKey);
     const candidateVehicleIds = Array.from(
-      new Set([vehicleId, ...fallbackVehicleIds].map((value) => String(value || '').trim()).filter(Boolean))
+      new Set([cachedCandidate, vehicleId, ...fallbackKey.split('|')].map((value) => String(value || '').trim()).filter(Boolean))
     );
     let activeVehicleId = vehicleId;
 
@@ -170,15 +176,37 @@ export default function HLSPlayer({ vehicleId, channel, vehicleName, onStop, fal
       setError(true);
     };
 
-    const startStreamAndAttach = async () => {
-      const video = videoRef.current;
-      if (!video || !mounted) return;
+    const buildHlsUrl = (candidateId: string) =>
+      `/api/video-server/stream/${encodeURIComponent(candidateId)}/${encodeURIComponent(String(channel))}/playlist.m3u8`;
 
-      cleanupHls();
-      setStatus('Starting stream...');
-      setError(false);
+    const probeExistingPlaylist = async () => {
+      for (const candidateId of candidateVehicleIds) {
+        const probeUrl = `${buildHlsUrl(candidateId)}?_probe=${Date.now()}`;
+        try {
+          const response = await fetch(probeUrl, {
+            method: 'GET',
+            cache: 'no-store',
+            signal: AbortSignal.timeout(1500),
+          });
 
-      let started = false;
+          if (response.ok) {
+            activeVehicleId = candidateId;
+            resolvedVehicleIdCache.set(cacheKey, candidateId);
+            return buildHlsUrl(candidateId);
+          }
+        } catch {}
+      }
+
+      return null;
+    };
+
+    const requestStartLive = async () => {
+      if (Date.now() < startLiveCooldownUntilRef.current) {
+        return false;
+      }
+
+      let sawNotConnected = false;
+
       for (const candidateId of candidateVehicleIds) {
         try {
           const response = await fetch(`/api/video-server/vehicles/${encodeURIComponent(candidateId)}/start-live`, {
@@ -189,13 +217,42 @@ export default function HLSPlayer({ vehicleId, channel, vehicleName, onStop, fal
 
           if (response.ok) {
             activeVehicleId = candidateId;
-            started = true;
-            break;
+            resolvedVehicleIdCache.set(cacheKey, candidateId);
+            return true;
+          }
+
+          if (response.status === 404) {
+            sawNotConnected = true;
           }
         } catch {}
       }
 
+      if (sawNotConnected) {
+        startLiveCooldownUntilRef.current = Date.now() + 15000;
+      }
+
+      return false;
+    };
+
+    const startStreamAndAttach = async () => {
+      const video = videoRef.current;
+      if (!video || !mounted) return;
+
+      cleanupHls();
+      setStatus('Checking live stream...');
+      setError(false);
+
+      const existingPlaylistUrl = await probeExistingPlaylist();
       if (!mounted) return;
+
+      if (existingPlaylistUrl) {
+        setStatus('Loading live stream...');
+        attachHls(video, existingPlaylistUrl);
+        return;
+      }
+
+      setStatus('Requesting live stream...');
+      const started = await requestStartLive();
 
       if (!started && candidateVehicleIds.length === 0) {
         setStatus('Failed to start');
@@ -203,8 +260,8 @@ export default function HLSPlayer({ vehicleId, channel, vehicleName, onStop, fal
         return;
       }
 
-      const hlsUrl = `/api/video-server/stream/${encodeURIComponent(activeVehicleId)}/${encodeURIComponent(String(channel))}/playlist.m3u8`;
-      setStatus('Loading stream...');
+      const hlsUrl = buildHlsUrl(activeVehicleId);
+      setStatus(started ? 'Loading stream...' : 'Waiting for stream...');
       attachHls(video, hlsUrl);
     };
 
@@ -236,7 +293,7 @@ export default function HLSPlayer({ vehicleId, channel, vehicleName, onStop, fal
       clearStatsTimer();
       cleanupHls();
     };
-  }, [vehicleId, channel, fallbackVehicleIds]);
+  }, [vehicleId, channel, fallbackKey]);
 
   const isStreaming = status === 'Streaming';
 
