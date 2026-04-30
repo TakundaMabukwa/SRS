@@ -40,6 +40,15 @@ interface ConnectedVehicle {
   activeStreams?: number[];
 }
 
+type VehicleCatalogRow = {
+  registration_number?: string | null;
+  fleet_number?: string | null;
+  camera_sim_id?: string | null;
+  camera_serial?: string | null;
+};
+
+type RuntimeRecord = Record<string, unknown>;
+
 type PinnedFeed = {
   vehicleId: string;
   fallbackVehicleIds: string[];
@@ -69,6 +78,158 @@ function getLiveChannels(channels: VehicleChannel[] | undefined): number[] {
   return Array.from(new Set([1, 2, ...discovered]));
 }
 
+function toVehicleKey(vehicle: ConnectedVehicle): string {
+  return String(vehicle.id || vehicle.phone || "").trim();
+}
+
+function readRuntimeRecord(value: unknown): RuntimeRecord {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as RuntimeRecord)
+    : {};
+}
+
+function parseRuntimeChannel(channel: unknown): VehicleChannel | null {
+  const record = readRuntimeRecord(channel);
+  const logicalChannel = Number(record.logicalChannel ?? record.channelId ?? record.channel ?? 0);
+  const channelNumber = Number(record.channel ?? record.logicalChannel ?? record.channelId ?? 0);
+  const resolvedChannel = logicalChannel || channelNumber;
+  if (!Number.isFinite(resolvedChannel) || resolvedChannel <= 0) {
+    return null;
+  }
+  return {
+    logicalChannel: logicalChannel > 0 ? logicalChannel : resolvedChannel,
+    channel: channelNumber > 0 ? channelNumber : resolvedChannel,
+  };
+}
+
+function parseRuntimeVehicles(payload: unknown): ConnectedVehicle[] {
+  const root = readRuntimeRecord(payload);
+  const rootData = readRuntimeRecord(root.data);
+  const vehicles = Array.isArray(payload)
+    ? payload
+    : Array.isArray(root.vehicles)
+      ? root.vehicles
+      : Array.isArray(root.data)
+        ? root.data
+        : Array.isArray(rootData.vehicles)
+          ? rootData.vehicles
+          : Array.isArray(rootData.devices)
+            ? rootData.devices
+            : [];
+
+  return vehicles
+    .map((entry) => {
+      const record = readRuntimeRecord(entry);
+      const rawChannels = Array.isArray(record.channels) ? record.channels : [];
+      const channels = rawChannels
+        .map(parseRuntimeChannel)
+        .filter((channel): channel is VehicleChannel => !!channel);
+      const id = String(
+        record.id ??
+          record.deviceId ??
+          record.vehicleId ??
+          record.phone ??
+          record.terminalPhone ??
+          ""
+      ).trim();
+      const phone = String(record.phone ?? record.terminalPhone ?? record.sim ?? "").trim();
+      if (!id && !phone) return null;
+
+      const activeStreams = rawChannels
+        .map((channel) => {
+          const channelRecord = readRuntimeRecord(channel);
+          const channelNumber = Number(
+            channelRecord.logicalChannel ??
+              channelRecord.channelId ??
+              channelRecord.channel ??
+              0
+          );
+          const hasStreamUrl = String(channelRecord.streamUrl ?? channelRecord.playUrl ?? "").trim().length > 0;
+          const isActive = hasStreamUrl || channelRecord.active === true || channelRecord.streaming === true;
+          return isActive && Number.isFinite(channelNumber) && channelNumber > 0 ? channelNumber : null;
+        })
+        .filter((value): value is number => value !== null);
+
+      return {
+        id: id || phone,
+        name: String((record.name ?? record.plateName ?? record.displayLabel ?? id) || phone).trim(),
+        phone: phone || undefined,
+        channels,
+        connected: record.connected !== false,
+        activeStreams: Array.from(new Set(activeStreams)).sort((a, b) => a - b),
+      } satisfies ConnectedVehicle;
+    })
+    .filter((vehicle): vehicle is ConnectedVehicle => !!vehicle);
+}
+
+function mergeRuntimeIntoCatalog(
+  catalogVehicles: ConnectedVehicle[],
+  runtimeVehicles: ConnectedVehicle[]
+): ConnectedVehicle[] {
+  const runtimeByKey = new Map<string, ConnectedVehicle>();
+
+  for (const vehicle of runtimeVehicles) {
+    const keys = [vehicle.id, vehicle.phone]
+      .map((value) => String(value || "").trim())
+      .filter(Boolean);
+    for (const key of keys) {
+      if (!runtimeByKey.has(key)) {
+        runtimeByKey.set(key, vehicle);
+      }
+    }
+  }
+
+  return catalogVehicles
+    .map((vehicle) => {
+      const runtimeMatch =
+        [vehicle.id, vehicle.phone]
+          .map((value) => String(value || "").trim())
+          .filter(Boolean)
+          .map((key) => runtimeByKey.get(key))
+          .find(Boolean) || null;
+
+      if (!runtimeMatch) {
+        return vehicle;
+      }
+
+      return {
+        ...vehicle,
+        phone: vehicle.phone || runtimeMatch.phone || "",
+        channels: runtimeMatch.channels?.length ? runtimeMatch.channels : vehicle.channels,
+        connected: runtimeMatch.connected !== false,
+        activeStreams: Array.from(
+          new Set([
+            ...(Array.isArray(vehicle.activeStreams) ? vehicle.activeStreams : []),
+            ...(Array.isArray(runtimeMatch.activeStreams) ? runtimeMatch.activeStreams : []),
+          ])
+        ).sort((a, b) => Number(a) - Number(b)),
+      };
+    })
+    .sort((a, b) => {
+      const statusDiff = getVehicleStatusRank(a) - getVehicleStatusRank(b);
+      if (statusDiff !== 0) return statusDiff;
+      return String(a.displayLabel || "").localeCompare(String(b.displayLabel || ""));
+    });
+}
+
+function getActiveStreamCount(vehicle: ConnectedVehicle): number {
+  return Array.isArray(vehicle.activeStreams)
+    ? vehicle.activeStreams
+        .map((value) => Number(value))
+        .filter((value, index, values) => Number.isFinite(value) && value > 0 && values.indexOf(value) === index).length
+    : 0;
+}
+
+function isVehicleActive(vehicle: ConnectedVehicle): boolean {
+  return getActiveStreamCount(vehicle) > 0;
+}
+
+function getVehicleStatusRank(vehicle: ConnectedVehicle): number {
+  if (isVehicleActive(vehicle)) return 0;
+  if (vehicle.connected !== false) return 1;
+  return 2;
+}
+
 export default function LiveStreamTab() {
   const [vehicles, setVehicles] = useState<ConnectedVehicle[]>([]);
   const [selectedVehicles, setSelectedVehicles] = useState<Set<string>>(new Set());
@@ -76,79 +237,125 @@ export default function LiveStreamTab() {
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   const [gridColumns, setGridColumns] = useState(4);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [pinnedFeed, setPinnedFeed] = useState<PinnedFeed | null>(null);
   const [pipPosition, setPipPosition] = useState({ x: 24, y: 96 });
   const [isDraggingPip, setIsDraggingPip] = useState(false);
   const pipDragOffsetRef = useRef({ x: 0, y: 0 });
   const supabase = createClient();
 
-  const fetchConnectedVehicles = useCallback(async () => {
-    setLoading(true);
-    try {
-      const response = await fetch("/api/video-server/vehicles/connected", { cache: "no-store" });
-      if (response.ok) {
+  const fetchCatalogVehicles = useCallback(async () => {
+    const { data: vehicleRows, error: vehiclesError } = await supabase
+      .from("vehiclesc")
+      .select("registration_number, fleet_number, camera_sim_id, camera_serial");
+
+    if (vehiclesError) {
+      throw new Error("Failed to load vehicle catalog");
+    }
+
+    const dedupedByKey = new Map<string, ConnectedVehicle>();
+    for (const rawRow of vehicleRows || []) {
+      const row = rawRow as VehicleCatalogRow;
+      const keys = [row.camera_sim_id, row.camera_serial]
+        .map((value) => String(value || "").trim())
+        .filter(Boolean);
+      if (keys.length === 0) continue;
+
+      const primaryKey = keys[0];
+      const secondaryKey = keys[1] || "";
+      const registration = String(row.registration_number || "").trim();
+      const fleetNumber = String(row.fleet_number || "").trim();
+      const fallbackLabel = registration || fleetNumber || primaryKey;
+      const displayLabel =
+        registration && fleetNumber
+          ? `${fleetNumber} - ${registration}`
+          : fallbackLabel;
+
+      const nextVehicle: ConnectedVehicle = {
+        id: primaryKey,
+        name: displayLabel || primaryKey,
+        phone: secondaryKey || "",
+        channels: [],
+        registration: registration || undefined,
+        fleetNumber: fleetNumber || undefined,
+        displayLabel: displayLabel || primaryKey,
+        connected: undefined,
+        activeStreams: [],
+      };
+
+      const key = toVehicleKey(nextVehicle);
+      const existing = dedupedByKey.get(key);
+      if (!existing) {
+        dedupedByKey.set(key, nextVehicle);
+        continue;
+      }
+
+      dedupedByKey.set(key, {
+        ...existing,
+        ...nextVehicle,
+        displayLabel: String(nextVehicle.displayLabel || existing.displayLabel || key).trim(),
+      });
+    }
+
+    return Array.from(dedupedByKey.values()).sort((a, b) => {
+      const statusDiff = getVehicleStatusRank(a) - getVehicleStatusRank(b);
+      if (statusDiff !== 0) return statusDiff;
+      return String(a.displayLabel || "").localeCompare(String(b.displayLabel || ""));
+    });
+  }, [supabase]);
+
+  const fetchRuntimeVehicles = useCallback(async () => {
+    const runtimeEndpoints = [
+      "/api/video-server/vehicles/connected",
+      "/api/video/streams",
+      "/api/video-server/vehicles",
+    ];
+
+    for (const endpoint of runtimeEndpoints) {
+      try {
+        const response = await fetch(endpoint, {
+          cache: "no-store",
+          signal: AbortSignal.timeout(1500),
+        });
+        if (!response.ok) continue;
         const data = await response.json();
-        const connectedVehicles = Array.isArray(data)
-          ? data
-          : Array.isArray(data?.data)
-            ? data.data
-            : Array.isArray(data?.vehicles)
-              ? data.vehicles
-              : [];
-        if (connectedVehicles.length > 0) {
-          const cameraIds = Array.from(
-            new Set(
-              connectedVehicles
-                .map((vehicle: ConnectedVehicle) => String(vehicle.phone || vehicle.id || "").trim())
-                .filter(Boolean)
-            )
-          );
-          const vehicleLookup = new Map<string, string>();
-          const vehicleFleetLookup = new Map<string, string>();
-          if (cameraIds.length > 0) {
-            const { data: vehicleRows } = await supabase
-              .from("vehiclesc")
-              .select("registration_number, fleet_number, camera_sim_id, camera_serial")
-              .or(`camera_sim_id.in.(${cameraIds.join(",")}),camera_serial.in.(${cameraIds.join(",")})`);
-            for (const row of vehicleRows || []) {
-              const registration = String(row?.registration_number || "").trim();
-              const fleetNumber = String(row?.fleet_number || "").trim();
-              const keys = [row?.camera_sim_id, row?.camera_serial]
-                .map((value) => String(value || "").trim())
-                .filter(Boolean);
-              for (const key of keys) {
-                if (registration && !vehicleLookup.has(key)) {
-                  vehicleLookup.set(key, registration);
-                }
-                if (fleetNumber && !vehicleFleetLookup.has(key)) {
-                  vehicleFleetLookup.set(key, fleetNumber);
-                }
-              }
-            }
-          }
-          const vehiclesWithReg = connectedVehicles.map((vehicle: ConnectedVehicle) => {
-            const key = String(vehicle.phone || vehicle.id || "").trim();
-            const registration = vehicleLookup.get(key) || "";
-            const fleetNumber = vehicleFleetLookup.get(key) || "";
-            const displayLabel = registration && fleetNumber ? `${fleetNumber} - ${registration}` : "";
-            return {
-              ...vehicle,
-              registration,
-              fleetNumber,
-              displayLabel,
-            };
-          }).filter((vehicle: ConnectedVehicle) => !!vehicle.displayLabel);
-          setVehicles(vehiclesWithReg);
-        } else {
-          setVehicles([]);
+        const parsed = parseRuntimeVehicles(data);
+        if (parsed.length > 0) {
+          return parsed;
         }
+      } catch {
+        // Try the next runtime endpoint without blocking the catalog.
+      }
+    }
+
+    return [] as ConnectedVehicle[];
+  }, []);
+
+  const fetchConnectedVehicles = useCallback(async (options?: { background?: boolean }) => {
+    const background = options?.background === true;
+    if (!background) {
+      setLoading(true);
+    } else {
+      setRefreshing(true);
+    }
+
+    try {
+      const catalogVehicles = await fetchCatalogVehicles();
+      setVehicles(catalogVehicles);
+      setLoading(false);
+
+      const runtimeVehicles = await fetchRuntimeVehicles();
+      if (runtimeVehicles.length > 0) {
+        setVehicles(mergeRuntimeIntoCatalog(catalogVehicles, runtimeVehicles));
       }
     } catch (error) {
       console.error("Failed to fetch vehicles:", error);
       setVehicles([]);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
     }
-    setLoading(false);
-  }, [supabase]);
+  }, [fetchCatalogVehicles, fetchRuntimeVehicles]);
 
   useEffect(() => {
     void fetchConnectedVehicles();
@@ -167,16 +374,24 @@ export default function LiveStreamTab() {
     setSelectedVehicles(next);
   };
 
-  const filteredVehicles = vehicles.filter((v) =>
-    (v.connected !== false) &&
-    (v.id?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+  const filteredVehicles = vehicles
+    .filter((v) =>
+      v.id?.toLowerCase().includes(searchTerm.toLowerCase()) ||
       v.displayLabel?.toLowerCase().includes(searchTerm.toLowerCase()) ||
       v.registration?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      v.fleetNumber?.toLowerCase().includes(searchTerm.toLowerCase()))
-  );
+      v.fleetNumber?.toLowerCase().includes(searchTerm.toLowerCase())
+    )
+    .sort((a, b) => {
+      const statusDiff = getVehicleStatusRank(a) - getVehicleStatusRank(b);
+      if (statusDiff !== 0) return statusDiff;
+      return String(a.displayLabel || "").localeCompare(String(b.displayLabel || ""));
+    });
+
+  const activeVehicleCount = filteredVehicles.filter((vehicle) => isVehicleActive(vehicle)).length;
+  const inactiveVehicleCount = Math.max(0, filteredVehicles.length - activeVehicleCount);
 
   const liveChannelCount = filteredVehicles.reduce(
-    (acc, vehicle) => acc + getLiveChannels(vehicle.channels).length,
+    (acc, vehicle) => acc + getActiveStreamCount(vehicle),
     0
   );
 
@@ -261,16 +476,17 @@ export default function LiveStreamTab() {
               </div>
               <h2 className="mt-3 text-3xl font-bold tracking-tight">Live Stream Control Room</h2>
               <p className="mt-1 text-sm text-slate-300">
-                Real-time visibility of connected vehicle channels.
+                Real-time visibility of all vehicles with active and inactive status.
               </p>
             </div>
             <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
               <div className="rounded-lg border border-slate-700 bg-slate-900/70 px-4 py-3">
-                <p className="text-[11px] uppercase tracking-wide text-slate-400">Connected</p>
+                <p className="text-[11px] uppercase tracking-wide text-slate-400">Total Vehicles</p>
                 <p className="mt-1 text-2xl font-bold text-emerald-300">{filteredVehicles.length}</p>
+                <p className="mt-1 text-[11px] text-slate-400">{activeVehicleCount} active - {inactiveVehicleCount} inactive</p>
               </div>
               <div className="rounded-lg border border-slate-700 bg-slate-900/70 px-4 py-3">
-                <p className="text-[11px] uppercase tracking-wide text-slate-400">Channels</p>
+                <p className="text-[11px] uppercase tracking-wide text-slate-400">Active Channels</p>
                 <p className="mt-1 text-2xl font-bold text-cyan-300">{liveChannelCount}</p>
               </div>
               <div className="col-span-2 rounded-lg border border-slate-700 bg-slate-900/70 px-4 py-3 md:col-span-1">
@@ -312,11 +528,12 @@ export default function LiveStreamTab() {
             <Button
               variant="outline"
               size="icon"
-              onClick={fetchConnectedVehicles}
+              onClick={() => void fetchConnectedVehicles({ background: true })}
               title="Refresh vehicles"
               className="border-slate-300"
+              disabled={refreshing}
             >
-              <RefreshCw className="h-4 w-4" />
+              <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
             </Button>
             <div className="rounded-lg border border-slate-300 bg-white p-1">
               <Button
@@ -448,14 +665,14 @@ export default function LiveStreamTab() {
         <div className="mb-4 flex items-center gap-2">
           <RadioTower className="h-5 w-5 text-slate-700" />
           <h3 className="text-lg font-semibold text-slate-900">
-            Connected Vehicles ({filteredVehicles.length})
+            All Vehicles ({filteredVehicles.length})
           </h3>
         </div>
 
         {loading ? (
           <Card className="p-8 text-center text-slate-600">Loading vehicles...</Card>
         ) : filteredVehicles.length === 0 ? (
-          <Card className="p-8 text-center text-slate-500">No connected vehicles found</Card>
+          <Card className="p-8 text-center text-slate-500">No vehicles found</Card>
         ) : viewMode === "grid" ? (
           <div className={gridClassName}>
             {filteredVehicles.map((vehicle) => (
@@ -478,14 +695,14 @@ export default function LiveStreamTab() {
                     </div>
                   </div>
                   {vehicle.connected !== false ? (
-                    <Badge className="bg-emerald-600 text-white hover:bg-emerald-600">
+                    <Badge className={`${isVehicleActive(vehicle) ? "bg-cyan-600 hover:bg-cyan-600" : "bg-emerald-600 hover:bg-emerald-600"} text-white`}>
                       <Wifi className="mr-1 h-3 w-3" />
-                      {Array.isArray(vehicle.activeStreams) && vehicle.activeStreams.length > 0 ? "Live" : "Connected"}
+                      {isVehicleActive(vehicle) ? "Active" : "Connected"}
                     </Badge>
                   ) : (
                     <Badge variant="outline">
                       <WifiOff className="mr-1 h-3 w-3" />
-                      Offline
+                      Inactive
                     </Badge>
                   )}
                 </div>
@@ -493,7 +710,9 @@ export default function LiveStreamTab() {
                 <div className="mt-3 flex items-center justify-between">
                   <div className="flex items-center gap-2 text-xs text-slate-600">
                     <Activity className="h-3.5 w-3.5" />
-                    {getLiveChannels(vehicle.channels).length} channel(s)
+                    {isVehicleActive(vehicle)
+                      ? `${getActiveStreamCount(vehicle)} live stream(s)`
+                      : `${getLiveChannels(vehicle.channels).length} channel(s)`}
                   </div>
                   <Button
                     size="sm"
@@ -523,16 +742,20 @@ export default function LiveStreamTab() {
                   <tr key={vehicle.id} className="border-t hover:bg-slate-50">
                     <td className="px-4 py-3">
                       {vehicle.connected !== false ? (
-                        <Badge className="bg-emerald-600 text-white hover:bg-emerald-600">
-                          {Array.isArray(vehicle.activeStreams) && vehicle.activeStreams.length > 0 ? "Live" : "Connected"}
+                        <Badge className={`${isVehicleActive(vehicle) ? "bg-cyan-600 hover:bg-cyan-600" : "bg-emerald-600 hover:bg-emerald-600"} text-white`}>
+                          {isVehicleActive(vehicle) ? "Active" : "Connected"}
                         </Badge>
                       ) : (
-                        <Badge variant="outline">Offline</Badge>
+                        <Badge variant="outline">Inactive</Badge>
                       )}
                     </td>
                     <td className="px-4 py-3 font-medium text-slate-900">{vehicle.displayLabel}</td>
                     <td className="px-4 py-3 font-mono text-xs text-slate-600">{vehicle.phone || vehicle.id}</td>
-                    <td className="px-4 py-3 text-slate-600">{(vehicle.channels && vehicle.channels.length > 0) ? vehicle.channels.length : 2}</td>
+                    <td className="px-4 py-3 text-slate-600">
+                      {isVehicleActive(vehicle)
+                        ? `${getActiveStreamCount(vehicle)} active / ${getLiveChannels(vehicle.channels).length}`
+                        : `${getLiveChannels(vehicle.channels).length}`}
+                    </td>
                     <td className="px-4 py-3 text-center">
                       <Button
                         size="sm"

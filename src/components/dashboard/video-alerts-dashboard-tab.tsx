@@ -559,12 +559,61 @@ export default function VideoAlertsDashboardTab({
       if (!pendingAvailabilityKeysRef.current.has(cacheKey)) {
         pendingAvailabilityKeysRef.current.add(cacheKey);
         requests.push(
-          fetch(`${videoProxyBase}/vehicles/${encodeURIComponent(vehicleId)}/videos/availability?date=${encodeURIComponent(date)}`, {
+          fetch(`${videoProxyBase}/vehicles/${encodeURIComponent(vehicleId)}/video/availability`, {
             cache: "no-store",
           })
             .then((res) => readJsonSafely(res))
             .then((json) => {
-              const channels = Array.isArray(json?.data?.channels) ? json.data.channels : [];
+              const rows = Array.isArray(json?.rows)
+                ? json.rows
+                : Array.isArray(json?.data?.rows)
+                  ? json.data.rows
+                  : Array.isArray(json?.data)
+                    ? json.data
+                    : [];
+
+              const dayStart = new Date(`${date}T00:00:00.000Z`);
+              const dayEnd = new Date(`${date}T23:59:59.999Z`);
+              const dayStartMs = dayStart.getTime();
+              const dayEndMs = dayEnd.getTime();
+
+              const channels = rows
+                .map((row: any) => {
+                  const channel = Number(row?.channel || 0);
+                  if (!Number.isFinite(channel) || channel <= 0) return null;
+
+                  const startRaw = String(
+                    row?.approx_first_packet_time || row?.first_packet_time || ""
+                  ).trim();
+                  const endRaw = String(
+                    row?.approx_last_packet_time || row?.last_packet_time || ""
+                  ).trim();
+
+                  const startMs = new Date(startRaw || 0).getTime();
+                  const endMs = new Date(endRaw || 0).getTime();
+                  if (
+                    Number.isFinite(startMs) &&
+                    Number.isFinite(endMs) &&
+                    (endMs < dayStartMs || startMs > dayEndMs)
+                  ) {
+                    return null;
+                  }
+
+                  return {
+                    channel,
+                    clips:
+                      startRaw && endRaw
+                        ? [
+                            {
+                              startTime: startRaw,
+                              endTime: endRaw,
+                            },
+                          ]
+                        : [],
+                  };
+                })
+                .filter(Boolean);
+
               availabilityCacheRef.current.set(cacheKey, channels);
             })
             .catch(() => {

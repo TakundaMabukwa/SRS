@@ -6,18 +6,33 @@ export type AlertPlaybackVideo = {
   url: string;
 };
 
-type AlertPlaybackSource = string | { [key: string]: any };
+type AlertPlaybackSource = string | PlaybackJsonRecord;
+type AlertPlaybackWindowOptions = {
+  beforeMs?: number;
+  afterMs?: number;
+};
+
+type PlaybackJsonRecord = Record<string, unknown>;
 
 const DEFAULT_VIDEO_PROXY_BASE = "/api/video-server";
 const ALERT_PLAYBACK_WINDOW_BEFORE_MS = 60 * 1000;
 const ALERT_PLAYBACK_WINDOW_AFTER_MS = 60 * 1000;
 const PLAYBACK_CACHE_PREFIX = "alert-playback:";
-const DIRECT_VIDEO_HUB_BASE = String(
-  process.env.NEXT_PUBLIC_VIDEO_HUB_BASE_URL ||
-    process.env.NEXT_PUBLIC_VIDEO_BASE_URL ||
-    ""
-).trim().replace(/\/+$/, "");
 const playbackVideoCache = new Map<string, AlertPlaybackVideo[]>();
+const APPROX_AVAILABLE_RANGE_PATTERN =
+  /Approx available range:\s*([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:\.\-+Z]+)\s+to\s+([0-9]{4}-[0-9]{2}-[0-9:\.\-+Z]+)/i;
+
+function resolvePlaybackWindowOptions(options?: AlertPlaybackWindowOptions) {
+  const beforeCandidate = Number(options?.beforeMs);
+  const afterCandidate = Number(options?.afterMs);
+  const beforeMs = Number.isFinite(beforeCandidate) && beforeCandidate >= 0
+    ? beforeCandidate
+    : ALERT_PLAYBACK_WINDOW_BEFORE_MS;
+  const afterMs = Number.isFinite(afterCandidate) && afterCandidate >= 0
+    ? afterCandidate
+    : ALERT_PLAYBACK_WINDOW_AFTER_MS;
+  return { beforeMs, afterMs };
+}
 
 function dedupePlaybackVideos(videos: AlertPlaybackVideo[]) {
   const seen = new Set<string>();
@@ -29,13 +44,6 @@ function dedupePlaybackVideos(videos: AlertPlaybackVideo[]) {
     out.push(video);
   }
   return out;
-}
-
-function normalizeApiBase(baseUrl: string) {
-  const clean = String(baseUrl || "").trim().replace(/\/+$/, "");
-  if (!clean) return "";
-  if (/\/api(?:\/video-server)?$/i.test(clean)) return clean.replace(/\/video-server$/i, "");
-  return `${clean}/api`;
 }
 
 function timeoutSignal(timeoutMs: number) {
@@ -84,12 +92,140 @@ function writeCachedPlaybackVideos(cacheKey: string, videos: AlertPlaybackVideo[
 }
 
 function getPlaybackRequestBases(videoProxyBase = DEFAULT_VIDEO_PROXY_BASE) {
-  const bases = [String(videoProxyBase || "").trim()];
-  const directApiBase = normalizeApiBase(DIRECT_VIDEO_HUB_BASE);
-  if (directApiBase && !bases.includes(directApiBase)) {
-    bases.push(directApiBase);
+  const base = String(videoProxyBase || "").trim();
+  return base ? [base] : [];
+}
+
+function readPlaybackRecord(value: unknown): PlaybackJsonRecord {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as PlaybackJsonRecord)
+    : {};
+}
+
+function getPlaybackMessage(value: unknown) {
+  const record = readPlaybackRecord(value);
+  return String(record.message || "").trim();
+}
+
+function getPlaybackChannels(value: unknown) {
+  const record = readPlaybackRecord(value);
+  const dataRecord = readPlaybackRecord(record.data);
+  if (Array.isArray(record.channels)) {
+    return record.channels.map((entry) => readPlaybackRecord(entry));
   }
-  return bases.filter(Boolean);
+  if (Array.isArray(dataRecord.channels)) {
+    return dataRecord.channels.map((entry) => readPlaybackRecord(entry));
+  }
+  return [];
+}
+
+function getPlaybackRows(value: unknown) {
+  const record = readPlaybackRecord(value);
+  const dataRecord = readPlaybackRecord(record.data);
+  if (Array.isArray(record.rows)) {
+    return record.rows.map((entry) => readPlaybackRecord(entry));
+  }
+  if (Array.isArray(dataRecord.rows)) {
+    return dataRecord.rows.map((entry) => readPlaybackRecord(entry));
+  }
+  if (Array.isArray(record.data)) {
+    return record.data.map((entry) => readPlaybackRecord(entry));
+  }
+  return [];
+}
+
+function parseApproxAvailableRange(message: string) {
+  const match = String(message || "").match(APPROX_AVAILABLE_RANGE_PATTERN);
+  if (!match) return null;
+  return {
+    startIso: match[1],
+    endIso: match[2],
+  };
+}
+
+function buildChannelAvailabilitySummary(rows: PlaybackJsonRecord[]) {
+  const channelSummaries = rows
+    .map((row) => {
+      const channel = Number(row.channel || 0);
+      if (!Number.isFinite(channel) || channel <= 0) return "";
+
+      const startIso = String(
+        row.first_packet_time ||
+          row.approx_first_packet_time ||
+          row.earliestTime ||
+          ""
+      ).trim();
+      const endIso = String(
+        row.last_packet_time ||
+          row.approx_last_packet_time ||
+          row.latestTime ||
+          ""
+      ).trim();
+
+      if (!startIso || !endIso) return "";
+      return `CH${channel} (${startIso} to ${endIso})`;
+    })
+    .filter(Boolean);
+
+  return channelSummaries.length > 0
+    ? `Available channels: ${channelSummaries.join(", ")}.`
+    : "";
+}
+
+async function fetchAlertAvailabilitySummary(
+  vehicleId: string,
+  referenceIso: string,
+  videoProxyBase = DEFAULT_VIDEO_PROXY_BASE
+) {
+  const referenceDate = new Date(referenceIso);
+  if (Number.isNaN(referenceDate.getTime())) return "";
+
+  const dayStart = new Date(referenceDate);
+  dayStart.setUTCHours(0, 0, 0, 0);
+  const dayEnd = new Date(referenceDate);
+  dayEnd.setUTCHours(23, 59, 59, 999);
+  const dateKey = dayStart.toISOString().slice(0, 10);
+
+  for (const playbackBase of getPlaybackRequestBases(videoProxyBase)) {
+    try {
+      const coverageQuery = new URLSearchParams({
+        vehicleId,
+        from: dayStart.toISOString(),
+        to: dayEnd.toISOString(),
+      });
+      const coverageResponse = await fetch(
+        `${playbackBase}/video/coverage?${coverageQuery.toString()}`,
+        {
+          cache: "no-store",
+          signal: timeoutSignal(12000),
+        }
+      );
+      const coverageJson = await coverageResponse.json().catch(() => ({}));
+      const coverageSummary = buildChannelAvailabilitySummary(getPlaybackRows(coverageJson));
+      if (coverageSummary) return coverageSummary;
+    } catch {
+      // Fall through to approximate availability.
+    }
+
+    for (const availabilityPath of [
+      `${playbackBase}/vehicles/${encodeURIComponent(vehicleId)}/videos/availability?date=${encodeURIComponent(dateKey)}`,
+      `${playbackBase}/vehicles/${encodeURIComponent(vehicleId)}/video/availability?date=${encodeURIComponent(dateKey)}`,
+    ]) {
+      try {
+        const availabilityResponse = await fetch(availabilityPath, {
+          cache: "no-store",
+          signal: timeoutSignal(12000),
+        });
+        const availabilityJson = await availabilityResponse.json().catch(() => ({}));
+        const availabilitySummary = buildChannelAvailabilitySummary(getPlaybackRows(availabilityJson));
+        if (availabilitySummary) return availabilitySummary;
+      } catch {
+        // Try the next endpoint.
+      }
+    }
+  }
+
+  return "";
 }
 
 export function normalizeBackendMediaUrl(url: string, videoProxyBase = DEFAULT_VIDEO_PROXY_BASE) {
@@ -98,17 +234,14 @@ export function normalizeBackendMediaUrl(url: string, videoProxyBase = DEFAULT_V
   if (/^https?:\/\//i.test(value)) {
     try {
       const parsed = new URL(value);
+      if (parsed.pathname.startsWith("/media/")) {
+        return `${videoProxyBase}${parsed.pathname}${parsed.search || ""}`;
+      }
       if (parsed.pathname.startsWith("/api/video-server/")) {
         return `${videoProxyBase}${parsed.pathname.slice("/api/video-server".length)}${parsed.search || ""}`;
       }
-      if (DIRECT_VIDEO_HUB_BASE) {
-        const hubBase = new URL(DIRECT_VIDEO_HUB_BASE);
-        if (parsed.origin === hubBase.origin && parsed.pathname.startsWith('/api/')) {
-          if (parsed.pathname.startsWith("/api/video-server/")) {
-            return `${videoProxyBase}${parsed.pathname.slice("/api/video-server".length)}${parsed.search || ""}`;
-          }
-          return `${videoProxyBase}${parsed.pathname.slice(4)}${parsed.search || ''}`;
-        }
+      if (parsed.pathname.startsWith("/api/")) {
+        return `${videoProxyBase}${parsed.pathname.slice(4)}${parsed.search || ''}`;
       }
       return value;
     } catch {
@@ -116,6 +249,9 @@ export function normalizeBackendMediaUrl(url: string, videoProxyBase = DEFAULT_V
     }
   }
   if (value.startsWith(`${videoProxyBase}/`)) return value;
+  if (value.startsWith("/media/")) {
+    return `${videoProxyBase}${value}`;
+  }
   if (value.startsWith("/api/")) {
     return `${videoProxyBase}${value.slice(4)}`;
   }
@@ -194,9 +330,11 @@ function timestampToComparableMs(value: unknown) {
   return Number.isFinite(nativeMs) ? nativeMs : Number.NaN;
 }
 
-function collectAlertDisplayTimestampCandidates(alert: any) {
-  const metadata = alert?.metadata || {};
-  const vendorExtensions = Array.isArray(metadata?.vendorExtensions) ? metadata.vendorExtensions : [];
+function collectAlertDisplayTimestampCandidates(alert: PlaybackJsonRecord | null | undefined) {
+  const metadata = readPlaybackRecord(alert?.metadata);
+  const vendorExtensions = Array.isArray(metadata.vendorExtensions)
+    ? metadata.vendorExtensions.map((entry) => readPlaybackRecord(entry))
+    : [];
 
   return [
     alert?.lastOccurrenceTimestamp,
@@ -225,15 +363,17 @@ function collectAlertDisplayTimestampCandidates(alert: any) {
     metadata?.sourceTimestamp,
     metadata?.source_timestamp,
     metadata?.locationFix?.timestamp,
-    ...vendorExtensions.map((entry: any) => entry?.sourceTimestamp),
+    ...vendorExtensions.map((entry) => entry.sourceTimestamp),
   ]
     .map(getRawAlertTimestampValue)
     .filter(Boolean);
 }
 
-function collectAlertFirstOccurrenceCandidates(alert: any) {
-  const metadata = alert?.metadata || {};
-  const vendorExtensions = Array.isArray(metadata?.vendorExtensions) ? metadata.vendorExtensions : [];
+function collectAlertFirstOccurrenceCandidates(alert: PlaybackJsonRecord | null | undefined) {
+  const metadata = readPlaybackRecord(alert?.metadata);
+  const vendorExtensions = Array.isArray(metadata.vendorExtensions)
+    ? metadata.vendorExtensions.map((entry) => readPlaybackRecord(entry))
+    : [];
 
   return [
     alert?.timestamp,
@@ -254,7 +394,7 @@ function collectAlertFirstOccurrenceCandidates(alert: any) {
     metadata?.sourceTimestamp,
     metadata?.source_timestamp,
     metadata?.locationFix?.timestamp,
-    ...vendorExtensions.map((entry: any) => entry?.sourceTimestamp),
+    ...vendorExtensions.map((entry) => entry.sourceTimestamp),
   ]
     .map(getRawAlertTimestampValue)
     .filter(Boolean);
@@ -294,26 +434,29 @@ function pickEarliestTimestamp(candidates: string[]) {
   return earliestValue || null;
 }
 
-export function getAlertDisplayTimestamp(alert: any) {
+export function getAlertDisplayTimestamp(alert: PlaybackJsonRecord | null | undefined) {
   return pickLatestTimestamp(collectAlertDisplayTimestampCandidates(alert));
 }
 
-export function getAlertPlaybackTimestamp(alert: any) {
+export function getAlertPlaybackTimestamp(alert: PlaybackJsonRecord | null | undefined) {
   const firstOccurrence = pickEarliestTimestamp(collectAlertFirstOccurrenceCandidates(alert));
   return firstOccurrence || getAlertDisplayTimestamp(alert);
 }
 
-export function getAlertFirstOccurrenceTimestamp(alert: any) {
+export function getAlertFirstOccurrenceTimestamp(alert: PlaybackJsonRecord | null | undefined) {
   return getAlertPlaybackTimestamp(alert);
 }
 
-export function getAlertLastOccurrenceTimestamp(alert: any) {
+export function getAlertLastOccurrenceTimestamp(alert: PlaybackJsonRecord | null | undefined) {
   return getAlertDisplayTimestamp(alert);
 }
 
-export function getAlertPlaybackSignature(alert: any) {
+export function getAlertPlaybackSignature(
+  alert: PlaybackJsonRecord | null | undefined,
+  windowOptions?: AlertPlaybackWindowOptions
+) {
   if (!alert || typeof alert !== "object") return "";
-  const playbackWindow = getAlertPlaybackWindow(alert);
+  const playbackWindow = getAlertPlaybackWindow(alert, windowOptions);
   return JSON.stringify({
     id: String(alert?.id || "").trim(),
     vehicleId: getAlertVehicleId(alert),
@@ -342,102 +485,29 @@ export function formatRawAlertTimestamp(
   return `${monthLabel} ${day}, ${hour}:${minute}`;
 }
 
-function buildJobStatusUrl(jobId: string, videoProxyBase = DEFAULT_VIDEO_PROXY_BASE, playbackJobUrl?: string) {
-  const absoluteJobFileUrl = String(playbackJobUrl || "").trim();
-  if (absoluteJobFileUrl) {
-    return absoluteJobFileUrl.replace(/\/file(?:\?.*)?$/i, "");
-  }
-  return `${videoProxyBase}/videos/jobs/${encodeURIComponent(jobId)}`;
-}
-
-function buildJobFileUrl(jobId: string, videoProxyBase = DEFAULT_VIDEO_PROXY_BASE, playbackJobUrl?: string) {
-  const absoluteJobFileUrl = String(playbackJobUrl || "").trim();
-  if (absoluteJobFileUrl) {
-    return absoluteJobFileUrl;
-  }
-  return `${videoProxyBase}/videos/jobs/${encodeURIComponent(jobId)}/file`;
-}
-
-function getPreferredCompletedJobUrl(
-  job: any,
-  jobId: string,
-  videoProxyBase = DEFAULT_VIDEO_PROXY_BASE,
-  playbackJobUrl?: string
-) {
-  const jobFileUrl = normalizeBackendMediaUrl(
-    String(job?.outputUrl || "").trim() ||
-      buildJobFileUrl(jobId, videoProxyBase, playbackJobUrl),
-    videoProxyBase
-  );
-  if (!jobFileUrl) return "";
-  const stamp = encodeURIComponent(String(job?.updatedAt || job?.updated_at || job?.fileSize || "").trim());
-  if (!stamp) return jobFileUrl;
-  return `${jobFileUrl}${jobFileUrl.includes("?") ? "&" : "?"}_ts=${stamp}`;
-}
-
-async function pollPlaybackJob(jobId: string, videoProxyBase = DEFAULT_VIDEO_PROXY_BASE, playbackJobUrl?: string) {
-  const statusUrl = buildJobStatusUrl(jobId, videoProxyBase, playbackJobUrl);
-  let lastProgressKey = "";
-  let stalledAttempts = 0;
-  for (let attempt = 0; attempt < 120; attempt += 1) {
-    await new Promise((resolve) => setTimeout(resolve, attempt === 0 ? 500 : 1500));
-    const statusRes = await fetch(statusUrl, {
-      cache: "no-store",
-      signal: timeoutSignal(5000),
-    });
-    const statusJson = await statusRes.json().catch(() => ({}));
-    const job = statusJson?.data || {};
-    if (attempt === 0 || job?.status === "completed" || job?.status === "failed") {
-      console.info("[AlertPlayback] Job status", {
-        jobId,
-        attempt,
-        statusUrl,
-        playbackJobUrl,
-        status: job?.status || "unknown",
-        fileReady: !!job?.fileReady,
-        fileSize: Number(job?.fileSize || 0),
-        updatedAt: job?.updatedAt || job?.updated_at || "",
-        outputUrl: job?.outputUrl || "",
-      });
-    }
-    if (job?.status === "completed") {
-      return getPreferredCompletedJobUrl(job, jobId, videoProxyBase, playbackJobUrl);
-    }
-    if (job?.status === "failed") {
-      throw new Error(job?.error || "Playback generation failed.");
-    }
-    const progressKey = `${String(job?.status || "")}|${String(job?.updatedAt || job?.updated_at || "")}|${Number(job?.fileSize || 0)}`;
-    if (progressKey === lastProgressKey) {
-      stalledAttempts += 1;
-    } else {
-      lastProgressKey = progressKey;
-      stalledAttempts = 0;
-    }
-    if (stalledAttempts >= 20) {
-      throw new Error("Playback job is taking too long on the server. Please try again.");
-    }
-  }
-  throw new Error("Playback job timed out.");
-}
-
-function getAlertVehicleId(alert: any) {
+function getAlertVehicleId(alert: PlaybackJsonRecord | null | undefined) {
+  const vehicle = readPlaybackRecord(alert?.vehicle);
+  const metadata = readPlaybackRecord(alert?.metadata);
+  const metadataVehicle = readPlaybackRecord(metadata.vehicle);
   return String(
     alert?.vehicleId ||
       alert?.device_id ||
-      alert?.vehicle?.vehicleId ||
-      alert?.vehicle?.terminalPhone ||
-      alert?.metadata?.vehicle?.vehicleId ||
-      alert?.metadata?.vehicle?.terminalPhone ||
+      vehicle.vehicleId ||
+      vehicle.terminalPhone ||
+      metadataVehicle.vehicleId ||
+      metadataVehicle.terminalPhone ||
       ""
   ).trim();
 }
 
-function getAlertChannel(alert: any) {
+function getAlertChannel(alert: PlaybackJsonRecord | null | undefined) {
+  const metadata = readPlaybackRecord(alert?.metadata);
+  const locationFix = readPlaybackRecord(metadata.locationFix);
   const candidates = [
     alert?.channel,
-    alert?.metadata?.channel,
-    alert?.metadata?.resourceChannel,
-    alert?.metadata?.locationFix?.channel,
+    metadata.channel,
+    metadata.resourceChannel,
+    locationFix.channel,
   ];
   for (const candidate of candidates) {
     const value = Number(candidate);
@@ -446,7 +516,7 @@ function getAlertChannel(alert: any) {
   return 1;
 }
 
-function getAlertChannelCandidates(alert: any) {
+function getAlertChannelCandidates(alert: PlaybackJsonRecord | null | undefined) {
   const primaryChannel = getAlertChannel(alert);
   return Array.from(
     new Set(
@@ -455,34 +525,43 @@ function getAlertChannelCandidates(alert: any) {
   );
 }
 
-function getAlertPlaybackWindow(alert: any) {
+function getAlertPlaybackWindow(
+  alert: PlaybackJsonRecord | null | undefined,
+  windowOptions: AlertPlaybackWindowOptions = {}
+) {
   const timestamp = getAlertPlaybackTimestamp(alert);
   if (!timestamp) return null;
+  const { beforeMs, afterMs } = resolvePlaybackWindowOptions(windowOptions);
+  const hasExplicitWindow = windowOptions.beforeMs !== undefined || windowOptions.afterMs !== undefined;
 
-  const metadata = alert?.metadata || {};
+  const metadata = readPlaybackRecord(alert?.metadata);
   const startCandidate =
-    metadata?.resourceStartTime ||
-    metadata?.resource_start_time ||
-    metadata?.eventStartTime ||
-    metadata?.event_start_time ||
+    metadata.resourceStartTime ||
+    metadata.resource_start_time ||
+    metadata.eventStartTime ||
+    metadata.event_start_time ||
     null;
   const endCandidate =
-    metadata?.resourceEndTime ||
-    metadata?.resource_end_time ||
-    metadata?.eventEndTime ||
-    metadata?.event_end_time ||
+    metadata.resourceEndTime ||
+    metadata.resource_end_time ||
+    metadata.eventEndTime ||
+    metadata.event_end_time ||
     null;
 
   const baseTime = new Date(timestamp);
   if (Number.isNaN(baseTime.getTime())) return null;
 
-  const start = startCandidate ? new Date(startCandidate) : new Date(baseTime.getTime() - ALERT_PLAYBACK_WINDOW_BEFORE_MS);
-  const end = endCandidate ? new Date(endCandidate) : new Date(baseTime.getTime() + ALERT_PLAYBACK_WINDOW_AFTER_MS);
+  const start = !hasExplicitWindow && startCandidate
+    ? new Date(startCandidate)
+    : new Date(baseTime.getTime() - beforeMs);
+  const end = !hasExplicitWindow && endCandidate
+    ? new Date(endCandidate)
+    : new Date(baseTime.getTime() + afterMs);
 
   if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end <= start) {
     return {
-      startIso: new Date(baseTime.getTime() - ALERT_PLAYBACK_WINDOW_BEFORE_MS).toISOString(),
-      endIso: new Date(baseTime.getTime() + ALERT_PLAYBACK_WINDOW_AFTER_MS).toISOString(),
+      startIso: new Date(baseTime.getTime() - beforeMs).toISOString(),
+      endIso: new Date(baseTime.getTime() + afterMs).toISOString(),
     };
   }
 
@@ -492,9 +571,12 @@ function getAlertPlaybackWindow(alert: any) {
   };
 }
 
-function getAlertPlaybackCacheKey(alert: any) {
+function getAlertPlaybackCacheKey(
+  alert: PlaybackJsonRecord | null | undefined,
+  windowOptions?: AlertPlaybackWindowOptions
+) {
   if (!alert || typeof alert !== "object") return "";
-  const playbackWindow = getAlertPlaybackWindow(alert);
+  const playbackWindow = getAlertPlaybackWindow(alert, windowOptions);
   return JSON.stringify({
     id: String(alert?.id || "").trim(),
     vehicleId: getAlertVehicleId(alert),
@@ -504,374 +586,152 @@ function getAlertPlaybackCacheKey(alert: any) {
   });
 }
 
-function formatAvailabilityDate(date: Date) {
-  return date.toISOString().slice(0, 10);
-}
-
-function collectAvailabilityDates(baseTime: Date) {
-  const oneDay = 24 * 60 * 60 * 1000;
-  return Array.from(
-    new Set([
-      formatAvailabilityDate(baseTime),
-      formatAvailabilityDate(new Date(baseTime.getTime() - oneDay)),
-      formatAvailabilityDate(new Date(baseTime.getTime() + oneDay)),
-    ])
-  );
-}
-
-type AvailabilityClip = {
-  channel: number;
-  startTime: string;
-  endTime: string;
-};
-
-function buildBoundedPlaybackWindow(
-  clip: AvailabilityClip,
-  targetTime: Date,
-  beforeMs = ALERT_PLAYBACK_WINDOW_BEFORE_MS,
-  afterMs = ALERT_PLAYBACK_WINDOW_AFTER_MS
-) {
-  const clipStart = new Date(clip.startTime);
-  const clipEnd = new Date(clip.endTime);
-  if (Number.isNaN(clipStart.getTime()) || Number.isNaN(clipEnd.getTime())) {
-    return {
-      startTime: clip.startTime,
-      endTime: clip.endTime,
-    };
-  }
-
-  const targetMs = targetTime.getTime();
-  const safeTargetMs = Number.isFinite(targetMs)
-    ? Math.min(Math.max(targetMs, clipStart.getTime()), clipEnd.getTime())
-    : clipStart.getTime();
-
-  const desiredStart = new Date(safeTargetMs - beforeMs);
-  const desiredEnd = new Date(safeTargetMs + afterMs);
-
-  const boundedStartMs = Math.max(desiredStart.getTime(), clipStart.getTime());
-  const boundedEndMs = Math.min(desiredEnd.getTime(), clipEnd.getTime());
-
-  if (!Number.isFinite(boundedStartMs) || !Number.isFinite(boundedEndMs) || boundedEndMs <= boundedStartMs) {
-    return {
-      startTime: clip.startTime,
-      endTime: clip.endTime,
-    };
-  }
-
-  return {
-    startTime: new Date(boundedStartMs).toISOString(),
-    endTime: new Date(boundedEndMs).toISOString(),
-  };
-}
-
-async function findNearestAvailableClip(
-  vehicleId: string,
-  channel: number,
-  targetTime: Date,
-  videoProxyBase = DEFAULT_VIDEO_PROXY_BASE
-): Promise<AvailabilityClip | null> {
-  const targetMs = targetTime.getTime();
-  if (!vehicleId || !Number.isFinite(targetMs)) return null;
-
-  const candidates: Array<AvailabilityClip & { distanceMs: number }> = [];
-
-  for (const playbackBase of getPlaybackRequestBases(videoProxyBase)) {
-    for (const date of collectAvailabilityDates(targetTime)) {
-      try {
-        const res = await fetch(
-          `${playbackBase}/vehicles/${encodeURIComponent(vehicleId)}/videos/availability?date=${encodeURIComponent(date)}`,
-          { cache: "no-store", signal: timeoutSignal(6000) }
-        );
-        const json = await res.json().catch(() => ({}));
-        const channels = Array.isArray(json?.data?.channels) ? json.data.channels : [];
-        const targetChannel = channels.find((entry: any) => Number(entry?.channel || 0) === Number(channel));
-        const clips = Array.isArray(targetChannel?.clips) ? targetChannel.clips : [];
-
-        for (const clip of clips) {
-          const start = new Date(clip?.startTime || 0);
-          const end = new Date(clip?.endTime || clip?.startTime || 0);
-          if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) continue;
-          const distanceMs =
-            targetMs < start.getTime()
-              ? start.getTime() - targetMs
-              : targetMs > end.getTime()
-                ? targetMs - end.getTime()
-                : 0;
-          candidates.push({
-            channel: Number(targetChannel?.channel || channel) || channel,
-            startTime: start.toISOString(),
-            endTime: end.toISOString(),
-            distanceMs,
-          });
-        }
-      } catch {
-        // Try next date/base.
-      }
-    }
-  }
-
-  if (candidates.length === 0) return null;
-  candidates.sort((a, b) => a.distanceMs - b.distanceMs);
-  const best = candidates[0];
-  return {
-    channel: best.channel,
-    startTime: best.startTime,
-    endTime: best.endTime,
-  };
-}
-
-async function resolvePlaybackWindowForAlert(alert: any, videoProxyBase = DEFAULT_VIDEO_PROXY_BASE): Promise<AlertPlaybackVideo[]> {
-  const cacheKey = getAlertPlaybackCacheKey(alert);
+async function resolvePlaybackWindowForAlert(
+  alert: PlaybackJsonRecord,
+  videoProxyBase = DEFAULT_VIDEO_PROXY_BASE,
+  windowOptions: AlertPlaybackWindowOptions = {}
+): Promise<AlertPlaybackVideo[]> {
+  const cacheKey = getAlertPlaybackCacheKey(alert, windowOptions);
   const cachedVideos = readCachedPlaybackVideos(cacheKey);
   if (cachedVideos.length > 0) {
     return cachedVideos;
   }
 
   const vehicleId = getAlertVehicleId(alert);
-  const channel = getAlertChannel(alert);
   const channelCandidates = getAlertChannelCandidates(alert);
-  const playbackWindow = getAlertPlaybackWindow(alert);
+  const playbackWindow = getAlertPlaybackWindow(alert, windowOptions);
   if (!vehicleId || !playbackWindow) return [];
 
   const { startIso, endIso } = playbackWindow;
-  const targetTimestamp = getAlertPlaybackTimestamp(alert) || startIso;
-  const targetTime = new Date(targetTimestamp);
-  const safeTargetTime = Number.isNaN(targetTime.getTime()) ? new Date(startIso) : targetTime;
+  const query = new URLSearchParams({
+    from: startIso,
+    to: endIso,
+  });
 
-  let lastError: Error | null = null;
-
-  const alertId = String((alert as any)?.id || "").trim();
-  const lookbackSeconds = Math.max(30, Math.round((new Date(endIso).getTime() - new Date(startIso).getTime()) / 2000));
-  const forwardSeconds = lookbackSeconds;
-
-  const tryAlertWindow = async () => {
-    if (!alertId) return [];
+  const requestChannelPlayback = async (targetChannel: number) => {
+    let lastFailureMessage = `No playback available for channel ${targetChannel}.`;
 
     for (const playbackBase of getPlaybackRequestBases(videoProxyBase)) {
       try {
-        const res = await fetch(`${playbackBase}/alerts/${encodeURIComponent(alertId)}/request-report-video`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            lookbackSeconds,
-            forwardSeconds,
-            queryResources: true,
-          }),
-        });
+        const res = await fetch(
+          `${playbackBase}/vehicles/${encodeURIComponent(vehicleId)}/video/${encodeURIComponent(String(targetChannel))}?${query.toString()}`,
+          {
+            cache: "no-store",
+            signal: timeoutSignal(15000),
+          }
+        );
         const json = await res.json().catch(() => ({}));
-        if (!res.ok || !json?.success) {
-          throw new Error(json?.message || `HTTP ${res.status}`);
+        const jsonRecord = readPlaybackRecord(json);
+        if (!res.ok || jsonRecord.success !== true) {
+          throw new Error(getPlaybackMessage(json) || `HTTP ${res.status}`);
         }
 
-        const data = json?.data || {};
-        const channelEntries = Array.isArray(data?.channels) ? data.channels : [];
-        const channelJobs = channelEntries
-          .map((entry: any) => ({
-            channel: Number(entry?.channel || 0),
-            jobId: String(entry?.jobId || "").trim(),
-          }))
-          .filter((entry: any) => Number.isFinite(entry.channel) && entry.channel > 0 && entry.jobId);
+        const channels = getPlaybackChannels(json);
+        const successfulChannel =
+          channels.find(
+            (entry) =>
+              Number(entry.channel || 0) === Number(targetChannel) && entry.success === true
+          ) ||
+          channels.find((entry) => entry.success === true) ||
+          null;
 
-        if (channelJobs.length > 0) {
-          const resolvedVideos = await Promise.all(channelJobs.map(async (entry: any) => ({
-            key: `alert_job_${entry.jobId}_${entry.channel}`,
-            label: `Alert-time Playback CH${entry.channel}`,
-            url: await pollPlaybackJob(entry.jobId, playbackBase, buildJobFileUrl(entry.jobId, playbackBase)),
-          })));
-          console.info("[AlertPlayback] Multi-channel alert jobs resolved", {
-            alertId,
-            vehicleId,
-            videos: resolvedVideos,
-          });
-          writeCachedPlaybackVideos(cacheKey, resolvedVideos);
-          return resolvedVideos;
-        }
-
-        const jobId = String(data?.playbackJobId || "").trim();
-        const playbackJobUrl = normalizeBackendMediaUrl(String(data?.playbackJobUrl || "").trim(), playbackBase);
-        if (jobId) {
-          const resolvedUrl = await pollPlaybackJob(jobId, playbackBase, playbackJobUrl);
-          const resolvedVideos = [
-            {
-              key: `alert_job_${jobId}`,
-              label: `Alert-time Playback CH${Number(data?.playbackChannel || channel) || channel}`,
-              url: resolvedUrl,
-            },
-          ];
-          writeCachedPlaybackVideos(cacheKey, resolvedVideos);
-          return resolvedVideos;
-        }
-      } catch (error) {
-        lastError = error instanceof Error ? error : new Error(String(error));
-      }
-    }
-
-    return [];
-  };
-
-  const tryStoredWindow = async () => {
-    const resolvedVideos: AlertPlaybackVideo[] = [];
-    for (const targetChannel of channelCandidates) {
-      for (const playbackBase of getPlaybackRequestBases(videoProxyBase)) {
-        try {
-          const res = await fetch(`${playbackBase}/vehicles/${encodeURIComponent(vehicleId)}/videos/window`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              channel: targetChannel,
-              startTime: startIso,
-              endTime: endIso,
-            }),
-          });
-          const json = await res.json().catch(() => ({}));
-          if (!res.ok || !json?.success) {
-            throw new Error(json?.message || `HTTP ${res.status}`);
-          }
-
-          const data = json?.data || {};
-          if (data?.playbackSource === "live_fallback" && data?.streamUrl) {
-            resolvedVideos.push(
-              ...dedupePlaybackVideos([
-              {
-                key: `live_fallback_${vehicleId}_${targetChannel}`,
-                label: `Alert-time Live Fallback CH${targetChannel}`,
-                url: normalizeBackendMediaUrl(String(data.streamUrl), playbackBase),
-              },
-            ])
-            );
-            console.info("[AlertPlayback] Live fallback collected", {
-              alertId: String(alert?.id || "").trim(),
-              vehicleId,
-              channel: targetChannel,
-              videos: resolvedVideos,
-            });
-            break;
-          }
-
-          const jobId = String(data?.playbackJobId || "").trim();
-          const playbackJobUrl = normalizeBackendMediaUrl(String(data?.playbackJobUrl || "").trim(), playbackBase);
-          console.info("[AlertPlayback] Window job created", {
-            alertId: String(alert?.id || "").trim(),
-            vehicleId,
-            channel: targetChannel,
-            playbackBase,
-            startIso,
-            endIso,
-            jobId,
-            playbackJobUrl,
-            sourceSegments: Number(data?.sourceSegments || 0),
-          });
-          if (jobId) {
-            const resolvedUrl = await pollPlaybackJob(jobId, playbackBase, playbackJobUrl);
-            resolvedVideos.push(
-              ...dedupePlaybackVideos([
-              {
-                key: `job_${jobId}`,
-                label: `Alert-time Playback CH${targetChannel}`,
-                url: resolvedUrl,
-              },
-            ])
-            );
-            console.info("[AlertPlayback] Window job collected", {
-              alertId: String(alert?.id || "").trim(),
-              jobId,
-              videos: resolvedVideos,
-            });
-            break;
-          }
-        } catch (error) {
-          lastError = error instanceof Error ? error : new Error(String(error));
-        }
-      }
-    }
-
-    const deduped = dedupePlaybackVideos(resolvedVideos);
-    if (deduped.length > 0) {
-      writeCachedPlaybackVideos(cacheKey, deduped);
-    }
-    return deduped;
-  };
-
-  const immediateStored = await tryStoredWindow();
-  if (immediateStored.length > 0) {
-    return immediateStored;
-  }
-
-  const availabilityVideos: AlertPlaybackVideo[] = [];
-  for (const targetChannel of channelCandidates) {
-    const fallbackClip = await findNearestAvailableClip(vehicleId, targetChannel, safeTargetTime, videoProxyBase);
-    if (!fallbackClip) continue;
-
-    const boundedWindow = buildBoundedPlaybackWindow(fallbackClip, safeTargetTime);
-    for (const playbackBase of getPlaybackRequestBases(videoProxyBase)) {
-      try {
-        const res = await fetch(`${playbackBase}/vehicles/${encodeURIComponent(vehicleId)}/videos/window`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            channel: fallbackClip.channel,
-            startTime: boundedWindow.startTime,
-            endTime: boundedWindow.endTime,
-          }),
-        });
-        const json = await res.json().catch(() => ({}));
-        if (!res.ok || !json?.success) {
-          throw new Error(json?.message || `HTTP ${res.status}`);
-        }
-
-        const data = json?.data || {};
-        const jobId = String(data?.playbackJobId || "").trim();
-        const playbackJobUrl = normalizeBackendMediaUrl(String(data?.playbackJobUrl || "").trim(), playbackBase);
-        console.info("[AlertPlayback] Availability-range job created", {
-          alertId: String(alert?.id || "").trim(),
-          vehicleId,
-          channel: fallbackClip.channel,
-          playbackBase,
-          startTime: boundedWindow.startTime,
-          endTime: boundedWindow.endTime,
-          jobId,
-          playbackJobUrl,
-          sourceSegments: Number(data?.sourceSegments || 0),
-        });
-        if (jobId) {
-          const resolvedUrl = await pollPlaybackJob(jobId, playbackBase, playbackJobUrl);
-          availabilityVideos.push(
-            ...dedupePlaybackVideos([
-            {
-              key: `nearest_job_${jobId}`,
-              label: `Playback In Available Range CH${fallbackClip.channel}`,
-              url: resolvedUrl,
-            },
-          ])
+        if (!successfulChannel) {
+          throw new Error(
+            getPlaybackMessage(json) || `No playback available for channel ${targetChannel}.`
           );
-          console.info("[AlertPlayback] Availability-range job collected", {
-            alertId: String(alert?.id || "").trim(),
-            jobId,
-            videos: availabilityVideos,
-          });
-          break;
         }
+
+        const resolvedChannel = Number(successfulChannel.channel || targetChannel);
+        const sourceUrl = String(
+          successfulChannel.playUrl ||
+            successfulChannel.mp4Url ||
+            successfulChannel.playUrlAbsolute ||
+            successfulChannel.mp4UrlAbsolute ||
+            ""
+        ).trim();
+
+        if (!sourceUrl) {
+          throw new Error(`Playback URL missing for channel ${resolvedChannel}.`);
+        }
+
+        return {
+          key: `alert_window_${String(alert?.id || vehicleId)}_${resolvedChannel}_${startIso}_${endIso}`,
+          label: `Alert-time Playback CH${resolvedChannel}`,
+          url: normalizeBackendMediaUrl(sourceUrl, videoProxyBase),
+        } satisfies AlertPlaybackVideo;
       } catch (error) {
-        lastError = error instanceof Error ? error : new Error(String(error));
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        lastFailureMessage = errorMessage || lastFailureMessage;
       }
     }
+
+    throw new Error(`CH${targetChannel}: ${lastFailureMessage}`);
+  };
+
+  const settledVideos = await Promise.allSettled(
+    channelCandidates.map((targetChannel) => requestChannelPlayback(targetChannel))
+  );
+
+  const resolvedVideos = settledVideos
+    .filter(
+      (result): result is PromiseFulfilledResult<AlertPlaybackVideo> =>
+        result.status === "fulfilled"
+    )
+    .map((result) => result.value);
+
+  const dedupedVideos = dedupePlaybackVideos(resolvedVideos);
+  if (dedupedVideos.length > 0) {
+    writeCachedPlaybackVideos(cacheKey, dedupedVideos);
+    return dedupedVideos;
   }
 
-  const dedupedAvailabilityVideos = dedupePlaybackVideos(availabilityVideos);
-  if (dedupedAvailabilityVideos.length > 0) {
-    writeCachedPlaybackVideos(cacheKey, dedupedAvailabilityVideos);
-    return dedupedAvailabilityVideos;
+  const failureMessages = settledVideos
+    .filter(
+      (result): result is PromiseRejectedResult =>
+        result.status === "rejected"
+    )
+    .map((result) => {
+      const reason = result.reason;
+      return reason instanceof Error ? reason.message : String(reason || "");
+    })
+    .filter(Boolean);
+
+  const firstApproximateRange = failureMessages
+    .map((message) => parseApproxAvailableRange(message))
+    .find((value) => !!value);
+  const availabilitySummary = await fetchAlertAvailabilitySummary(vehicleId, startIso, videoProxyBase);
+  const combinedMessageParts = [
+    failureMessages[0] || "Alert video is not ready yet for this alert.",
+    ...failureMessages.slice(1),
+  ];
+
+  if (firstApproximateRange) {
+    combinedMessageParts.push(
+      `Approx range for this alert day: ${firstApproximateRange.startIso} to ${firstApproximateRange.endIso}.`
+    );
   }
 
-  if (lastError) throw lastError;
+  if (availabilitySummary) {
+    combinedMessageParts.push(availabilitySummary);
+  }
+
+  const combinedMessage = Array.from(new Set(combinedMessageParts.filter(Boolean))).join(" ");
+  if (combinedMessage) {
+    throw new Error(combinedMessage);
+  }
+
   return [];
 }
 
-export async function resolveAlertPlaybackVideos(alertSource: AlertPlaybackSource, videoProxyBase = DEFAULT_VIDEO_PROXY_BASE): Promise<AlertPlaybackVideo[]> {
+export async function resolveAlertPlaybackVideos(
+  alertSource: AlertPlaybackSource,
+  videoProxyBase = DEFAULT_VIDEO_PROXY_BASE,
+  windowOptions: AlertPlaybackWindowOptions = {}
+): Promise<AlertPlaybackVideo[]> {
   const alert = typeof alertSource === "object" && alertSource !== null ? alertSource : null;
   const id = String(alert?.id || alertSource || "").trim();
   if (!id || !alert) return [];
 
-  return resolvePlaybackWindowForAlert(alert, videoProxyBase);
+  return resolvePlaybackWindowForAlert(alert, videoProxyBase, windowOptions);
 }
 

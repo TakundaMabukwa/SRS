@@ -4,6 +4,14 @@ function normalizeBaseUrl(value?: string | null, fallback = "http://localhost:30
   return base.replace(/\/+$/, "").replace(/\/api$/i, "");
 }
 
+function getExplicitLiveVideoBaseUrl() {
+  const raw =
+    process.env.LIVE_VIDEO_BASE_URL ||
+    process.env.NEXT_PUBLIC_LIVE_VIDEO_BASE_URL ||
+    "";
+  return raw ? normalizeBaseUrl(raw, "http://localhost:3000") : "";
+}
+
 export function getListenerBaseUrl() {
   return normalizeBaseUrl(
     process.env.LISTENER_BASE_URL ||
@@ -31,6 +39,28 @@ export function getVideoHubBaseUrl() {
   );
 }
 
+export function getLiveVideoCommandBaseUrl() {
+  return getExplicitLiveVideoBaseUrl() || getListenerBaseUrl();
+}
+
+export function getLiveVideoPlaybackBaseUrl() {
+  return getExplicitLiveVideoBaseUrl() || getListenerBaseUrl();
+}
+
+export function getLiveVideoRuntimeBaseUrl() {
+  return getExplicitLiveVideoBaseUrl() || getListenerBaseUrl();
+}
+
+export function getPlaybackHubBaseUrl() {
+  return normalizeBaseUrl(
+    process.env.PLAYBACK_HUB_BASE_URL ||
+      process.env.NEXT_PUBLIC_PLAYBACK_HUB_BASE_URL ||
+      process.env.VIDEO_ARCHIVE_BASE_URL ||
+      process.env.NEXT_PUBLIC_VIDEO_ARCHIVE_BASE_URL,
+    "http://146.190.74.107:3201"
+  );
+}
+
 export function resolveVideoServerProxyBase(pathArray: string[]) {
   const [first = "", second = "", third = "", fourth = ""] = pathArray;
   const joined = pathArray.join("/").toLowerCase();
@@ -51,7 +81,6 @@ export function resolveVideoServerProxyBase(pathArray: string[]) {
       third === "screenshots" ||
       third === "videos" ||
       third === "video" ||
-      third === "request-report-video" ||
       third === "collect-evidence"
     );
 
@@ -69,12 +98,21 @@ export function resolveVideoServerProxyBase(pathArray: string[]) {
         third === "test-playback" ||
         third === "switch-stream" ||
         third === "optimize-video" ||
-        third === "config" ||
-        second === "connected")) ||
+        third === "config")) ||
     isAlertMediaPath;
 
   if (isLiveCommandPath) {
-    return { name: "listener", baseUrl: getListenerBaseUrl() };
+    const baseUrl = getLiveVideoCommandBaseUrl();
+    return { name: baseUrl === getListenerBaseUrl() ? "listener" : "liveVideo", baseUrl };
+  }
+
+  const isLiveRuntimePath =
+    first === "vehicles" &&
+    second === "connected";
+
+  if (isLiveRuntimePath) {
+    const baseUrl = getLiveVideoRuntimeBaseUrl();
+    return { name: baseUrl === getListenerBaseUrl() ? "listener" : "liveVideo", baseUrl };
   }
 
   const isLivePlaybackPath =
@@ -85,7 +123,18 @@ export function resolveVideoServerProxyBase(pathArray: string[]) {
         second === "streams"));
 
   if (isLivePlaybackPath) {
-    return { name: "videoHub", baseUrl: getVideoHubBaseUrl() };
+    const baseUrl = getLiveVideoPlaybackBaseUrl();
+    return { name: baseUrl === getListenerBaseUrl() ? "listener" : "liveVideo", baseUrl };
+  }
+
+  const isArchivePlaybackPath =
+    first === "video" ||
+    first === "media" ||
+    (first === "vehicles" &&
+      (third === "video" || fourth === "video"));
+
+  if (isArchivePlaybackPath) {
+    return { name: "playbackHub", baseUrl: getPlaybackHubBaseUrl() };
   }
 
   const isPlaybackPath =
@@ -95,7 +144,7 @@ export function resolveVideoServerProxyBase(pathArray: string[]) {
     fourth === "videos";
 
   if (isPlaybackPath) {
-    return { name: "videoHub", baseUrl: getVideoHubBaseUrl() };
+    return { name: "playbackHub", baseUrl: getPlaybackHubBaseUrl() };
   }
 
   const isAlertPath =

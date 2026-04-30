@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getListenerBaseUrl } from '@/lib/backend-hubs';
+import { getLiveVideoPlaybackBaseUrl } from '@/lib/backend-hubs';
 
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ path: string[] }> }
 ) {
   const { path } = await params;
-  const videoBaseUrl = getListenerBaseUrl();
+  const videoBaseUrl = getLiveVideoPlaybackBaseUrl();
   
   // path will be like: ["221083633486", "1", "playlist.m3u8"]
   // We need to convert to: /api/stream/221083633486/1/playlist.m3u8
@@ -47,9 +47,10 @@ export async function GET(
           'Cache-Control': 'no-cache, no-store, must-revalidate',
         },
       });
-    } catch (error: any) {
+    } catch (error: unknown) {
       retries--;
-      if (retries === 0 || !error.message?.includes('socket')) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (retries === 0 || !message.includes('socket')) {
         console.error('[HLS Proxy] Error:', error);
         return NextResponse.json(
           { error: 'Failed to fetch stream' },

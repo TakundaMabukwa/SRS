@@ -46,14 +46,8 @@ type VehicleChannelCard = {
 type VehicleGroupCard = {
   vehicleId: string;
   displayLabel: string;
+  connected: boolean;
   channels: VehicleChannelCard[];
-};
-
-type ScreenshotGridTile = {
-  vehicleId: string;
-  displayLabel: string;
-  channel: number;
-  screenshot?: ScreenshotItem;
 };
 type CaptureAvailability = {
   failedAt?: number;
@@ -150,8 +144,7 @@ export default function ScreenshotsDashboardTab({ detachable = true }: Screensho
   const captureAvailabilityRef = useRef<Map<string, CaptureAvailability>>(new Map());
   const SCREENSHOT_FAILURE_COOLDOWN_MS = 90_000;
   const LIVE_SCREENSHOT_WINDOW_MS = 10 * 60 * 1000;
-  const STALE_SCREENSHOT_WINDOW_MS = 30 * 60 * 1000;
-  const captureFailureSummary = useMemo(() => {
+  const captureFailureSummary = (() => {
     const reasons = Array.from(captureAvailabilityRef.current.values())
       .map((entry) => String(entry.reason || "").trim())
       .filter(Boolean);
@@ -163,7 +156,7 @@ export default function ScreenshotsDashboardTab({ detachable = true }: Screensho
     const [topReason, topCount] = Array.from(counts.entries()).sort((a, b) => b[1] - a[1])[0] || [];
     if (!topReason) return null;
     return { reason: topReason, count: topCount || 0 };
-  }, [screenshots, vehicles]);
+  })();
 
   const withCacheBust = useCallback((url: string, seed?: string | number) => {
     const value = String(url || "").trim();
@@ -210,54 +203,89 @@ export default function ScreenshotsDashboardTab({ detachable = true }: Screensho
   }, [withCacheBust]);
 
   const fetchConnectedVehicles = useCallback(async () => {
-    const response = await fetch("/api/video-server/vehicles/connected", { cache: "no-store" });
-    if (!response.ok) {
-      throw new Error("Failed to load connected vehicles");
+    let connectedVehicles: ConnectedVehicle[] = [];
+    try {
+      const response = await fetch("/api/video-server/vehicles/connected", { cache: "no-store" });
+      if (response.ok) {
+        const data = await response.json();
+        connectedVehicles = Array.isArray(data) ? data : [];
+      }
+    } catch {
+      // Continue with DB catalog even if connected endpoint is down.
     }
-    const data = await response.json();
-    const connectedVehicles = Array.isArray(data) ? data : [];
-    const cameraIds = Array.from(
-      new Set(
-        connectedVehicles
-          .map((vehicle: ConnectedVehicle) => String(vehicle.phone || vehicle.id || "").trim())
-          .filter(Boolean)
-      )
-    );
-    let vehicleLookup = new Map<string, { registration: string; fleetNumber: string }>();
-    if (cameraIds.length > 0) {
-      const { data: vehicleRows } = await supabase
-        .from("vehiclesc")
-        .select("registration_number, fleet_number, camera_sim_id, camera_serial")
-        .or(`camera_sim_id.in.(${cameraIds.join(",")}),camera_serial.in.(${cameraIds.join(",")})`);
-      vehicleLookup = new Map();
-      for (const row of vehicleRows || []) {
-        const registration = String(row?.registration_number || "").trim();
-        const fleetNumber = String(row?.fleet_number || "").trim();
-        const keys = [row?.camera_sim_id, row?.camera_serial]
-          .map((value) => String(value || "").trim())
-          .filter(Boolean);
-        for (const key of keys) {
-          if (registration && fleetNumber && !vehicleLookup.has(key)) {
-            vehicleLookup.set(key, { registration, fleetNumber });
-          }
-        }
+
+    const connectedByKey = new Map<string, ConnectedVehicle>();
+    for (const vehicle of connectedVehicles) {
+      const keys = [vehicle.id, vehicle.phone]
+        .map((value) => String(value || "").trim())
+        .filter(Boolean);
+      for (const key of keys) {
+        if (!connectedByKey.has(key)) connectedByKey.set(key, vehicle);
       }
     }
-    const enrichedVehicles = connectedVehicles
-      .map((vehicle: ConnectedVehicle) => {
-        const key = String(vehicle.phone || vehicle.id || "").trim();
-        const details = vehicleLookup.get(key);
-        if (!details?.registration || !details?.fleetNumber) {
-          return null;
-        }
-        return {
-          ...vehicle,
-          registration: details.registration,
-          fleetNumber: details.fleetNumber,
-          displayLabel: `${details.fleetNumber} - ${details.registration}`,
-        };
-      })
-      .filter(Boolean) as ConnectedVehicle[];
+
+    const { data: vehicleRows, error: vehiclesError } = await supabase
+      .from("vehiclesc")
+      .select("registration_number, fleet_number, camera_sim_id, camera_serial");
+
+    if (vehiclesError) {
+      throw new Error("Failed to load vehicle catalog");
+    }
+
+    const catalogVehicles: ConnectedVehicle[] = [];
+    for (const row of vehicleRows || []) {
+      const keys = [row?.camera_sim_id, row?.camera_serial]
+        .map((value) => String(value || "").trim())
+        .filter(Boolean);
+      if (keys.length === 0) continue;
+
+      const connectedMatch =
+        keys
+          .map((key) => connectedByKey.get(key))
+          .find(Boolean) || null;
+      const primaryKey = keys[0];
+      const secondaryKey = keys[1] || "";
+      const registration = String(row?.registration_number || "").trim();
+      const fleetNumber = String(row?.fleet_number || "").trim();
+      const fallbackLabel = registration || fleetNumber || primaryKey;
+      const displayLabel =
+        registration && fleetNumber
+          ? `${fleetNumber} - ${registration}`
+          : fallbackLabel;
+
+      catalogVehicles.push({
+        id: primaryKey,
+        phone: secondaryKey || connectedMatch?.phone || "",
+        channels: connectedMatch?.channels,
+        connected: !!connectedMatch && connectedMatch.connected !== false,
+        registration: registration || undefined,
+        fleetNumber: fleetNumber || undefined,
+        displayLabel: displayLabel || primaryKey,
+      });
+    }
+
+    const dedupedById = new Map<string, ConnectedVehicle>();
+    for (const vehicle of catalogVehicles) {
+      const key = String(toVehicleKey(vehicle) || "").trim();
+      if (!key) continue;
+      const existing = dedupedById.get(key);
+      if (!existing) {
+        dedupedById.set(key, vehicle);
+        continue;
+      }
+      dedupedById.set(key, {
+        ...existing,
+        ...vehicle,
+        channels: vehicle.channels || existing.channels,
+        connected: (existing.connected === true || vehicle.connected === true),
+        displayLabel: String(vehicle.displayLabel || existing.displayLabel || key).trim(),
+      });
+    }
+
+    const enrichedVehicles = Array.from(dedupedById.values()).sort((a, b) =>
+      String(a.displayLabel || "").localeCompare(String(b.displayLabel || ""))
+    );
+
     vehiclesRef.current = enrichedVehicles;
     setVehicles(enrichedVehicles);
     return enrichedVehicles as ConnectedVehicle[];
@@ -307,7 +335,7 @@ export default function ScreenshotsDashboardTab({ detachable = true }: Screensho
       setError("Recent screenshots request failed. Retrying automatically.");
       return [];
     }
-  }, [toDisplayUrl]);
+  }, [toDisplayUrl, withCacheBust]);
 
   const requestScreenshot = useCallback(async (target: CaptureTarget) => {
     const targetKey = toTargetKey(target);
@@ -411,7 +439,7 @@ export default function ScreenshotsDashboardTab({ detachable = true }: Screensho
       status: 404,
     });
     return false;
-  }, []);
+  }, [resolveRenderableImageUrl, toDisplayUrl, withCacheBust]);
 
   const runCaptureCycle = useCallback(async () => {
     setCapturing(true);
@@ -502,15 +530,19 @@ export default function ScreenshotsDashboardTab({ detachable = true }: Screensho
       }
     }
 
-    return connectedVehicles
+    return vehicles
       .map((vehicle) => {
         const vehicleId = toVehicleKey(vehicle);
+        if (!vehicleId) return null;
         const lookupIds = Array.from(
           new Set([vehicle.id, vehicle.phone].map((value) => String(value || "").trim()).filter(Boolean))
         );
-        const dedupedChannels = getScreenshotChannels(vehicle.channels);
+        const dedupedChannels = getScreenshotChannels(vehicle.channels).filter(
+          (channel) => Number(channel) === 1 || Number(channel) === 2
+        );
+        const channelsToRender = dedupedChannels.length > 0 ? dedupedChannels : [1, 2];
 
-        const groupedChannels = dedupedChannels.map((channel) => ({
+        const groupedChannels = channelsToRender.map((channel) => ({
           channel,
           screenshot:
             lookupIds
@@ -518,21 +550,26 @@ export default function ScreenshotsDashboardTab({ detachable = true }: Screensho
               .find(Boolean),
         }));
 
-        const visibleChannels = groupedChannels.filter((channelCard) => {
-          if (channelCard.screenshot?.storage_url) return true;
-          const availability = captureAvailabilityRef.current.get(`${vehicleId}:${channelCard.channel}`);
-          if (!availability?.failedAt) return true;
-          return Date.now() - availability.failedAt >= SCREENSHOT_FAILURE_COOLDOWN_MS;
-        });
-
         return {
           vehicleId,
-          displayLabel: String(vehicle.displayLabel || "").trim(),
-          channels: visibleChannels,
+          displayLabel: String(vehicle.displayLabel || vehicleId).trim(),
+          connected: vehicle.connected !== false,
+          channels: groupedChannels.sort((a, b) => a.channel - b.channel),
         };
       })
-      .filter((card) => card.vehicleId.length > 0 && card.displayLabel.length > 0 && card.channels.length > 0);
-  }, [connectedVehicles, screenshots]);
+      .filter((card): card is VehicleGroupCard => !!card && card.vehicleId.length > 0 && card.displayLabel.length > 0)
+      .sort((a, b) => {
+        const aLatest = Math.max(...a.channels.map((channel) => parseDate(channel.screenshot?.timestamp)), 0);
+        const bLatest = Math.max(...b.channels.map((channel) => parseDate(channel.screenshot?.timestamp)), 0);
+        const aHasScreenshot = aLatest > 0;
+        const bHasScreenshot = bLatest > 0;
+        if (aHasScreenshot !== bHasScreenshot) {
+          return aHasScreenshot ? -1 : 1;
+        }
+        if (aLatest !== bLatest) return bLatest - aLatest;
+        return a.displayLabel.localeCompare(b.displayLabel);
+      });
+  }, [vehicles, screenshots]);
 
   const liveCount = useMemo(() => {
     const now = Date.now();
@@ -540,31 +577,7 @@ export default function ScreenshotsDashboardTab({ detachable = true }: Screensho
       const ts = parseDate(channelCard.screenshot?.timestamp);
       return ts > 0 && now - ts <= LIVE_SCREENSHOT_WINDOW_MS;
     }).length;
-  }, [cards]);
-
-  const targetChannelCount = useMemo(
-    () => connectedVehicles.reduce((total, vehicle) => total + getScreenshotChannels(vehicle.channels).length, 0),
-    [connectedVehicles]
-  );
-
-  const screenshotTiles = useMemo<ScreenshotGridTile[]>(() => {
-    return cards
-      .flatMap((card) =>
-        card.channels.map((channelCard) => ({
-          vehicleId: card.vehicleId,
-          displayLabel: card.displayLabel,
-          channel: channelCard.channel,
-          screenshot: channelCard.screenshot,
-        }))
-      )
-      .sort((a, b) => {
-        const timeDiff = parseDate(b.screenshot?.timestamp) - parseDate(a.screenshot?.timestamp);
-        if (timeDiff !== 0) return timeDiff;
-        const labelDiff = a.displayLabel.localeCompare(b.displayLabel);
-        if (labelDiff !== 0) return labelDiff;
-        return a.channel - b.channel;
-      });
-  }, [cards]);
+  }, [cards, LIVE_SCREENSHOT_WINDOW_MS]);
 
   const gridClassName = useMemo(() => {
     switch (gridColumns) {
@@ -605,8 +618,9 @@ export default function ScreenshotsDashboardTab({ detachable = true }: Screensho
             </div>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
               <div className="rounded-lg border border-slate-700 bg-slate-900/70 px-4 py-3">
-                <p className="text-[11px] uppercase tracking-wide text-slate-400">Connected</p>
-                <p className="mt-1 text-2xl font-bold text-emerald-300">{connectedVehicles.length}</p>
+                <p className="text-[11px] uppercase tracking-wide text-slate-400">Vehicles</p>
+                <p className="mt-1 text-2xl font-bold text-emerald-300">{vehicles.length}</p>
+                <p className="mt-1 text-[11px] text-slate-400">{connectedVehicles.length} connected</p>
               </div>
               <div className="rounded-lg border border-slate-700 bg-slate-900/70 px-4 py-3">
                 <p className="text-[11px] uppercase tracking-wide text-slate-400">Live Channels</p>
@@ -657,7 +671,7 @@ export default function ScreenshotsDashboardTab({ detachable = true }: Screensho
         <Card className="p-10 text-center text-slate-600">Loading screenshot monitor...</Card>
       ) : cards.length === 0 ? (
         <Card className="p-10 text-center text-slate-600">
-          No connected vehicles with screenshot channels available.
+          No vehicles found in the catalog yet.
         </Card>
       ) : (
         <div className="space-y-4">
@@ -683,81 +697,120 @@ export default function ScreenshotsDashboardTab({ detachable = true }: Screensho
             </div>
           </div>
           <div className={gridClassName}>
-            {screenshotTiles.map((tile) => {
-              const shot = tile.screenshot;
-              const availability = captureAvailabilityRef.current.get(`${tile.vehicleId}:${tile.channel}`);
-
+            {cards.map((card) => {
+              const latestTimestamp = Math.max(...card.channels.map((channelCard) => parseDate(channelCard.screenshot?.timestamp)), 0);
+              const hasScreenshot = card.channels.some((channelCard) => !!channelCard.screenshot?.storage_url);
               return (
                 <Card
-                  key={`${tile.vehicleId}-${tile.channel}`}
-                  className="overflow-hidden border-slate-300 bg-slate-950 text-slate-100"
+                  key={card.vehicleId}
+                  className="overflow-hidden border-slate-300 bg-white text-slate-900"
                 >
-                  <div className="relative aspect-video bg-slate-900">
-                    {shot?.storage_url ? (
-                      <img
-                        src={shot.display_url || shot.storage_url}
-                        alt={`Vehicle ${tile.vehicleId} channel ${tile.channel}`}
-                        className="h-full w-full object-cover"
-                        onLoad={() => {
-                          console.info("[Screenshots] Image loaded", {
-                            vehicleId: tile.vehicleId,
-                            channel: tile.channel,
-                            url: shot.display_url || shot.storage_url,
-                          });
-                        }}
-                        onError={() => {
-                          console.error("[Screenshots] Image failed to load", {
-                            vehicleId: tile.vehicleId,
-                            channel: tile.channel,
-                            url: shot.display_url || shot.storage_url,
-                          });
-                        }}
-                        ref={(img) => {
-                          if (!img) return;
-                          img.onerror = () => {
-                            const attemptedRetry = img.dataset.retryAttempted === "true";
-                            if (!attemptedRetry) {
-                              img.dataset.retryAttempted = "true";
-                              img.src = withCacheBust(shot.display_url || shot.storage_url || "", Date.now());
-                              return;
-                            }
-                            console.error("[Screenshots] Image failed after retry", {
-                              vehicleId: tile.vehicleId,
-                              channel: tile.channel,
-                              url: shot.display_url || shot.storage_url,
-                            });
-                          };
-                        }}
-                      />
-                    ) : (
-                      <div className="flex h-full items-center justify-center text-slate-500">
-                        <MonitorPlay className="h-8 w-8" />
+                  <div className="border-b border-slate-200 px-3 py-2">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-semibold">{card.displayLabel}</p>
+                        <p className="mt-1 text-[11px] text-slate-500">
+                          {card.connected ? "Connected" : "Offline"}
+                          {" - "}
+                          {latestTimestamp > 0
+                            ? `Latest screenshot ${new Date(latestTimestamp).toLocaleTimeString()}`
+                            : "Waiting for screenshots"}
+                        </p>
                       </div>
-                    )}
-                    <div className="absolute right-2 top-2 rounded bg-black/70 px-2 py-1 text-[11px] font-medium">
-                      CH {tile.channel}
+                      <span
+                        className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                          hasScreenshot
+                            ? "bg-emerald-100 text-emerald-700"
+                            : "bg-slate-100 text-slate-600"
+                        }`}
+                      >
+                        {hasScreenshot ? "Has screenshots" : "No screenshots"}
+                      </span>
                     </div>
                   </div>
-                  <div className="flex items-start justify-between gap-3 border-t border-slate-800 px-3 py-2">
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-semibold text-slate-100">{tile.displayLabel}</p>
-                      <p className="mt-1 text-[11px] text-slate-400">
-                        {shot?.timestamp
-                          ? new Date(shot.timestamp).toLocaleTimeString()
-                          : (availability?.reason || "Waiting for image")}
-                      </p>
-                    </div>
-                    {shot?.storage_url && (
-                      <Button
-                        size="icon"
-                        variant="secondary"
-                        className="h-7 w-7 shrink-0"
-                        onClick={() => window.open(shot.storage_url, "_blank")}
-                        title="Open image"
-                      >
-                        <Download className="h-3 w-3" />
-                      </Button>
-                    )}
+                  <div className="grid grid-cols-2 gap-2 p-2">
+                    {card.channels.map((channelCard) => {
+                      const shot = channelCard.screenshot;
+                      const availability = captureAvailabilityRef.current.get(
+                        `${card.vehicleId}:${channelCard.channel}`
+                      );
+                      return (
+                        <div
+                          key={`${card.vehicleId}-${channelCard.channel}`}
+                          className="overflow-hidden rounded-md border border-slate-300 bg-slate-950 text-slate-100"
+                        >
+                          <div className="relative aspect-video bg-slate-900">
+                            {shot?.storage_url ? (
+                              <img
+                                src={shot.display_url || shot.storage_url}
+                                alt={`Vehicle ${card.vehicleId} channel ${channelCard.channel}`}
+                                className="h-full w-full object-cover"
+                                onLoad={() => {
+                                  console.info("[Screenshots] Image loaded", {
+                                    vehicleId: card.vehicleId,
+                                    channel: channelCard.channel,
+                                    url: shot.display_url || shot.storage_url,
+                                  });
+                                }}
+                                onError={() => {
+                                  console.error("[Screenshots] Image failed to load", {
+                                    vehicleId: card.vehicleId,
+                                    channel: channelCard.channel,
+                                    url: shot.display_url || shot.storage_url,
+                                  });
+                                }}
+                                ref={(img) => {
+                                  if (!img) return;
+                                  img.onerror = () => {
+                                    const attemptedRetry = img.dataset.retryAttempted === "true";
+                                    if (!attemptedRetry) {
+                                      img.dataset.retryAttempted = "true";
+                                      img.src = withCacheBust(
+                                        shot.display_url || shot.storage_url || "",
+                                        Date.now()
+                                      );
+                                      return;
+                                    }
+                                    console.error("[Screenshots] Image failed after retry", {
+                                      vehicleId: card.vehicleId,
+                                      channel: channelCard.channel,
+                                      url: shot.display_url || shot.storage_url,
+                                    });
+                                  };
+                                }}
+                              />
+                            ) : (
+                              <div className="flex h-full items-center justify-center text-slate-500">
+                                <MonitorPlay className="h-8 w-8" />
+                              </div>
+                            )}
+                            <div className="absolute right-2 top-2 rounded bg-black/70 px-2 py-1 text-[11px] font-medium">
+                              CH {channelCard.channel}
+                            </div>
+                          </div>
+                          <div className="flex items-start justify-between gap-3 border-t border-slate-800 px-3 py-2">
+                            <div className="min-w-0">
+                              <p className="text-[11px] text-slate-400">
+                                {shot?.timestamp
+                                  ? new Date(shot.timestamp).toLocaleTimeString()
+                                  : (availability?.reason || "Waiting for image")}
+                              </p>
+                            </div>
+                            {shot?.storage_url && (
+                              <Button
+                                size="icon"
+                                variant="secondary"
+                                className="h-7 w-7 shrink-0"
+                                onClick={() => window.open(shot.storage_url, "_blank")}
+                                title="Open image"
+                              >
+                                <Download className="h-3 w-3" />
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 </Card>
               );

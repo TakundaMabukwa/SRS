@@ -6,9 +6,12 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Calendar, Clock3, PlayCircle, RefreshCw, Search, Video } from "lucide-react";
+import { createClient } from "@/lib/supabase/client";
 
 type PlaybackVehicle = {
   vehicleId: string;
+  deviceIds: string[];
+  cameraSimId?: string | null;
   clipCount: number;
   earliestTime?: string | null;
   latestTime?: string | null;
@@ -36,6 +39,40 @@ type PlaybackChannelAvailability = {
   clips: PlaybackClip[];
 };
 
+type AvailabilityClipResponse = {
+  id?: string | number;
+  startTime?: string;
+  start_time?: string;
+  endTime?: string;
+  end_time?: string;
+  durationSeconds?: number;
+  duration_seconds?: number;
+  fileSize?: number;
+  file_size?: number;
+  videoType?: string;
+  video_type?: string;
+};
+
+type AvailabilityChannelResponse = {
+  channel?: number;
+  clipCount?: number;
+  clip_count?: number;
+  earliestTime?: string;
+  earliest_time?: string;
+  latestTime?: string;
+  latest_time?: string;
+  clips?: AvailabilityClipResponse[];
+};
+
+type CoverageRowResponse = {
+  channel?: number;
+  packet_count?: number;
+  first_packet_time?: string;
+  last_packet_time?: string;
+  first_packet_timestamp_ms?: number;
+  last_packet_timestamp_ms?: number;
+};
+
 type PlaybackItem = {
   channel: number;
   url: string;
@@ -49,26 +86,110 @@ type QuickRangeOption = {
   end: string;
 };
 
+type ParsedAvailableRange = {
+  startIso: string;
+  endIso: string;
+};
+
+function channelHasStoredFiles(entry?: PlaybackChannelAvailability | null) {
+  if (!entry) return false;
+  const clipCount = Number(entry.clipCount || 0);
+  if (Number.isFinite(clipCount) && clipCount > 0) return true;
+  if (Array.isArray(entry.clips) && entry.clips.length > 0) return true;
+  const startMs = entry.earliestTime ? new Date(entry.earliestTime).getTime() : Number.NaN;
+  const endMs = entry.latestTime ? new Date(entry.latestTime).getTime() : Number.NaN;
+  return Number.isFinite(startMs) && Number.isFinite(endMs) && endMs >= startMs;
+}
+
+function buildCandidateVehicleIds(vehicle?: PlaybackVehicle | null, preferredId?: string | null): string[] {
+  const cameraSimId = String(vehicle?.cameraSimId || vehicle?.vehicleId || "").trim();
+  if (cameraSimId) return [cameraSimId];
+
+  const fallback = String(preferredId || "").trim();
+  return fallback ? [fallback] : [];
+}
+
 function formatDateTime(value?: string | null) {
   if (!value) return "N/A";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "N/A";
-  return date.toLocaleString();
+  return `${date.toLocaleString(undefined, {
+    timeZone: "UTC",
+    hour12: false,
+  })} UTC`;
 }
 
 function formatTimeInputValue(value?: string | null) {
   if (!value) return "";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "";
-  const hours = String(date.getHours()).padStart(2, "0");
-  const minutes = String(date.getMinutes()).padStart(2, "0");
-  const seconds = String(date.getSeconds()).padStart(2, "0");
+  const hours = String(date.getUTCHours()).padStart(2, "0");
+  const minutes = String(date.getUTCMinutes()).padStart(2, "0");
+  const seconds = String(date.getUTCSeconds()).padStart(2, "0");
   return `${hours}:${minutes}:${seconds}`;
 }
 
 function combineDateAndTime(dateValue: string, timeValue: string) {
   if (!dateValue || !timeValue) return "";
-  return new Date(`${dateValue}T${timeValue}`).toISOString();
+  const dateMatch = String(dateValue).trim().match(/^([0-9]{4})-([0-9]{2})-([0-9]{2})$/);
+  if (!dateMatch) return "";
+
+  const timeParts = String(timeValue)
+    .trim()
+    .split(":")
+    .map((part) => Number(part));
+  if (timeParts.length < 2) return "";
+
+  const [, yearRaw, monthRaw, dayRaw] = dateMatch;
+  const year = Number(yearRaw);
+  const month = Number(monthRaw);
+  const day = Number(dayRaw);
+  const hours = Number(timeParts[0] ?? 0);
+  const minutes = Number(timeParts[1] ?? 0);
+  const seconds = Number(timeParts[2] ?? 0);
+
+  if (
+    !Number.isInteger(year) ||
+    !Number.isInteger(month) ||
+    !Number.isInteger(day) ||
+    !Number.isInteger(hours) ||
+    !Number.isInteger(minutes) ||
+    !Number.isInteger(seconds)
+  ) {
+    return "";
+  }
+
+  if (
+    month < 1 ||
+    month > 12 ||
+    day < 1 ||
+    day > 31 ||
+    hours < 0 ||
+    hours > 23 ||
+    minutes < 0 ||
+    minutes > 59 ||
+    seconds < 0 ||
+    seconds > 59
+  ) {
+    return "";
+  }
+
+  const ms = Date.UTC(year, month - 1, day, hours, minutes, seconds, 0);
+  if (!Number.isFinite(ms)) return "";
+  return new Date(ms).toISOString();
+}
+
+function getUtcDayBounds(dateValue: string): { startMs: number; endMs: number } | null {
+  const match = String(dateValue || "").trim().match(/^([0-9]{4})-([0-9]{2})-([0-9]{2})$/);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) return null;
+  const startMs = Date.UTC(year, month - 1, day, 0, 0, 0, 0);
+  const endMs = Date.UTC(year, month - 1, day, 23, 59, 59, 999);
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) return null;
+  return { startMs, endMs };
 }
 
 function sourceLooksHls(url: string) {
@@ -78,13 +199,62 @@ function sourceLooksHls(url: string) {
 function normalizeBackendMediaUrl(url: string, videoProxyBase: string) {
   const value = String(url || "").trim();
   if (!value) return "";
-  if (/^https?:\/\//i.test(value)) return value;
+  if (/^https?:\/\//i.test(value)) {
+    try {
+      const parsed = new URL(value);
+      if (parsed.pathname.startsWith("/api/video-server/")) {
+        return `${videoProxyBase}${parsed.pathname.slice("/api/video-server".length)}${parsed.search || ""}`;
+      }
+      if (parsed.pathname.startsWith("/api/")) {
+        return `${videoProxyBase}${parsed.pathname.slice(4)}${parsed.search || ""}`;
+      }
+      if (parsed.pathname.startsWith("/media/")) {
+        return `${videoProxyBase}${parsed.pathname}${parsed.search || ""}`;
+      }
+      return value;
+    } catch {
+      return value;
+    }
+  }
   if (value.startsWith(`${videoProxyBase}/`)) return value;
+  if (value.startsWith("/media/")) return `${videoProxyBase}${value}`;
   if (value.startsWith("/api/")) {
     return `${videoProxyBase}${value.slice(4)}`;
   }
   if (value.startsWith("/")) return value;
   return `${videoProxyBase}/${value.replace(/^\/+/, "")}`;
+}
+
+function readRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+}
+
+function errorMessage(error: unknown, fallback: string) {
+  if (error instanceof Error) {
+    const message = String(error.message || "").trim();
+    return message || fallback;
+  }
+  const message = String(error || "").trim();
+  return message || fallback;
+}
+
+function parseAvailableRangeFromMessage(value: unknown): ParsedAvailableRange | null {
+  const raw = String(value || "").trim();
+  if (!raw) return null;
+  const match = raw.match(
+    /Approx available range:\s*([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:\.\-+Z]+)\s+to\s+([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:\.\-+Z]+)/i
+  );
+  if (!match) return null;
+
+  const startRaw = String(match[1] || "").trim().replace(/[.,;]$/, "");
+  const endRaw = String(match[2] || "").trim().replace(/[.,;]$/, "");
+  const startMs = new Date(startRaw).getTime();
+  const endMs = new Date(endRaw).getTime();
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) return null;
+  return {
+    startIso: new Date(startMs).toISOString(),
+    endIso: new Date(endMs).toISOString(),
+  };
 }
 
 function PlaybackVideoPlayer({
@@ -141,6 +311,7 @@ function PlaybackVideoPlayer({
 
 export default function PlaybackDashboardTab() {
   const videoProxyBase = "/api/video-server";
+  const supabase = createClient();
   const [vehicles, setVehicles] = useState<PlaybackVehicle[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -157,19 +328,23 @@ export default function PlaybackDashboardTab() {
   const [playbackState, setPlaybackState] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const [playbackError, setPlaybackError] = useState("");
   const [rangeSummary, setRangeSummary] = useState("");
-  const PLAYBACK_LIST_TIMEOUT_MS = 20000;
-  const PLAYBACK_AVAILABILITY_TIMEOUT_MS = 20000;
+  const [resolvedVehicleId, setResolvedVehicleId] = useState("");
+  const PLAYBACK_AVAILABILITY_TIMEOUT_MS = 15000;
+  const initialLoadStartedRef = useRef(false);
 
   const vehicleDisplayLabel = useCallback((vehicle: PlaybackVehicle | null | undefined) => {
     if (!vehicle) return "N/A";
     if (vehicle.fleetNumber && vehicle.vehicleRegistration) {
       return `${vehicle.fleetNumber} - ${vehicle.vehicleRegistration}`;
     }
-    return "";
+    if (vehicle.vehicleRegistration) return vehicle.vehicleRegistration;
+    if (vehicle.fleetNumber) return vehicle.fleetNumber;
+    if (vehicle.vehicleId) return vehicle.vehicleId;
+    return "Unknown vehicle";
   }, []);
 
   const fetchJsonWithRetry = useCallback(async (url: string, timeoutMs: number, retries = 1) => {
-    let lastError: any = null;
+    let lastError: unknown = null;
     for (let attempt = 0; attempt <= retries; attempt += 1) {
       try {
         const res = await fetch(url, {
@@ -190,105 +365,361 @@ export default function PlaybackDashboardTab() {
     throw lastError || new Error("Request failed");
   }, []);
 
-  const fetchVehicles = useCallback(async () => {
-    const json = await fetchJsonWithRetry(
-      `${videoProxyBase}/playback/vehicles?days=14&limit=500`,
-      PLAYBACK_LIST_TIMEOUT_MS,
-      1
-    );
-    const rows = Array.isArray(json?.data) ? json.data : [];
-    const deviceIds = Array.from(
-      new Set(rows.map((row: any) => String(row?.vehicleId || "").trim()).filter(Boolean))
-    );
+  const fetchVehicles = useCallback(async (): Promise<PlaybackVehicle[]> => {
+    const { data: vehicleRows, error: vehiclesError } = await supabase
+      .from("vehiclesc")
+      .select("registration_number, fleet_number, camera_sim_id, make, model");
 
-    let vehicleDetails = new Map<string, any>();
-    if (deviceIds.length > 0) {
-      try {
-        const lookupRes = await fetch(
-          `/api/vehicle-lookup?deviceIds=${encodeURIComponent(deviceIds.join(","))}`,
-          {
-            cache: "no-store",
-            signal: AbortSignal.timeout(PLAYBACK_LIST_TIMEOUT_MS),
-          }
-        );
-        const lookupJson = await lookupRes.json().catch(() => ({}));
-        const lookupRows = Array.isArray(lookupJson?.vehicles) ? lookupJson.vehicles : [];
-        vehicleDetails = new Map(
-          lookupRows.map((row: any) => [String(row?.deviceId || "").trim(), row])
-        );
-      } catch (error) {
-        console.warn("Playback vehicle registration lookup failed:", error);
-      }
+    if (vehiclesError) {
+      throw new Error(vehiclesError.message || "Failed to load vehicles");
     }
 
-    const enrichedRows = rows.map((row: any) => {
-      const vehicleId = String(row?.vehicleId || "").trim();
-      const details = vehicleDetails.get(vehicleId);
-      return {
-        ...row,
-        vehicleRegistration: details?.plate || null,
-        fleetNumber: details?.fleetNumber || null,
-        make: details?.make || null,
-        model: details?.model || null,
-      };
-    }).filter((row: PlaybackVehicle) => !!(row.fleetNumber && row.vehicleRegistration));
-    setVehicles(enrichedRows);
-    return enrichedRows as PlaybackVehicle[];
-  }, [fetchJsonWithRetry]);
+    const bySimId = new Map<string, PlaybackVehicle>();
+    for (const row of vehicleRows || []) {
+      const cameraSimId = String(row?.camera_sim_id || "").trim();
+      if (!cameraSimId) continue;
 
-  const fetchAvailability = useCallback(async (vehicleId: string, date: string) => {
+      const registration = String(row?.registration_number || "").trim();
+      const fleetNumber = String(row?.fleet_number || "").trim();
+      const make = String(row?.make || "").trim();
+      const model = String(row?.model || "").trim();
+      const existing = bySimId.get(cameraSimId);
+
+      if (!existing) {
+        bySimId.set(cameraSimId, {
+          vehicleId: cameraSimId,
+          deviceIds: [cameraSimId],
+          cameraSimId: cameraSimId || null,
+          clipCount: 0,
+          earliestTime: null,
+          latestTime: null,
+          channels: [1, 2],
+          vehicleRegistration: registration || null,
+          fleetNumber: fleetNumber || null,
+          make: make || null,
+          model: model || null,
+        });
+        continue;
+      }
+
+      existing.deviceIds = [cameraSimId];
+      existing.cameraSimId = cameraSimId;
+      existing.vehicleId = cameraSimId;
+      if (!existing.vehicleRegistration && registration) existing.vehicleRegistration = registration;
+      if (!existing.fleetNumber && fleetNumber) existing.fleetNumber = fleetNumber;
+      if (!existing.make && make) existing.make = make;
+      if (!existing.model && model) existing.model = model;
+      bySimId.set(cameraSimId, existing);
+    }
+
+    const rowsByVehicle = Array.from(bySimId.values()).sort((a, b) =>
+      vehicleDisplayLabel(a).localeCompare(vehicleDisplayLabel(b))
+    );
+
+    setVehicles(rowsByVehicle);
+    return rowsByVehicle;
+  }, [supabase, vehicleDisplayLabel]);
+
+  const fetchAvailability = useCallback(async (vehicle: PlaybackVehicle, date: string) => {
     setAvailabilityLoading(true);
     try {
-      const json = await fetchJsonWithRetry(
-        `${videoProxyBase}/vehicles/${encodeURIComponent(vehicleId)}/videos/availability?date=${encodeURIComponent(date)}`,
-        PLAYBACK_AVAILABILITY_TIMEOUT_MS,
-        1
-      );
-      const channels = Array.isArray(json?.data?.channels) ? json.data.channels : [];
-      setAvailability(channels);
-      if (channels.length > 0) {
-        const firstChannel = Number(channels[0]?.channel || 1);
-        setSelectedChannel(firstChannel);
-        const firstClip = channels[0]?.clips?.[0];
-        const lastClip = channels[0]?.clips?.[channels[0]?.clips?.length - 1];
-        setStartTime(formatTimeInputValue(firstClip?.startTime || channels[0]?.earliestTime));
-        setEndTime(formatTimeInputValue(lastClip?.endTime || lastClip?.startTime || channels[0]?.latestTime));
-      } else {
-        setSelectedChannel(1);
-        setStartTime("");
-        setEndTime("");
+      const candidateVehicleIds = buildCandidateVehicleIds(vehicle);
+      const dayBounds = getUtcDayBounds(date);
+      const dayStartMs = dayBounds?.startMs ?? Number.NaN;
+      const dayEndMs = dayBounds?.endMs ?? Number.NaN;
+
+      const toMs = (value?: string | null) => {
+        const ms = value ? new Date(value).getTime() : Number.NaN;
+        return Number.isFinite(ms) ? ms : Number.NaN;
+      };
+
+      const parseAvailability = (json: unknown, candidateVehicleId: string): PlaybackChannelAvailability[] => {
+        const jsonRecord = readRecord(json);
+        const jsonData = readRecord(jsonRecord.data);
+        const channelsFromResponse = Array.isArray(jsonData.channels)
+          ? (jsonData.channels as AvailabilityChannelResponse[])
+          : Array.isArray(jsonRecord.channels)
+            ? (jsonRecord.channels as AvailabilityChannelResponse[])
+            : [];
+
+        if (channelsFromResponse.length > 0) {
+          return channelsFromResponse
+            .map((entry: AvailabilityChannelResponse) => ({
+              channel: Number(entry?.channel || 0),
+              clipCount: Number(entry?.clipCount ?? entry?.clip_count ?? 0),
+              earliestTime: String(entry?.earliestTime || entry?.earliest_time || "").trim() || null,
+              latestTime: String(entry?.latestTime || entry?.latest_time || "").trim() || null,
+              clips: Array.isArray(entry?.clips)
+                ? entry.clips.map((clip: AvailabilityClipResponse, idx: number) => ({
+                    id: String(clip?.id || `${candidateVehicleId}_${entry?.channel || 1}_${idx}`),
+                    startTime: String(clip?.startTime || clip?.start_time || "").trim(),
+                    endTime: String(clip?.endTime || clip?.end_time || "").trim() || null,
+                    durationSeconds: Number(clip?.durationSeconds ?? clip?.duration_seconds ?? 0) || undefined,
+                    fileSize: Number(clip?.fileSize ?? clip?.file_size ?? 0) || undefined,
+                    videoType: String(clip?.videoType || clip?.video_type || "").trim() || undefined,
+                  }))
+                : [],
+            }))
+            .filter((entry: PlaybackChannelAvailability) => Number.isFinite(entry.channel) && entry.channel > 0)
+            .sort((a, b) => a.channel - b.channel);
+        }
+
+        const rows = Array.isArray(jsonRecord.rows)
+          ? jsonRecord.rows
+          : Array.isArray(jsonData.rows)
+            ? jsonData.rows
+            : Array.isArray(jsonRecord.data)
+              ? jsonRecord.data
+              : [];
+
+        const channelMap = new Map<
+          number,
+          {
+            channel: number;
+            clipCount: number;
+            earliestTime: string | null;
+            latestTime: string | null;
+          }
+        >();
+
+        const pushRow = (row: Record<string, unknown>, applyDateBounds: boolean) => {
+          const channel = Number(row?.channel || 0);
+          if (!Number.isFinite(channel) || channel <= 0) return;
+
+          const firstRaw = String(
+            row?.approx_first_packet_time ||
+              row?.first_packet_time ||
+              row?.earliestTime ||
+              ""
+          ).trim();
+          const lastRaw = String(
+            row?.approx_last_packet_time ||
+              row?.last_packet_time ||
+              row?.latestTime ||
+              ""
+          ).trim();
+
+          let firstMs = toMs(firstRaw);
+          let lastMs = toMs(lastRaw);
+
+          if (applyDateBounds && Number.isFinite(dayStartMs) && Number.isFinite(dayEndMs) && Number.isFinite(firstMs) && Number.isFinite(lastMs)) {
+            if (lastMs < dayStartMs || firstMs > dayEndMs) return;
+            firstMs = Math.max(firstMs, dayStartMs);
+            lastMs = Math.min(lastMs, dayEndMs);
+          }
+
+          const firstIso = Number.isFinite(firstMs) ? new Date(firstMs).toISOString() : firstRaw || null;
+          const lastIso = Number.isFinite(lastMs) ? new Date(lastMs).toISOString() : lastRaw || null;
+
+          const existing = channelMap.get(channel) || {
+            channel,
+            clipCount: 0,
+            earliestTime: null,
+            latestTime: null,
+          };
+
+          const countCandidate = Number(row?.file_count ?? row?.clip_count ?? 1);
+          existing.clipCount += Number.isFinite(countCandidate) && countCandidate > 0 ? countCandidate : 1;
+
+          if (firstIso) {
+            const firstIsoMs = toMs(firstIso);
+            const existingFirstMs = toMs(existing.earliestTime);
+            if (!Number.isFinite(existingFirstMs) || (Number.isFinite(firstIsoMs) && firstIsoMs < existingFirstMs)) {
+              existing.earliestTime = firstIso;
+            }
+          }
+
+          if (lastIso) {
+            const lastIsoMs = toMs(lastIso);
+            const existingLastMs = toMs(existing.latestTime);
+            if (!Number.isFinite(existingLastMs) || (Number.isFinite(lastIsoMs) && lastIsoMs > existingLastMs)) {
+              existing.latestTime = lastIso;
+            }
+          }
+
+          channelMap.set(channel, existing);
+        };
+
+        rows.forEach((row) => pushRow(readRecord(row), true));
+        if (channelMap.size === 0) {
+          rows.forEach((row) => pushRow(readRecord(row), false));
+        }
+
+        return Array.from(channelMap.values())
+          .sort((a, b) => a.channel - b.channel)
+          .map((entry) => ({
+            channel: entry.channel,
+            clipCount: entry.clipCount,
+            earliestTime: entry.earliestTime,
+            latestTime: entry.latestTime,
+            clips:
+              entry.earliestTime && entry.latestTime
+                ? [
+                    {
+                      id: `${candidateVehicleId}_${entry.channel}_${date}`,
+                      startTime: entry.earliestTime,
+                      endTime: entry.latestTime,
+                    },
+                  ]
+                : [],
+          }));
+      };
+
+      const parseExactCoverage = (json: unknown, candidateVehicleId: string): PlaybackChannelAvailability[] => {
+        const jsonRecord = readRecord(json);
+        const jsonData = readRecord(jsonRecord.data);
+        const rows = Array.isArray(jsonRecord.rows)
+          ? jsonRecord.rows
+          : Array.isArray(jsonData.rows)
+            ? jsonData.rows
+            : Array.isArray(jsonRecord.data)
+              ? jsonRecord.data
+              : [];
+
+        return rows
+          .map((value) => readRecord(value) as CoverageRowResponse)
+          .map((row, index) => {
+            const channel = Number(row?.channel || 0);
+            if (!Number.isFinite(channel) || channel <= 0) return null;
+            const firstRaw = String(row?.first_packet_time || "").trim();
+            const lastRaw = String(row?.last_packet_time || "").trim();
+            const firstMs = firstRaw ? new Date(firstRaw).getTime() : Number.NaN;
+            const lastMs = lastRaw ? new Date(lastRaw).getTime() : Number.NaN;
+            const earliestTime = Number.isFinite(firstMs) ? new Date(firstMs).toISOString() : null;
+            const latestTime = Number.isFinite(lastMs) ? new Date(lastMs).toISOString() : null;
+            const hasRange = !!earliestTime && !!latestTime && new Date(latestTime).getTime() >= new Date(earliestTime).getTime();
+            return {
+              channel,
+              clipCount: hasRange ? 1 : 0,
+              earliestTime,
+              latestTime,
+              clips: hasRange
+                ? [
+                    {
+                      id: `${candidateVehicleId}_${channel}_coverage_${index}`,
+                      startTime: earliestTime,
+                      endTime: latestTime,
+                    },
+                  ]
+                : [],
+            } as PlaybackChannelAvailability;
+          })
+          .filter((entry): entry is PlaybackChannelAvailability => !!entry)
+          .sort((a, b) => a.channel - b.channel);
+      };
+
+      let hasSuccessfulResponse = false;
+      let lastError: unknown = null;
+
+      for (const candidateVehicleId of candidateVehicleIds) {
+        if (Number.isFinite(dayStartMs) && Number.isFinite(dayEndMs)) {
+          try {
+            const exactCoverageQuery = new URLSearchParams({
+              from: new Date(dayStartMs).toISOString(),
+              to: new Date(dayEndMs).toISOString(),
+              vehicleId: candidateVehicleId,
+            });
+            const exactCoverageJson = await fetchJsonWithRetry(
+              `${videoProxyBase}/video/coverage?${exactCoverageQuery.toString()}`,
+              PLAYBACK_AVAILABILITY_TIMEOUT_MS,
+              0
+            );
+            hasSuccessfulResponse = true;
+            const exactChannels = parseExactCoverage(exactCoverageJson, candidateVehicleId).filter((entry) =>
+              channelHasStoredFiles(entry)
+            );
+            if (exactChannels.length > 0) {
+              setAvailability(exactChannels);
+              setResolvedVehicleId(candidateVehicleId);
+              const preferredChannel = exactChannels.find((entry) => channelHasStoredFiles(entry)) || exactChannels[0];
+              const nextChannel = Number(preferredChannel?.channel || 1);
+              setSelectedChannel(nextChannel);
+              const firstClip = preferredChannel?.clips?.[0];
+              const lastClip = preferredChannel?.clips?.[preferredChannel?.clips?.length - 1];
+              setStartTime(formatTimeInputValue(firstClip?.startTime || preferredChannel?.earliestTime));
+              setEndTime(formatTimeInputValue(lastClip?.endTime || lastClip?.startTime || preferredChannel?.latestTime));
+              return;
+            }
+          } catch (error) {
+            lastError = error;
+          }
+        }
+
+        const encodedVehicle = encodeURIComponent(candidateVehicleId);
+        const encodedDate = encodeURIComponent(date);
+        const availabilityUrls = [
+          `${videoProxyBase}/vehicles/${encodedVehicle}/videos/availability?date=${encodedDate}`,
+          `${videoProxyBase}/vehicles/${encodedVehicle}/video/availability?date=${encodedDate}`,
+        ];
+
+        for (const url of availabilityUrls) {
+          try {
+            const json = await fetchJsonWithRetry(url, PLAYBACK_AVAILABILITY_TIMEOUT_MS, 0);
+            hasSuccessfulResponse = true;
+            const channels = parseAvailability(json, candidateVehicleId);
+            if (channels.length > 0) {
+              setAvailability(channels);
+              setResolvedVehicleId(candidateVehicleId);
+              const preferredChannel = channels.find((entry) => channelHasStoredFiles(entry)) || channels[0];
+              const nextChannel = Number(preferredChannel?.channel || 1);
+              setSelectedChannel(nextChannel);
+              const firstClip = preferredChannel?.clips?.[0];
+              const lastClip = preferredChannel?.clips?.[preferredChannel?.clips?.length - 1];
+              setStartTime(formatTimeInputValue(firstClip?.startTime || preferredChannel?.earliestTime));
+              setEndTime(formatTimeInputValue(lastClip?.endTime || lastClip?.startTime || preferredChannel?.latestTime));
+              return;
+            }
+            break;
+          } catch (error) {
+            lastError = error;
+          }
+        }
       }
+
+      if (!hasSuccessfulResponse && lastError) {
+        throw lastError;
+      }
+
+      setAvailability([]);
+      setResolvedVehicleId(candidateVehicleIds[0] || "");
+      setSelectedChannel(1);
+      setStartTime("");
+      setEndTime("");
     } finally {
       setAvailabilityLoading(false);
     }
-  }, [fetchJsonWithRetry]);
+  }, [fetchJsonWithRetry, videoProxyBase]);
 
   const refreshAll = useCallback(async () => {
     setRefreshing(true);
     try {
-      const rows = await fetchVehicles();
-      if (!selectedVehicle && rows.length > 0) {
-        const first = rows[0];
-        setSelectedVehicle(first);
-        const latest = first.latestTime ? new Date(first.latestTime) : new Date();
-        const nextDate = latest.toISOString().slice(0, 10);
-        setSelectedDate(nextDate);
-        await fetchAvailability(first.vehicleId, nextDate);
+      await fetchVehicles();
+      setPlaybackError("");
+    } catch (error: unknown) {
+      console.error("Failed to load playback inventory:", error);
+      setVehicles([]);
+      const message = errorMessage(error, "");
+      if (/timed out|timeout|aborted/i.test(message)) {
+        setPlaybackError("Playback inventory request timed out. Please refresh to retry.");
+      } else {
+        setPlaybackError(message || "Failed to load playback inventory.");
       }
     } finally {
       setRefreshing(false);
       setLoading(false);
     }
-  }, [fetchAvailability, fetchVehicles, selectedVehicle]);
+  }, [fetchVehicles]);
 
   useEffect(() => {
+    if (initialLoadStartedRef.current) return;
+    initialLoadStartedRef.current = true;
     void refreshAll();
   }, [refreshAll]);
 
   useEffect(() => {
     if (!selectedVehicle || !selectedDate) return;
-    void fetchAvailability(selectedVehicle.vehicleId, selectedDate);
-  }, [fetchAvailability, selectedDate, selectedVehicle?.vehicleId]);
+    void fetchAvailability(selectedVehicle, selectedDate);
+  }, [fetchAvailability, selectedDate, selectedVehicle]);
 
   const filteredVehicles = useMemo(() => {
     const needle = searchQuery.trim().toLowerCase();
@@ -296,6 +727,7 @@ export default function PlaybackDashboardTab() {
     return vehicles.filter((vehicle) =>
       [
         vehicle.vehicleId,
+        ...(vehicle.deviceIds || []),
         vehicle.fleetNumber,
         vehicle.vehicleRegistration,
         vehicleDisplayLabel(vehicle),
@@ -305,22 +737,62 @@ export default function PlaybackDashboardTab() {
         .map((value) => String(value || "").toLowerCase())
         .some((value) => value.includes(needle))
     );
-  }, [searchQuery, vehicles]);
+  }, [searchQuery, vehicleDisplayLabel, vehicles]);
+
+  const canonicalSelectedVehicle = useMemo(() => {
+    if (!selectedVehicle) return null;
+    const selectedId = String(selectedVehicle.vehicleId || "").trim();
+    const selectedSimId = String(selectedVehicle.cameraSimId || "").trim();
+    const selectedReg = String(selectedVehicle.vehicleRegistration || "").trim().toLowerCase();
+    const selectedFleet = String(selectedVehicle.fleetNumber || "").trim().toLowerCase();
+
+    return (
+      vehicles.find((vehicle) => {
+        const vehicleId = String(vehicle.vehicleId || "").trim();
+        const vehicleSimId = String(vehicle.cameraSimId || "").trim();
+        if (selectedId && (vehicleId === selectedId || vehicleSimId === selectedId)) return true;
+        if (selectedSimId && (vehicleId === selectedSimId || vehicleSimId === selectedSimId)) return true;
+        const vehicleReg = String(vehicle.vehicleRegistration || "").trim().toLowerCase();
+        const vehicleFleet = String(vehicle.fleetNumber || "").trim().toLowerCase();
+        return !!selectedReg && !!selectedFleet && vehicleReg === selectedReg && vehicleFleet === selectedFleet;
+      }) || selectedVehicle
+    );
+  }, [selectedVehicle, vehicles]);
 
   const selectedChannelAvailability = useMemo(
     () => availability.find((entry) => Number(entry.channel) === Number(selectedChannel)) || null,
     [availability, selectedChannel]
   );
 
-  const availableChannelNumbers = useMemo(
-    () => availability.map((entry) => Number(entry.channel || 0)).filter((channel) => Number.isFinite(channel) && channel > 0),
+  const availableChannelNumbersWithCoverage = useMemo(
+    () =>
+      availability
+        .filter((entry) => channelHasStoredFiles(entry))
+        .map((entry) => Number(entry.channel || 0))
+        .filter((channel) => Number.isFinite(channel) && channel > 0),
     [availability]
   );
 
+  const selectedChannelHasCoverage = useMemo(
+    () => channelHasStoredFiles(selectedChannelAvailability),
+    [selectedChannelAvailability]
+  );
+
   const playbackChannels = useMemo(() => {
-    if (!playBothChannels) return [selectedChannel];
-    return Array.from(new Set([selectedChannel, ...availableChannelNumbers])).slice(0, 2);
-  }, [availableChannelNumbers, playBothChannels, selectedChannel]);
+    if (playBothChannels) return Array.from(new Set(availableChannelNumbersWithCoverage)).slice(0, 2);
+    return selectedChannelHasCoverage ? [selectedChannel] : [];
+  }, [availableChannelNumbersWithCoverage, playBothChannels, selectedChannel, selectedChannelHasCoverage]);
+
+  const selectedChannelNoFilesHint = useMemo(() => {
+    if (!selectedDate || availabilityLoading || availability.length === 0) return "";
+    if (selectedChannelHasCoverage) return "";
+    if (availableChannelNumbersWithCoverage.length > 0) {
+      return `No stored files for CH${selectedChannel} on ${selectedDate}. Available channels: ${availableChannelNumbersWithCoverage
+        .map((channel) => `CH${channel}`)
+        .join(", ")}.`;
+    }
+    return `No stored files found for ${selectedDate}. Try another date.`;
+  }, [availability.length, availabilityLoading, availableChannelNumbersWithCoverage, selectedChannel, selectedChannelHasCoverage, selectedDate]);
 
   const quickRangeOptions = useMemo<QuickRangeOption[]>(() => {
     if (!selectedChannelAvailability) return [];
@@ -347,11 +819,42 @@ export default function PlaybackDashboardTab() {
     return options;
   }, [selectedChannelAvailability]);
 
+  const selectedChannelRangeSummary = useMemo(() => {
+    if (!selectedChannelAvailability) return "";
+    const clips = selectedChannelAvailability.clips || [];
+    const earliest = clips[0]?.startTime || selectedChannelAvailability.earliestTime;
+    const latest = clips[clips.length - 1]?.endTime || clips[clips.length - 1]?.startTime || selectedChannelAvailability.latestTime;
+    if (!earliest || !latest) return "";
+    return `CH${selectedChannel}: ${formatDateTime(earliest)} - ${formatDateTime(latest)}`;
+  }, [selectedChannel, selectedChannelAvailability]);
+
+  const alternateChannelRangeSummaries = useMemo(() => {
+    return availability
+      .filter((entry) => Number(entry.channel) !== Number(selectedChannel))
+      .filter((entry) => channelHasStoredFiles(entry))
+      .map((entry) => {
+        const clips = entry.clips || [];
+        const earliest = clips[0]?.startTime || entry.earliestTime;
+        const latest = clips[clips.length - 1]?.endTime || clips[clips.length - 1]?.startTime || entry.latestTime;
+        if (!earliest || !latest) return "";
+        return `CH${entry.channel}: ${formatDateTime(earliest)} - ${formatDateTime(latest)}`;
+      })
+      .filter(Boolean)
+      .slice(0, 2);
+  }, [availability, selectedChannel]);
+
   useEffect(() => {
     if (!selectedChannelAvailability) return;
     if (!startTime) setStartTime(formatTimeInputValue(selectedChannelAvailability.earliestTime));
     if (!endTime) setEndTime(formatTimeInputValue(selectedChannelAvailability.latestTime));
   }, [selectedChannelAvailability, startTime, endTime]);
+
+  useEffect(() => {
+    if (!playBothChannels) return;
+    if (availableChannelNumbersWithCoverage.length < 2) {
+      setPlayBothChannels(false);
+    }
+  }, [availableChannelNumbersWithCoverage.length, playBothChannels]);
 
   const applyClipRange = useCallback((start?: string | null, end?: string | null) => {
     if (start) setStartTime(formatTimeInputValue(start));
@@ -366,17 +869,7 @@ export default function PlaybackDashboardTab() {
     setPlaybackError("");
   }, []);
 
-  const applyFullAvailableRange = useCallback(() => {
-    if (!selectedChannelAvailability) return;
-    const firstClip = selectedChannelAvailability.clips[0];
-    const lastClip = selectedChannelAvailability.clips[selectedChannelAvailability.clips.length - 1];
-    applyClipRange(
-      firstClip?.startTime || selectedChannelAvailability.earliestTime,
-      lastClip?.endTime || lastClip?.startTime || selectedChannelAvailability.latestTime
-    );
-  }, [applyClipRange, selectedChannelAvailability]);
-
-  const applyLatestRange = useCallback((seconds: number) => {
+  const buildLatestRange = useCallback((seconds: number) => {
     if (!selectedChannelAvailability) return;
     const lastClip = selectedChannelAvailability.clips[selectedChannelAvailability.clips.length - 1];
     const latestRaw = lastClip?.endTime || lastClip?.startTime || selectedChannelAvailability.latestTime;
@@ -384,78 +877,152 @@ export default function PlaybackDashboardTab() {
     const latest = new Date(latestRaw);
     if (Number.isNaN(latest.getTime())) return;
     const start = new Date(latest.getTime() - seconds * 1000);
-    setStartTime(formatTimeInputValue(start.toISOString()));
-    setEndTime(formatTimeInputValue(latest.toISOString()));
+    return {
+      startIso: start.toISOString(),
+      endIso: latest.toISOString(),
+    };
   }, [selectedChannelAvailability]);
 
+  const handlePlaybackRequestError = useCallback((error: unknown) => {
+    const message = errorMessage(error, "Failed to prepare playback.");
+    const availableRange = parseAvailableRangeFromMessage(message);
+    if (availableRange) {
+      setPlaybackError(`Available range: ${formatDateTime(availableRange.startIso)} - ${formatDateTime(availableRange.endIso)}`);
+      return;
+    }
+    setPlaybackError(message || "Failed to prepare playback.");
+  }, []);
+
   const resolvePlaybackForChannel = useCallback(async (
-    vehicleId: string,
+    candidateVehicleIds: string[],
+    vehicleLabel: string,
     channel: number,
     startIso: string,
     endIso: string,
     labelStart: string,
     labelEnd: string
   ): Promise<PlaybackItem> => {
-    const res = await fetch(`${videoProxyBase}/vehicles/${encodeURIComponent(vehicleId)}/videos/window`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        channel,
-        startTime: startIso,
-        endTime: endIso,
-      }),
-    });
-    const json = await res.json().catch(() => ({}));
-    if (!res.ok || !json?.success) {
-      throw new Error(json?.message || `HTTP ${res.status}`);
-    }
+    let lastError: unknown = null;
 
-    const data = json?.data || {};
-    if (data?.playbackSource === "live_fallback" && data?.streamUrl) {
-      return {
-        channel,
-        url: normalizeBackendMediaUrl(String(data.streamUrl), videoProxyBase),
-        label: `${vehicleId} CH${channel} live fallback`,
-      };
-    }
-
-    const jobId = String(data?.playbackJobId || "").trim();
-    if (!jobId) {
-      throw new Error(`Playback job was not created for CH${channel}.`);
-    }
-
-    for (let attempt = 0; attempt < 60; attempt += 1) {
-      await new Promise((resolve) => setTimeout(resolve, attempt === 0 ? 600 : 1500));
-      const statusRes = await fetch(`${videoProxyBase}/videos/jobs/${encodeURIComponent(jobId)}`, {
-        cache: "no-store",
-        signal: AbortSignal.timeout(5000),
+    for (const vehicleId of candidateVehicleIds) {
+      const query = new URLSearchParams({
+        from: startIso,
+        to: endIso,
       });
-      const statusJson = await statusRes.json().catch(() => ({}));
-      const job = statusJson?.data || {};
-      if (job?.status === "completed") {
-        const preferredUrl = normalizeBackendMediaUrl(
-          String(job?.persistedVideoUrl || "").trim() ||
-          (job?.persistedVideoId ? `${videoProxyBase}/videos/${encodeURIComponent(String(job.persistedVideoId))}/file` : "") ||
-          String(job?.outputUrl || "").trim() ||
-          `${videoProxyBase}/videos/jobs/${encodeURIComponent(jobId)}/file`,
-          videoProxyBase
-        );
-        return {
-          channel,
-          url: preferredUrl,
-          label: `${vehicleId} CH${channel} ${labelStart} - ${labelEnd}`,
+      try {
+        const parsePlayableChannel = (json: unknown, preferredChannel: number) => {
+          const payload = readRecord(json);
+          const channels = Array.isArray(payload.channels)
+            ? payload.channels
+            : Array.isArray(readRecord(payload.data).channels)
+              ? (readRecord(payload.data).channels as unknown[])
+              : [];
+
+          const normalizeChannel = (entry: unknown) => readRecord(entry);
+          const preferred = channels
+            .map(normalizeChannel)
+            .find(
+              (entry) =>
+                Number(entry?.channel || 0) === Number(preferredChannel) &&
+                Boolean(entry?.success)
+            );
+          const firstSuccessful = channels.map(normalizeChannel).find((entry) => Boolean(entry?.success));
+          const picked = preferred || firstSuccessful;
+          if (!picked) return null;
+
+          const sourceUrl = String(
+            picked?.playUrl ||
+              picked?.mp4Url ||
+              picked?.playUrlAbsolute ||
+              picked?.mp4UrlAbsolute ||
+              ""
+          ).trim();
+          if (!sourceUrl) return null;
+
+          return {
+            channel: Number(picked?.channel || preferredChannel),
+            sourceUrl,
+          };
         };
-      }
-      if (job?.status === "failed") {
-        throw new Error(job?.error || `Playback generation failed for CH${channel}.`);
+
+        const channelScopedUrl = `${videoProxyBase}/vehicles/${encodeURIComponent(vehicleId)}/video/${encodeURIComponent(String(channel))}?${query.toString()}`;
+        const channelScopedRes = await fetch(channelScopedUrl, { cache: "no-store" });
+        const channelScopedJson = await channelScopedRes.json().catch(() => ({}));
+        if (channelScopedRes.ok && channelScopedJson?.success) {
+          const scopedPlayable = parsePlayableChannel(channelScopedJson, channel);
+          if (scopedPlayable) {
+            setResolvedVehicleId(vehicleId);
+            return {
+              channel: scopedPlayable.channel,
+              url: normalizeBackendMediaUrl(scopedPlayable.sourceUrl, videoProxyBase),
+              label: `${vehicleLabel} CH${scopedPlayable.channel} ${labelStart} - ${labelEnd}`,
+            };
+          }
+        }
+
+        const channelAgnosticUrl = `${videoProxyBase}/vehicles/${encodeURIComponent(vehicleId)}/video?${query.toString()}`;
+        const channelAgnosticRes = await fetch(channelAgnosticUrl, { cache: "no-store" });
+        const channelAgnosticJson = await channelAgnosticRes.json().catch(() => ({}));
+        if (channelAgnosticRes.ok && channelAgnosticJson?.success) {
+          const fallbackPlayable = parsePlayableChannel(channelAgnosticJson, channel);
+          if (fallbackPlayable) {
+            setResolvedVehicleId(vehicleId);
+            return {
+              channel: fallbackPlayable.channel,
+              url: normalizeBackendMediaUrl(fallbackPlayable.sourceUrl, videoProxyBase),
+              label: `${vehicleLabel} CH${fallbackPlayable.channel} ${labelStart} - ${labelEnd}`,
+            };
+          }
+        }
+
+        const channelScopedMessage =
+          String(channelScopedJson?.message || "").trim() ||
+          String(
+            Array.isArray(channelScopedJson?.channels)
+              ? channelScopedJson.channels
+                  .map((entry: { message?: string }) => String(entry?.message || "").trim())
+                  .find(Boolean) || ""
+              : ""
+          );
+        const channelAgnosticMessage =
+          String(channelAgnosticJson?.message || "").trim() ||
+          String(
+            Array.isArray(channelAgnosticJson?.channels)
+              ? channelAgnosticJson.channels
+                  .map((entry: { message?: string }) => String(entry?.message || "").trim())
+                  .find(Boolean) || ""
+              : ""
+          );
+        const failureMessage =
+          channelScopedMessage ||
+          channelAgnosticMessage ||
+          `No playable video for CH${channel} in that range.`;
+        throw new Error(failureMessage);
+      } catch (error) {
+        lastError = error;
       }
     }
 
-    throw new Error(`Playback job timed out for CH${channel}.`);
+    throw lastError || new Error(`No playable video for CH${channel} in that range.`);
   }, [videoProxyBase]);
 
   const requestPlayback = useCallback(async () => {
-    if (!selectedVehicle) return;
+    if (!canonicalSelectedVehicle) return;
+    if (!selectedChannelHasCoverage && !playBothChannels) {
+      setPlaybackState("error");
+      setPlaybackError(
+        selectedChannelNoFilesHint || `No stored files for CH${selectedChannel} on ${selectedDate || "selected date"}.`
+      );
+      return;
+    }
+    if (playbackChannels.length === 0) {
+      setPlaybackState("error");
+      setPlaybackError(
+        selectedChannelNoFilesHint || `No stored files are available for playback on ${selectedDate || "the selected date"}.`
+      );
+      return;
+    }
+    const candidateVehicleIds = buildCandidateVehicleIds(canonicalSelectedVehicle, resolvedVehicleId);
     const startIso = combineDateAndTime(selectedDate, startTime);
     const endIso = combineDateAndTime(selectedDate, endTime);
     if (!startIso || !endIso) {
@@ -463,38 +1030,9 @@ export default function PlaybackDashboardTab() {
       setPlaybackError("Select a valid date and time range.");
       return;
     }
-
-    setPlaybackState("loading");
-    setPlaybackError("");
-    setPlaybackItems([]);
-
-    try {
-      const items = await Promise.all(
-        playbackChannels.map((channel) =>
-          resolvePlaybackForChannel(selectedVehicle.vehicleId, channel, startIso, endIso, startTime, endTime)
-        )
-      );
-      setPlaybackItems(items);
-      setRangeSummary(`${selectedDate} ${startTime} - ${endTime}`);
-      setPlaybackState("ready");
-    } catch (error: any) {
+    if (new Date(endIso).getTime() <= new Date(startIso).getTime()) {
       setPlaybackState("error");
-      setPlaybackError(error?.message || "Failed to prepare playback.");
-    }
-  }, [endTime, playbackChannels, resolvePlaybackForChannel, selectedDate, selectedVehicle, startTime]);
-
-  const applyClipRangeAndPlay = useCallback(async (start?: string | null, end?: string | null) => {
-    applyClipRange(start, end);
-    const resolvedStart = start ? formatTimeInputValue(start) : "";
-    const resolvedEnd = formatTimeInputValue(end || start);
-    const nextStart = resolvedStart || startTime;
-    const nextEnd = resolvedEnd || endTime;
-    const startIso = combineDateAndTime(selectedDate, nextStart);
-    const endIso = combineDateAndTime(selectedDate, nextEnd);
-
-    if (!selectedVehicle || !startIso || !endIso) {
-      setPlaybackState("error");
-      setPlaybackError("Select a valid date and time range.");
+      setPlaybackError("End time must be after start time.");
       return;
     }
 
@@ -505,24 +1043,99 @@ export default function PlaybackDashboardTab() {
     try {
       const items = await Promise.all(
         playbackChannels.map((channel) =>
-          resolvePlaybackForChannel(selectedVehicle.vehicleId, channel, startIso, endIso, nextStart, nextEnd)
+          resolvePlaybackForChannel(candidateVehicleIds, vehicleDisplayLabel(canonicalSelectedVehicle), channel, startIso, endIso, startTime, endTime)
         )
       );
       setPlaybackItems(items);
-      setRangeSummary(`${selectedDate} ${nextStart} - ${nextEnd}`);
+      setRangeSummary(`${selectedDate} ${startTime} - ${endTime} UTC`);
       setPlaybackState("ready");
-    } catch (error: any) {
+    } catch (error: unknown) {
       setPlaybackState("error");
-      setPlaybackError(error?.message || "Failed to prepare playback.");
+      handlePlaybackRequestError(error);
+    }
+  }, [
+    endTime,
+    handlePlaybackRequestError,
+    playbackChannels,
+    playBothChannels,
+    resolvePlaybackForChannel,
+    resolvedVehicleId,
+    selectedChannel,
+    selectedChannelHasCoverage,
+    selectedChannelNoFilesHint,
+    selectedDate,
+    canonicalSelectedVehicle,
+    startTime,
+    vehicleDisplayLabel,
+  ]);
+
+  const applyClipRangeAndPlay = useCallback(async (start?: string | null, end?: string | null) => {
+    applyClipRange(start, end);
+    if (!selectedChannelHasCoverage && !playBothChannels) {
+      setPlaybackState("error");
+      setPlaybackError(
+        selectedChannelNoFilesHint || `No stored files for CH${selectedChannel} on ${selectedDate || "selected date"}.`
+      );
+      return;
+    }
+    if (playbackChannels.length === 0) {
+      setPlaybackState("error");
+      setPlaybackError(
+        selectedChannelNoFilesHint || `No stored files are available for playback on ${selectedDate || "the selected date"}.`
+      );
+      return;
+    }
+    const candidateVehicleIds = buildCandidateVehicleIds(canonicalSelectedVehicle, resolvedVehicleId);
+    const resolvedStart = start ? formatTimeInputValue(start) : "";
+    const resolvedEnd = formatTimeInputValue(end || start);
+    const nextStart = resolvedStart || startTime;
+    const nextEnd = resolvedEnd || endTime;
+    const startIso = combineDateAndTime(selectedDate, nextStart);
+    const endIso = combineDateAndTime(selectedDate, nextEnd);
+
+    if (!canonicalSelectedVehicle || !startIso || !endIso) {
+      setPlaybackState("error");
+      setPlaybackError("Select a valid date and time range.");
+      return;
+    }
+    if (new Date(endIso).getTime() <= new Date(startIso).getTime()) {
+      setPlaybackState("error");
+      setPlaybackError("End time must be after start time.");
+      return;
+    }
+
+    setPlaybackState("loading");
+    setPlaybackError("");
+    setPlaybackItems([]);
+
+    try {
+      const items = await Promise.all(
+        playbackChannels.map((channel) =>
+          resolvePlaybackForChannel(candidateVehicleIds, vehicleDisplayLabel(canonicalSelectedVehicle), channel, startIso, endIso, nextStart, nextEnd)
+        )
+      );
+      setPlaybackItems(items);
+      setRangeSummary(`${selectedDate} ${nextStart} - ${nextEnd} UTC`);
+      setPlaybackState("ready");
+    } catch (error: unknown) {
+      setPlaybackState("error");
+      handlePlaybackRequestError(error);
     }
   }, [
     applyClipRange,
     endTime,
+    handlePlaybackRequestError,
     playbackChannels,
+    playBothChannels,
     resolvePlaybackForChannel,
+    resolvedVehicleId,
+    selectedChannel,
+    selectedChannelHasCoverage,
+    selectedChannelNoFilesHint,
     selectedDate,
-    selectedVehicle,
+    canonicalSelectedVehicle,
     startTime,
+    vehicleDisplayLabel,
   ]);
 
   return (
@@ -559,9 +1172,11 @@ export default function PlaybackDashboardTab() {
                 if (e.key === "Enter" && filteredVehicles[0]) {
                   const first = filteredVehicles[0];
                   setSelectedVehicle(first);
+                  setResolvedVehicleId(first.cameraSimId || first.vehicleId);
                   const latest = first.latestTime ? new Date(first.latestTime) : new Date();
                   const nextDate = latest.toISOString().slice(0, 10);
                   setSelectedDate(nextDate);
+                  setAvailability([]);
                   setPlaybackState("idle");
                   setPlaybackItems([]);
                   setPlaybackError("");
@@ -597,7 +1212,6 @@ export default function PlaybackDashboardTab() {
                       <tr key={vehicle.vehicleId} className={`border-t border-slate-100 transition ${selected ? "bg-cyan-50" : "bg-white hover:bg-slate-50"}`}>
                         <td className="px-3 py-3 align-top">
                           <div className="font-medium text-slate-900">{vehicleDisplayLabel(vehicle)}</div>
-                          <div className="text-xs text-slate-500">{vehicle.clipCount} clip(s)</div>
                         </td>
                         <td className="px-3 py-3 align-top text-right">
                           <Button
@@ -605,9 +1219,11 @@ export default function PlaybackDashboardTab() {
                             variant={selected ? "default" : "outline"}
                             onClick={() => {
                               setSelectedVehicle(vehicle);
+                              setResolvedVehicleId(vehicle.cameraSimId || vehicle.vehicleId);
                               const latest = vehicle.latestTime ? new Date(vehicle.latestTime) : new Date();
                               const nextDate = latest.toISOString().slice(0, 10);
                               setSelectedDate(nextDate);
+                              setAvailability([]);
                               setPlaybackState("idle");
                               setPlaybackItems([]);
                               setPlaybackError("");
@@ -639,7 +1255,6 @@ export default function PlaybackDashboardTab() {
                   <p className="mt-1 text-sm text-slate-600">Choose the day, channel, and time window. Quick picks below use real stored coverage.</p>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
-                  <Badge className="rounded-full bg-slate-100 text-slate-700 hover:bg-slate-100">{selectedVehicle.clipCount} clip(s)</Badge>
                   <Badge variant="outline" className="rounded-full bg-white">{selectedVehicle.channels.map((channel) => `CH${channel}`).join(", ") || "N/A"}</Badge>
                 </div>
               </div>
@@ -711,17 +1326,45 @@ export default function PlaybackDashboardTab() {
                   type="button"
                   variant={playBothChannels ? "default" : "outline"}
                   onClick={() => setPlayBothChannels((prev) => !prev)}
-                  disabled={availableChannelNumbers.length < 2}
+                  disabled={availableChannelNumbersWithCoverage.length < 2}
                 >
                   {playBothChannels ? "Dual-channel on" : "Play both channels"}
                 </Button>
-                <Button type="button" variant="outline" onClick={applyFullAvailableRange} disabled={!selectedChannelAvailability}>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    const firstClip = selectedChannelAvailability?.clips?.[0];
+                    const lastClip = selectedChannelAvailability?.clips?.[selectedChannelAvailability.clips.length - 1];
+                    void applyClipRangeAndPlay(
+                      firstClip?.startTime || selectedChannelAvailability?.earliestTime,
+                      lastClip?.endTime || lastClip?.startTime || selectedChannelAvailability?.latestTime
+                    );
+                  }}
+                  disabled={!selectedChannelAvailability}
+                >
                   Full available range
                 </Button>
-                <Button type="button" variant="outline" onClick={() => applyLatestRange(300)} disabled={!selectedChannelAvailability}>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    const range = buildLatestRange(300);
+                    void applyClipRangeAndPlay(range?.startIso, range?.endIso);
+                  }}
+                  disabled={!selectedChannelAvailability}
+                >
                   Latest 5 min
                 </Button>
-                <Button type="button" variant="outline" onClick={() => applyLatestRange(600)} disabled={!selectedChannelAvailability}>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    const range = buildLatestRange(600);
+                    void applyClipRangeAndPlay(range?.startIso, range?.endIso);
+                  }}
+                  disabled={!selectedChannelAvailability}
+                >
                   Latest 10 min
                 </Button>
                 <Button onClick={() => void requestPlayback()} disabled={playbackState === "loading" || availabilityLoading}>
@@ -729,6 +1372,9 @@ export default function PlaybackDashboardTab() {
                   {playbackState === "loading" ? "Preparing..." : "Start Playback"}
                 </Button>
                 {availabilityLoading ? <span className="text-xs text-slate-500">Loading channel coverage...</span> : null}
+                {!availabilityLoading && selectedChannelNoFilesHint ? (
+                  <span className="text-xs text-amber-700">{selectedChannelNoFilesHint}</span>
+                ) : null}
               </div>
 
               <div className="rounded-3xl border border-slate-200 bg-slate-50 p-5">
@@ -738,6 +1384,15 @@ export default function PlaybackDashboardTab() {
                     <p className="text-xs text-slate-500">
                       One click below fills the range and starts playback.
                     </p>
+                    {selectedChannelRangeSummary ? (
+                      <p className="mt-1 text-xs text-slate-600">
+                        Available range: {selectedChannelRangeSummary}
+                      </p>
+                    ) : alternateChannelRangeSummaries.length > 0 ? (
+                      <p className="mt-1 text-xs text-slate-600">
+                        Available range: {alternateChannelRangeSummaries.join(" | ")}
+                      </p>
+                    ) : null}
                   </div>
                   {selectedChannelAvailability ? (
                     <Badge variant="outline">
@@ -762,7 +1417,11 @@ export default function PlaybackDashboardTab() {
                     ))}
                   </div>
                 ) : (
-                  <p className="text-xs text-slate-500">No stored ranges found yet for this date and channel.</p>
+                  <p className="text-xs text-slate-500">
+                    {selectedChannelRangeSummary || alternateChannelRangeSummaries.length > 0
+                      ? "No quick clip ranges found yet. Use Full available range or switch channel."
+                      : "No stored ranges found yet for this date and channel."}
+                  </p>
                 )}
               </div>
 
@@ -839,10 +1498,3 @@ export default function PlaybackDashboardTab() {
     </div>
   );
 }
-
-
-
-
-
-
-

@@ -313,7 +313,11 @@ export default function AlertDetailPage({ params }) {
       setLoadingEventVideos(true);
       setEventVideoError("");
       try {
-        const videos = await resolveAlertPlaybackVideos(selectedAlert);
+        const videos = await resolveAlertPlaybackVideos(
+          selectedAlert,
+          '/api/video-server',
+          { beforeMs: 30 * 1000, afterMs: 30 * 1000 }
+        );
         console.info("[AlertDetail] Resolved event videos", {
           alertId: selectedAlert?.id,
           videos,

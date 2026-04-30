@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getListenerBaseUrl } from '@/lib/backend-hubs';
+import { getLiveVideoCommandBaseUrl } from '@/lib/backend-hubs';
 
 export async function POST(req: NextRequest) {
-  const videoBaseUrl = getListenerBaseUrl();
+  const videoBaseUrl = getLiveVideoCommandBaseUrl();
   
   try {
     const body = await req.json();

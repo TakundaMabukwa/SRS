@@ -1271,7 +1271,6 @@ function DriverCard({ trip, userRole, handleViewMap, setCurrentTripForNote, setN
 
 // Enhanced routing components with proper waypoints
 function RoutingSection({ userRole, handleViewMap, setCurrentTripForNote, setNoteText, setNoteOpen, setAvailableDrivers, setCurrentTripForChange, setChangeDriverOpen, refreshTrigger, setRefreshTrigger, setPickupTimeOpen, setDropoffTimeOpen, setCurrentTripForTime, setTimeType, setSelectedTime, currentUnauthorizedTrip, setCurrentUnauthorizedTrip, setUnauthorizedStopModalOpen, loadingPhotos, setLoadingPhotos, setCurrentTripPhotos, setPhotosModalOpen, setCurrentTripAlerts, setAlertsModalOpen, setCurrentTripForClose, setCloseReason, setCloseTripOpen, setCurrentTripForEdit, setEditTripOpen, setCurrentTripForApproval, setApprovalModalOpen, onOpenAlertDetail, setIncidentReportModalOpen, setSelectedTripForIncident, isVisible = true }: any) {
-  const EVENT_VIDEO_READY_MIN_SECONDS = 25
   const [trips, setTrips] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [groupedAlerts, setGroupedAlerts] = useState<any[]>([])
@@ -1279,15 +1278,7 @@ function RoutingSection({ userRole, handleViewMap, setCurrentTripForNote, setNot
   const [costCenterFilter, setCostCenterFilter] = useState<string>('all')
   const ALERTS_PER_PAGE = 10
   const videoProxyBase = "/api/video-server"
-  const directVideoApiBase = (
-    process.env.NEXT_PUBLIC_VIDEO_HUB_BASE_URL ||
-    process.env.NEXT_PUBLIC_VIDEO_BASE_URL ||
-    ""
-  ).replace(/\/$/, "")
   const initialTripsLoadedRef = useRef(false)
-  const groupedAlertsRef = useRef<any[]>([])
-  const autoVideoRequestStateRef = useRef<Record<string, { autoRequested?: boolean; autoRequesting?: boolean; requestStartedAt?: number; error?: string }>>({})
-  const autoVideoRequestsInFlightRef = useRef(0)
   const alertHydrationMediaBackoffRef = useRef<Record<string, number>>({})
   const normalizeId = useCallback((value: unknown) => {
     return value === null || value === undefined ? "" : String(value).trim()
@@ -1315,12 +1306,8 @@ function RoutingSection({ userRole, handleViewMap, setCurrentTripForNote, setNot
   const toDisplayUrl = useCallback((raw?: string) => {
     const value = String(raw || "").trim()
     if (!value || value === "upload-failed" || value === "local-only") return ""
-    if (/^https?:\/\//i.test(value)) return value
-    if (value.startsWith("/")) {
-      return directVideoApiBase ? `${directVideoApiBase}${value}` : value
-    }
-    return directVideoApiBase ? `${directVideoApiBase}/${value}` : `/${value.replace(/^\/+/, "")}`
-  }, [directVideoApiBase])
+    return resolveMediaUrlForCurrentOrigin(value, videoProxyBase)
+  }, [videoProxyBase])
   const isValidDisplayUrl = useCallback((url?: string) => {
     return !!toDisplayUrl(url)
   }, [toDisplayUrl])
@@ -1348,12 +1335,6 @@ function RoutingSection({ userRole, handleViewMap, setCurrentTripForNote, setNot
     };
   }, [getScreenshotDisplayUrl])
 
-  const buildTripAlertVideoUrl = useCallback((alertId: string, type: "pre" | "post" | "camera") => {
-    const encodedId = encodeURIComponent(alertId)
-    if (directVideoApiBase) return `${directVideoApiBase}/api/alerts/${encodedId}/video/${type}`
-    return `${videoProxyBase}/alerts/${encodedId}/video/${type}`
-  }, [directVideoApiBase, videoProxyBase])
-
   const getEventDurationSec = useCallback((videosJson: any, detailAlert: any, key: "pre_event" | "post_event") => {
     const metadataClips = detailAlert?.metadata?.videoClips || {}
     const fallbackDuration = key === "pre_event" ? metadataClips?.preDuration : metadataClips?.postDuration
@@ -1367,8 +1348,6 @@ function RoutingSection({ userRole, handleViewMap, setCurrentTripForNote, setNot
     const clipUrls = mediaPayload?.clipUrls || {}
     const preDuration = getEventDurationSec(videosJson, detailAlert, "pre_event")
     const postDuration = getEventDurationSec(videosJson, detailAlert, "post_event")
-    const hasPrePath = !!(videosPayload?.pre_event?.path || videosJson?.has_pre_event)
-    const hasPostPath = !!(videosPayload?.post_event?.path || videosJson?.has_post_event)
     const preClipUrl = toDisplayUrl(
       clipUrls?.pre ||
       clipUrls?.preRaw ||
@@ -1387,13 +1366,13 @@ function RoutingSection({ userRole, handleViewMap, setCurrentTripForNote, setNot
       detailAlert?.metadata?.videoClips?.cameraStorageUrl ||
       detailAlert?.metadata?.videoClips?.cameraUrl
     )
-    const hasPreEvent = !!preClipUrl || preDuration >= EVENT_VIDEO_READY_MIN_SECONDS || (hasPrePath && preDuration <= 0)
-    const hasPostEvent = !!postClipUrl || postDuration >= EVENT_VIDEO_READY_MIN_SECONDS || (hasPostPath && postDuration <= 0)
-    const hasCameraVideo = !!cameraClipUrl || !!(videosPayload?.camera_sd?.path || videosJson?.has_camera_video)
+    const hasPreEvent = !!preClipUrl
+    const hasPostEvent = !!postClipUrl
+    const hasCameraVideo = !!cameraClipUrl
 
-    const preEventUrl = hasPreEvent ? (preClipUrl || buildTripAlertVideoUrl(alertId, "pre")) : ""
-    const postEventUrl = hasPostEvent ? (postClipUrl || buildTripAlertVideoUrl(alertId, "post")) : ""
-    const cameraUrl = hasCameraVideo ? (cameraClipUrl || buildTripAlertVideoUrl(alertId, "camera")) : ""
+    const preEventUrl = preClipUrl
+    const postEventUrl = postClipUrl
+    const cameraUrl = cameraClipUrl
 
     const normalizedVideos = [
       { key: "pre_event", label: "Pre-Incident (30s before)", url: preEventUrl, duration: preDuration },
@@ -1447,7 +1426,7 @@ function RoutingSection({ userRole, handleViewMap, setCurrentTripForNote, setNot
       preDuration,
       postDuration,
     }
-  }, [EVENT_VIDEO_READY_MIN_SECONDS, buildTripAlertVideoUrl, getEventDurationSec, toDisplayUrl])
+  }, [getEventDurationSec, toDisplayUrl])
 
   const fetchAlertMediaById = useCallback(async (alertId: string) => {
     const detailRes = await fetch(`${videoProxyBase}/alerts/${alertId}`, {
@@ -1459,13 +1438,9 @@ function RoutingSection({ userRole, handleViewMap, setCurrentTripForNote, setNot
     const now = Date.now()
     const backoffUntil = alertHydrationMediaBackoffRef.current[alertId] || 0
     const allowHeavy = now >= backoffUntil && !alertDetailModalOpen
-    const [mediaRes, videosRes, screenshotsRes] = allowHeavy
+    const [mediaRes, screenshotsRes] = allowHeavy
       ? await Promise.all([
           fetch(`${videoProxyBase}/alerts/${alertId}/media?ensureMedia=true`, {
-            cache: "no-store",
-            signal: AbortSignal.timeout(7000),
-          }),
-          fetch(`${videoProxyBase}/alerts/${alertId}/videos`, {
             cache: "no-store",
             signal: AbortSignal.timeout(7000),
           }),
@@ -1474,15 +1449,15 @@ function RoutingSection({ userRole, handleViewMap, setCurrentTripForNote, setNot
             signal: AbortSignal.timeout(7000),
           }),
         ])
-      : [null, null, null]
+      : [null, null]
 
-    if (allowHeavy && ((mediaRes && mediaRes.status >= 500) || (videosRes && videosRes.status >= 500) || (screenshotsRes && screenshotsRes.status >= 500))) {
+    if (allowHeavy && ((mediaRes && mediaRes.status >= 500) || (screenshotsRes && screenshotsRes.status >= 500))) {
       // Back off failing media endpoints for 60s to prevent request floods.
       alertHydrationMediaBackoffRef.current[alertId] = Date.now() + 60_000
     }
 
     const mediaJson = mediaRes && mediaRes.ok ? await mediaRes.json() : null
-    const videosJson = videosRes && videosRes.ok ? await videosRes.json() : null
+    const videosJson = null
     const screenshotsJson = screenshotsRes && screenshotsRes.ok ? await screenshotsRes.json() : null
     const detailAlert = detailJson?.alert || mediaJson?.data?.alert || {}
 
@@ -1706,112 +1681,6 @@ function RoutingSection({ userRole, handleViewMap, setCurrentTripForNote, setNot
   }, [buildDashboardAlert, dedupeAndSortAlerts, fetchGroupedAlerts]);
 
   useVideoWebSocket(handleTripRoutingWsMessage);
-
-  useEffect(() => {
-    groupedAlertsRef.current = groupedAlerts;
-  }, [groupedAlerts]);
-
-  const mergeTripAlertVideoState = useCallback((alertId: string, videosJson: any) => {
-    const mapped = mapAlertVideoState(alertId, videosJson)
-    setGroupedAlerts((prev) =>
-      prev.map((alert) => {
-        if (normalizeId(alert?.id) !== alertId) return alert
-        return {
-          ...alert,
-          media: {
-            ...(alert?.media || {}),
-            screenshots: Array.isArray(alert?.media?.screenshots) ? alert.media.screenshots : [],
-            videos: mapped.mediaVideos,
-          },
-          videos: mapped.videos,
-          has_pre_event: mapped.hasPreEvent,
-          has_post_event: mapped.hasPostEvent,
-          has_camera_video: mapped.hasCameraVideo,
-          pre_event_duration_sec: mapped.preDuration,
-          post_event_duration_sec: mapped.postDuration,
-          preIncidentReady: !!mapped.hasPreEvent,
-          postIncidentReady: !!mapped.hasPostEvent,
-          cameraVideoReady: !!mapped.hasCameraVideo,
-        }
-      })
-    )
-  }, [mapAlertVideoState, normalizeId])
-
-  const ensureTripAlertVideoRequested = useCallback(async (alertId: string, hasPreEvent: boolean, hasPostEvent: boolean) => {
-    if (!alertId || (hasPreEvent && hasPostEvent)) return false;
-
-    const existing = autoVideoRequestStateRef.current[alertId] || {};
-    const now = Date.now();
-    const cooldownMs = 2 * 60 * 1000;
-    if (existing.autoRequesting) return false;
-    if (existing.autoRequested && !existing.error && existing.requestStartedAt && (now - existing.requestStartedAt) < cooldownMs) {
-      return false;
-    }
-    if (existing.autoRequested && existing.error && existing.requestStartedAt && (now - existing.requestStartedAt) < cooldownMs) {
-      return false;
-    }
-
-    autoVideoRequestStateRef.current[alertId] = {
-      ...existing,
-      autoRequested: true,
-      autoRequesting: false,
-      requestStartedAt: now,
-      error: "",
-    };
-    return false;
-  }, [videoProxyBase]);
-
-  useEffect(() => {
-    let stopped = false;
-    let timer: ReturnType<typeof setTimeout> | null = null;
-
-    const tick = async () => {
-      if (stopped) return;
-      let hasMissingVideos = false;
-      let requestsStarted = 0;
-
-      const alerts = groupedAlertsRef.current || [];
-      for (const alert of alerts) {
-        if (stopped) return;
-        if (requestsStarted >= 2) break;
-        if (autoVideoRequestsInFlightRef.current >= 2) break;
-
-        const alertId = normalizeId(alert?.id);
-        if (!alertId) continue;
-
-        try {
-          const videosRes = await fetch(`${videoProxyBase}/alerts/${encodeURIComponent(alertId)}/videos`, {
-            cache: "no-store",
-          });
-          const videosJson = videosRes.ok ? await videosRes.json() : null;
-          const mapped = mapAlertVideoState(alertId, videosJson);
-          mergeTripAlertVideoState(alertId, videosJson);
-          const hasPreEvent = !!mapped?.hasPreEvent;
-          const hasPostEvent = !!mapped?.hasPostEvent;
-          if (!hasPreEvent || !hasPostEvent) {
-            hasMissingVideos = true;
-            const requested = await ensureTripAlertVideoRequested(alertId, hasPreEvent, hasPostEvent);
-            if (requested) requestsStarted += 1;
-          }
-        } catch {
-          // keep loop resilient; next cycle retries
-        }
-      }
-
-      if (requestsStarted > 0) {
-        await fetchGroupedAlerts();
-      }
-
-      const nextDelay = hasMissingVideos ? 4000 : 15000;
-      timer = setTimeout(tick, nextDelay);
-    };
-
-    timer = setTimeout(tick, 1200);
-    return () => {
-      stopped = true;
-      if (timer) clearTimeout(timer);
-    };
-  }, [ensureTripAlertVideoRequested, fetchGroupedAlerts, mapAlertVideoState, mergeTripAlertVideoState, normalizeId, videoProxyBase]);
 
   useEffect(() => {
     async function fetchTrips() {
@@ -2923,20 +2792,14 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
   >({});
   const alertMediaFetchBackoffRef = useRef<Record<string, number>>({});
   const [alertReason, setAlertReason] = useState("");
-  const videoBaseUrl = (
-    process.env.NEXT_PUBLIC_VIDEO_HUB_BASE_URL ||
-    process.env.NEXT_PUBLIC_VIDEO_BASE_URL ||
-    ""
-  ).replace(/\/$/, "");
   const videoProxyBase = "/api/video-server";
-  const EVENT_VIDEO_READY_MIN_SECONDS = 25;
   const [showNCRModal, setShowNCRModal] = useState(false);
   const [selectedNcrForm, setSelectedNcrForm] = useState<'' | 'nrc-camera-covered'>('');
   const [showReportModal, setShowReportModal] = useState(false);
   const [selectedReportForm, setSelectedReportForm] = useState<'' | 'incident-report' | 'accident-report' | 'criminal-report' | 'dispatch-report'>('');
   const [incidentReportModalOpen, setIncidentReportModalOpen] = useState(false);
   const [selectedTripForIncident, setSelectedTripForIncident] = useState<any>(null);
-  const [timelinePlaybackByAlert, setTimelinePlaybackByAlert] = useState<Record<string, Array<{ key: string; label: string; url: string; fallbackUrls?: string[] }>>>({});
+  const [timelinePlaybackByAlert, setTimelinePlaybackByAlert] = useState<Record<string, Array<{ key: string; label: string; url: string }>>>({});
   const [timelinePlaybackLoading, setTimelinePlaybackLoading] = useState<Record<string, boolean>>({});
   const alertReasonOptions = [
     "Accident",
@@ -3259,6 +3122,19 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
           decodeURIComponent(getCookieValue("email") || "") ||
           decodeURIComponent(getCookieValue("name") || "") ||
           "dashboard_user";
+        let resolvedWindowVideos: Array<{ key: string; label: string; url: string }> = [];
+        if (closureType === "resolved") {
+          try {
+            resolvedWindowVideos = await resolveAlertPlaybackVideos(
+              selectedAlert,
+              videoProxyBase,
+              { beforeMs: 60 * 1000, afterMs: 0 }
+            );
+          } catch (videoError) {
+            console.warn("Failed to pull resolved-alert playback window:", videoError);
+          }
+        }
+
         const closePayload = {
           closureType,
           notes,
@@ -3269,7 +3145,7 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
           documentName: artifact?.documentName || undefined,
           documentType: artifact?.documentType || undefined,
           payload: {
-            ...buildSelectedAlertClosurePayload(artifact),
+            ...buildSelectedAlertClosurePayload(artifact, resolvedWindowVideos),
             ncrForm: closureType === "ncr" ? selectedNcrForm : undefined,
             reportForm: closureType === "report" ? selectedReportForm : undefined,
           },
@@ -3365,19 +3241,14 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
         setAlertActionLoading(false);
       }
     };
-  const toAbsoluteVideoUrl = (raw?: string) => {
-    if (!raw) return "";
-    if (/^https?:\/\//i.test(raw)) return raw;
-    if (raw.startsWith("/")) return videoBaseUrl ? `${videoBaseUrl}${raw}` : raw;
-    return videoBaseUrl ? `${videoBaseUrl}/${raw}` : raw;
-  };
+  const toAbsoluteVideoUrl = useCallback((raw?: string) => {
+    const value = String(raw || "").trim();
+    if (!value || value === "upload-failed" || value === "local-only") return "";
+    return resolveMediaUrlForCurrentOrigin(value, videoProxyBase);
+  }, [videoProxyBase]);
   const toAbsoluteImageUrl = useCallback((raw?: string) => {
-    if (!raw) return "";
-    if (raw === "upload-failed" || raw === "local-only") return "";
-    if (/^https?:\/\//i.test(raw)) return raw;
-    if (raw.startsWith("/")) return videoBaseUrl ? `${videoBaseUrl}${raw}` : raw;
-    return videoBaseUrl ? `${videoBaseUrl}/${raw}` : raw;
-  }, [videoBaseUrl]);
+    return toAbsoluteVideoUrl(raw);
+  }, [toAbsoluteVideoUrl]);
   const normalizeModalScreenshotRecord = useCallback((shot: any, fallbackTimestamp?: string) => {
     const url = toAbsoluteImageUrl(
       shot?.url ||
@@ -3426,304 +3297,60 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
       : [];
     return [...directScreenshots, ...byChannelScreenshots];
   }, []);
-  const buildAlertVideoUrl = useCallback((alertId: string, type: "pre" | "post" | "camera") => {
-    const encodedId = encodeURIComponent(String(alertId || "").trim());
-    if (videoBaseUrl) return `${videoBaseUrl}/api/alerts/${encodedId}/video/${type}`;
-    return `${videoProxyBase}/alerts/${encodedId}/video/${type}`;
-  }, [videoBaseUrl, videoProxyBase]);
-  const buildAlertVideoUrlCandidates = useCallback((alertId: string, type: "pre" | "post" | "camera") => {
-    const encodedId = encodeURIComponent(String(alertId || "").trim());
-    const bases = videoBaseUrl
-      ? [
-          `${videoBaseUrl}/api/alerts/${encodedId}/video/${type}`,
-          `${videoBaseUrl}/api/alerts/${encodedId}/video?type=${type}`,
-        ]
-      : [
-          `${videoProxyBase}/alerts/${encodedId}/video/${type}`,
-          `${videoProxyBase}/alerts/${encodedId}/video?type=${type}`,
-        ];
-    return [...new Set(bases)];
-  }, [videoBaseUrl, videoProxyBase]);
-  const buildPlaybackJobFileUrl = useCallback((jobId: string) => {
-    const encodedId = encodeURIComponent(String(jobId || "").trim());
-    if (videoBaseUrl) return `${videoBaseUrl}/api/videos/jobs/${encodedId}/file`;
-    return `${videoProxyBase}/videos/jobs/${encodedId}/file`;
-  }, [videoBaseUrl, videoProxyBase]);
-  const requestAlertWindowCapture = useCallback(async (alertRow: any) => {
-    const alertId = String(alertRow?.id || "").trim();
-    const vehicleId = String(
-      alertRow?.vehicleId ||
-      alertRow?.vehicle_id ||
-      alertRow?.device_id ||
-      alertRow?.deviceId ||
-      ""
-    ).trim();
-    const channel = Number(alertRow?.channel || 1) || 1;
-    const alertTimestamp = new Date(
-      getSharedAlertDisplayTimestamp(alertRow) ||
-      alertRow?.timestamp ||
-      alertRow?.created_at ||
-      alertRow?.alert_timestamp ||
-      Date.now()
-    );
-
-    if (!alertId || !vehicleId || Number.isNaN(alertTimestamp.getTime())) return null;
-
-    const existing = alertVideoRequestStateRef.current[alertId] || {};
-    const now = Date.now();
-    const cooldownMs = 2 * 60 * 1000;
-    if (existing.autoRequesting) return existing;
-    if (existing.requestStartedAt && (now - existing.requestStartedAt) < cooldownMs) return existing;
-
-    alertVideoRequestStateRef.current[alertId] = {
-      ...existing,
-      autoRequested: true,
-      autoRequesting: true,
-      requestStartedAt: now,
-      error: "",
-    };
-    setSelectedAlert((prev: any) => (
-      prev && String(prev?.id || "").trim() === alertId
-        ? {
-            ...prev,
-            videoAutoRequest: {
-              ...(prev?.videoAutoRequest || {}),
-              autoRequested: true,
-              autoRequesting: true,
-              requestStartedAt: now,
-              error: "",
-            },
-          }
-        : prev
-    ));
-
-    try {
-      const localRes = await fetch(`${videoProxyBase}/alerts/${encodeURIComponent(alertId)}/request-report-video`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          lookbackSeconds: 30,
-          forwardSeconds: 30,
-        }),
-      });
-      const body = await localRes.json().catch(() => ({}));
-      if (!localRes.ok || !body?.success) {
-        throw new Error(body?.message || `HTTP ${localRes.status}`);
-      }
-      const jobId = String(body?.data?.playbackJobId || "").trim();
-      const next = {
-        ...existing,
-        autoRequested: true,
-        autoRequesting: false,
-        requestStartedAt: Date.now(),
-        requestSent: true,
-        jobId: jobId || null,
-        jobStatus: jobId ? "queued" : "requested",
-        source: "stored_local_window",
-        error: "",
-      };
-      alertVideoRequestStateRef.current[alertId] = next;
-      setSelectedAlert((prev: any) => (
-        prev && String(prev?.id || "").trim() === alertId
-          ? {
-              ...prev,
-              videoAutoRequest: next,
-            }
-          : prev
-      ));
-      if (jobId) {
-        const poll = async () => {
-          for (let attempt = 0; attempt < 60; attempt += 1) {
-            await new Promise((resolve) => setTimeout(resolve, attempt === 0 ? 1000 : 2000));
-            try {
-              const statusRes = await fetch(`${videoProxyBase}/videos/jobs/${encodeURIComponent(jobId)}`, {
-                cache: "no-store",
-                signal: AbortSignal.timeout(5000),
-              });
-              const statusBody = await statusRes.json().catch(() => ({}));
-              const job = statusBody?.data || {};
-              const preferredOutputUrl =
-                toAbsoluteVideoUrl(job?.outputUrl) ||
-                buildPlaybackJobFileUrl(jobId);
-              alertVideoRequestStateRef.current[alertId] = {
-                ...alertVideoRequestStateRef.current[alertId],
-                autoRequested: true,
-                autoRequesting: false,
-                requestStartedAt: alertVideoRequestStateRef.current[alertId]?.requestStartedAt || Date.now(),
-                jobId,
-                jobStatus: job?.status || "unknown",
-                outputUrl: preferredOutputUrl,
-                error: job?.error || "",
-                source: "stored_local_window",
-              };
-              setSelectedAlert((prev: any) => (
-                prev && String(prev?.id || "").trim() === alertId
-                  ? {
-                      ...prev,
-                      videoAutoRequest: {
-                        ...(prev?.videoAutoRequest || {}),
-                        ...alertVideoRequestStateRef.current[alertId],
-                      },
-                    }
-                  : prev
-              ));
-              if (job?.status === "completed") {
-                const outputUrl = preferredOutputUrl;
-                setSelectedAlert((prev: any) => {
-                  if (!prev || String(prev?.id || "").trim() !== alertId) return prev;
-                  return {
-                    ...prev,
-                    media: {
-                      ...(prev?.media || {}),
-                      videos: [
-                        {
-                          key: "alert_window",
-                          label: "Alert Window (30s before + 30s after)",
-                          url: outputUrl,
-                        },
-                      ],
-                    },
-                  };
-                });
-                break;
-              }
-              if (job?.status === "failed") break;
-            } catch {
-              // continue polling
-            }
-          }
-        };
-        void poll();
-      }
-
-      return next;
-    } catch (err: any) {
-      const failed = {
-        ...existing,
-        autoRequested: true,
-        autoRequesting: false,
-        requestStartedAt: Date.now(),
-        error: err?.message || String(err),
-      };
-      alertVideoRequestStateRef.current[alertId] = failed;
-      setSelectedAlert((prev: any) => (
-        prev && String(prev?.id || "").trim() === alertId
-          ? { ...prev, videoAutoRequest: failed }
-          : prev
-      ));
-      return failed;
-    }
-  }, [buildPlaybackJobFileUrl, extractChannelAwareScreenshots, normalizeModalScreenshotRecord, toAbsoluteVideoUrl, videoProxyBase]);
   const loadTimelineAlertPlayback = useCallback(async (timelineEntry: any) => {
     const alertId = String(timelineEntry?.id || "").trim();
     if (!alertId) return;
 
     setTimelinePlaybackLoading((prev) => ({ ...prev, [alertId]: true }));
     try {
-      const [detailRes] = await Promise.all([
-        fetch(`${videoProxyBase}/alerts/${encodeURIComponent(alertId)}`, {
-          cache: "no-store",
-          signal: AbortSignal.timeout(5000),
-        }),
-      ]);
-
-      const detailJson = detailRes.ok ? await detailRes.json() : null;
-      const detailAlert = detailJson?.alert || {};
-      const clipUrls = {};
-      const videosPayload = {};
-      const metadataClips = detailAlert?.metadata?.videoClips || {};
-
-      const preDuration = Number(videosPayload?.pre_event?.duration ?? metadataClips?.preDuration ?? 0);
-      const postDuration = Number(videosPayload?.post_event?.duration ?? metadataClips?.postDuration ?? 0);
-      const preCandidate = toAbsoluteVideoUrl(
-        clipUrls?.pre ||
-        clipUrls?.preRaw ||
-        metadataClips?.preStorageUrl ||
-        metadataClips?.preUrl
+      const detailRes = await fetch(`${videoProxyBase}/alerts/${encodeURIComponent(alertId)}`, {
+        cache: "no-store",
+        signal: AbortSignal.timeout(5000),
+      });
+      const detailJson = detailRes.ok ? await detailRes.json().catch(() => null) : null;
+      const alertForPlayback =
+        detailJson?.alert ||
+        detailJson?.data?.alert ||
+        detailJson?.data ||
+        timelineEntry;
+      const playbackVideos = await resolveAlertPlaybackVideos(
+        alertForPlayback,
+        videoProxyBase,
+        { beforeMs: 30 * 1000, afterMs: 30 * 1000 }
       );
-      const postCandidate = toAbsoluteVideoUrl(
-        clipUrls?.post ||
-        clipUrls?.postRaw ||
-        metadataClips?.postStorageUrl ||
-        metadataClips?.postUrl
-      );
-      const cameraCandidate = toAbsoluteVideoUrl(
-        clipUrls?.camera ||
-        clipUrls?.cameraRaw ||
-        metadataClips?.cameraStorageUrl ||
-        metadataClips?.cameraUrl
-      );
-
-      const entries: Array<{ key: string; label: string; url: string; fallbackUrls?: string[] }> = [];
       const seen = new Set<string>();
-      const pushIf = (key: string, label: string, url?: string, fallbackUrls?: string[]) => {
-        const normalized = toAbsoluteVideoUrl(url);
-        if (!normalized || seen.has(normalized)) return;
-        seen.add(normalized);
-        entries.push({ key, label, url: normalized, fallbackUrls: Array.isArray(fallbackUrls) ? fallbackUrls : [] });
-      };
-
-      if (preCandidate || videosPayload?.pre_event?.path || videosJson?.has_pre_event) {
-        pushIf(
-          "pre_event",
-          `Pre-Incident (30s before)${preDuration > 0 ? ` | ${preDuration.toFixed(1)}s` : ""}`,
-          preCandidate || buildAlertVideoUrl(alertId, "pre"),
-          buildAlertVideoUrlCandidates(alertId, "pre")
-        );
-      }
-      if (postCandidate || videosPayload?.post_event?.path || videosJson?.has_post_event) {
-        pushIf(
-          "post_event",
-          `Post-Incident (30s after)${postDuration > 0 ? ` | ${postDuration.toFixed(1)}s` : ""}`,
-          postCandidate || buildAlertVideoUrl(alertId, "post"),
-          buildAlertVideoUrlCandidates(alertId, "post")
-        );
-      }
-      if (cameraCandidate || videosPayload?.camera_sd?.path || videosJson?.has_camera_video) {
-        pushIf(
-          "camera_sd",
-          "Camera SD Clip",
-          cameraCandidate || buildAlertVideoUrl(alertId, "camera"),
-          buildAlertVideoUrlCandidates(alertId, "camera")
-        );
-      }
-
-      const mediaVideos = Array.isArray(mediaPayload?.videos) ? mediaPayload.videos : [];
-      for (const video of mediaVideos) {
-        pushIf(
-          video?.video_type || video?.type || `timeline_${entries.length + 1}`,
-          video?.label || video?.title || video?.video_type || video?.type || `Stored clip ${entries.length + 1}`,
-          video?.url ||
-            video?.storage_url ||
-            video?.signed_url ||
-            video?.signedUrl ||
-            video?.playback_url ||
-            video?.download_url ||
-            video?.video_url ||
-            video?.path
-        );
-      }
-
+      const entries = playbackVideos
+        .map((video) => ({
+          key: String(video?.key || `timeline_${alertId}`).trim(),
+          label: String(video?.label || "Alert-time Playback").trim(),
+          url: toAbsoluteVideoUrl(video?.url),
+        }))
+        .filter((video) => {
+          const url = String(video?.url || "").trim();
+          if (!url || seen.has(url)) return false;
+          seen.add(url);
+          return true;
+        });
       setTimelinePlaybackByAlert((prev) => ({ ...prev, [alertId]: entries }));
     } catch {
       setTimelinePlaybackByAlert((prev) => ({ ...prev, [alertId]: [] }));
     } finally {
       setTimelinePlaybackLoading((prev) => ({ ...prev, [alertId]: false }));
     }
-  }, [buildAlertVideoUrl, buildAlertVideoUrlCandidates, toAbsoluteVideoUrl, videoProxyBase]);
+  }, [toAbsoluteVideoUrl, videoProxyBase]);
   const selectedAlertVideoRequestState = selectedAlert?.videoAutoRequest || null;
   const selectedAlertPlaybackSignature = React.useMemo(
     () => getAlertPlaybackSignature(selectedAlert),
     [selectedAlert]
   );
   const selectedAlertVideoList = (() => {
-    const entries: Array<{ key: string; label: string; url: string; fallbackUrls?: string[] }> = [];
-    const pushIf = (key: string, label: string, url?: string, fallbackUrls?: string[]) => {
+    const entries: Array<{ key: string; label: string; url: string }> = [];
+    const pushIf = (key: string, label: string, url?: string) => {
       const normalized = toAbsoluteVideoUrl(url);
       if (!normalized) return;
       if (normalized === "upload-failed" || normalized === "local-only") return;
       if (!entries.some((entry) => entry.url === normalized)) {
-        entries.push({ key, label, url: normalized, fallbackUrls: Array.isArray(fallbackUrls) ? fallbackUrls : [] });
+        entries.push({ key, label, url: normalized });
       }
     };
     selectedAlertPlaybackVideos.forEach((video) => {
@@ -3935,7 +3562,10 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
     screenshots: selectedAlertScreenshots || [],
     videos: selectedAlertVideoList || [],
   }), [selectedAlert, selectedAlertCoordinates, selectedAlertDisplayTs, selectedAlertResolvedLocationName, selectedAlertScreenshots, selectedAlertVideoList]);
-  const buildSelectedAlertClosurePayload = useCallback((artifact?: SavedAlertArtifact | null) => ({
+  const buildSelectedAlertClosurePayload = useCallback((
+    artifact?: SavedAlertArtifact | null,
+    resolvedWindowVideos: Array<{ key: string; label: string; url: string }> = []
+  ) => ({
     source: "dashboard_trip_routing",
     alertId: selectedAlert?.id || null,
     deviceId:
@@ -3952,6 +3582,7 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
     coordinates: selectedAlertCoordinates || null,
     screenshots: selectedAlertScreenshots || [],
     videos: selectedAlertVideoList || [],
+    resolvedWindowVideos,
     videoRequestState: selectedAlertVideoRequestState || null,
     timeline: selectedAlertTimeline || [],
     savedArtifact: artifact
@@ -4063,7 +3694,11 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
       setSelectedAlertPlaybackLoading(true);
       setSelectedAlertPlaybackError("");
       try {
-        const videos = await resolveAlertPlaybackVideos(selectedAlert, videoProxyBase);
+        const videos = await resolveAlertPlaybackVideos(
+          selectedAlert,
+          videoProxyBase,
+          { beforeMs: 30 * 1000, afterMs: 30 * 1000 }
+        );
         if (!cancelled) {
           setSelectedAlertPlaybackVideos(videos);
         }
@@ -4096,31 +3731,6 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
     setAlertActionError("");
     setAlertActionSuccess("");
   }, [alertDetailModalOpen, selectedAlert?.id]);
-
-  const ensureAlertVideoRequested = useCallback(async (alertId: string, hasPreEvent: boolean, hasPostEvent: boolean) => {
-    if (!alertId || (hasPreEvent && hasPostEvent)) return null;
-
-    const now = Date.now();
-    const existing = alertVideoRequestStateRef.current[alertId] || {};
-    const cooldownMs = 2 * 60 * 1000;
-
-    if (existing.autoRequesting) return existing;
-    if (existing.autoRequested && !existing.error && existing.requestStartedAt && (now - existing.requestStartedAt) < cooldownMs) {
-      return existing;
-    }
-    if (existing.autoRequested && existing.error && existing.requestStartedAt && (now - existing.requestStartedAt) < cooldownMs) {
-      return existing;
-    }
-
-    alertVideoRequestStateRef.current[alertId] = {
-      ...existing,
-      autoRequested: true,
-      autoRequesting: false,
-      requestStartedAt: now,
-      error: "",
-    };
-    return alertVideoRequestStateRef.current[alertId];
-  }, [videoProxyBase]);
 
   const openAlertDetailRealtime = useCallback(async (
     alertSeed: any,
@@ -4250,8 +3860,6 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
       const metadataClips = detailAlert?.metadata?.videoClips || {};
       const preDuration = Number(videosPayload?.pre_event?.duration ?? metadataClips?.preDuration ?? 0);
       const postDuration = Number(videosPayload?.post_event?.duration ?? metadataClips?.postDuration ?? 0);
-      const hasPrePath = !!(videosPayload?.pre_event?.path || videosJson?.has_pre_event);
-      const hasPostPath = !!(videosPayload?.post_event?.path || videosJson?.has_post_event);
       const metadataPreUrl =
         metadataClips?.preUrl ||
         metadataClips?.pre_event_url ||
@@ -4272,29 +3880,22 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
       const mediaCameraUrl = toAbsoluteVideoUrl(clipUrls?.camera || clipUrls?.cameraRaw);
       const hasPreEvent =
         !!mediaPreUrl ||
-        (Number.isFinite(preDuration) && preDuration >= EVENT_VIDEO_READY_MIN_SECONDS) ||
-        (hasPrePath && (!Number.isFinite(preDuration) || preDuration <= 0)) ||
         !!toAbsoluteVideoUrl(metadataPreUrl);
       const hasPostEvent =
         !!mediaPostUrl ||
-        (Number.isFinite(postDuration) && postDuration >= EVENT_VIDEO_READY_MIN_SECONDS) ||
-        (hasPostPath && (!Number.isFinite(postDuration) || postDuration <= 0)) ||
         !!toAbsoluteVideoUrl(metadataPostUrl);
       const hasCameraVideo =
         !!mediaCameraUrl ||
-        !!(videosPayload?.camera_sd?.path || videosJson?.has_camera_video) ||
         !!toAbsoluteVideoUrl(metadataCameraUrl);
 
       const preEventUrl = hasPreEvent
-        ? (mediaPreUrl || (hasPrePath ? buildAlertVideoUrl(alertId, "pre") : toAbsoluteVideoUrl(metadataPreUrl)))
+        ? (mediaPreUrl || toAbsoluteVideoUrl(metadataPreUrl))
         : "";
       const postEventUrl = hasPostEvent
-        ? (mediaPostUrl || (hasPostPath ? buildAlertVideoUrl(alertId, "post") : toAbsoluteVideoUrl(metadataPostUrl)))
+        ? (mediaPostUrl || toAbsoluteVideoUrl(metadataPostUrl))
         : "";
       const cameraUrl = hasCameraVideo
-        ? (mediaCameraUrl || ((videosPayload?.camera_sd?.path || videosJson?.has_camera_video)
-          ? buildAlertVideoUrl(alertId, "camera")
-          : toAbsoluteVideoUrl(metadataCameraUrl)))
+        ? (mediaCameraUrl || toAbsoluteVideoUrl(metadataCameraUrl))
         : "";
       const normalizedVideos = [
         { key: "pre_event", label: "Pre-Incident (30s before)", url: preEventUrl, duration: preDuration },
@@ -4493,7 +4094,7 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
         setAlertRealtimeLoading(false);
       }
     }
-  }, [EVENT_VIDEO_READY_MIN_SECONDS, buildAlertVideoUrl, getAlertCoordinates, toAbsoluteVideoUrl]);
+  }, [getAlertCoordinates, toAbsoluteVideoUrl]);
 
   useEffect(() => {
     const getCookie = (name: string) => {
@@ -6646,7 +6247,6 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
                                   <Card key={video.url} className="p-4 border-slate-200 shadow-sm bg-slate-950 text-slate-100">
                                     <UniversalVideoPlayer
                                       url={video.url}
-                                      fallbackUrls={video.fallbackUrls || []}
                                       autoPlay={true}
                                       onScreenshotCapture={(blob) => handleDerivedAlertScreenshotCapture(channel, blob)}
                                       className="w-full rounded mb-3 border border-slate-700"
@@ -6765,7 +6365,6 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
                                         <Card key={`${entry.id}-${video.url}-${idx}`} className="p-3 border-slate-200 shadow-sm bg-slate-950 text-slate-100">
                                           <UniversalVideoPlayer
                                             url={video.url}
-                                            fallbackUrls={video.fallbackUrls || []}
                                             autoPlay={idx === 0}
                                             className="w-full rounded mb-3 border border-slate-700"
                                           />

@@ -3,13 +3,16 @@ import { resolveVideoServerProxyBase } from '@/lib/backend-hubs'
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
 
-function normalizeProxiedMediaUrls(value: any, baseUrl: string): any {
+function normalizeProxiedMediaUrls(value: unknown, baseUrl: string): unknown {
   if (Array.isArray(value)) {
     return value.map((entry) => normalizeProxiedMediaUrls(entry, baseUrl));
   }
   if (!value || typeof value !== 'object') {
     if (typeof value === 'string') {
       const raw = value.trim();
+      if (raw.startsWith('/media/')) {
+        return `/api/video-server${raw}`;
+      }
       if (raw.startsWith('/api/')) {
         return `/api/video-server${raw.slice(4)}`;
       }
@@ -20,6 +23,9 @@ function normalizeProxiedMediaUrls(value: any, baseUrl: string): any {
         try {
           const parsed = new URL(raw);
           const targetBase = new URL(baseUrl);
+          if (parsed.origin === targetBase.origin && parsed.pathname.startsWith('/media/')) {
+            return `/api/video-server${parsed.pathname}${parsed.search || ''}`;
+          }
           if (parsed.origin === targetBase.origin && parsed.pathname.startsWith('/api/')) {
             return `/api/video-server${parsed.pathname.slice(4)}${parsed.search || ''}`;
           }
@@ -31,7 +37,7 @@ function normalizeProxiedMediaUrls(value: any, baseUrl: string): any {
     return value;
   }
 
-  const output: Record<string, any> = {};
+  const output: Record<string, unknown> = {};
   for (const [key, entry] of Object.entries(value)) {
     output[key] = normalizeProxiedMediaUrls(entry, baseUrl);
   }
@@ -46,7 +52,9 @@ export async function GET(
   const path = pathArray.join('/')
   const searchParams = request.nextUrl.searchParams.toString()
   const target = resolveVideoServerProxyBase(pathArray)
-  const url = `${target.baseUrl}/api/${path}${searchParams ? `?${searchParams}` : ''}`
+  const firstSegment = String(pathArray[0] || '').toLowerCase()
+  const upstreamPath = firstSegment === 'media' ? `/${path}` : `/api/${path}`
+  const url = `${target.baseUrl}${upstreamPath}${searchParams ? `?${searchParams}` : ''}`
   const lowerPath = `/${path}`.toLowerCase()
   const isDirectMediaRequest =
     /\/file(?:$|\?)/i.test(lowerPath) ||

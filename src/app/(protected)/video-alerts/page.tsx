@@ -24,7 +24,7 @@ import {
   ExternalLink
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { formatRawAlertTimestamp, getAlertDisplayTimestamp, resolveAlertPlaybackVideos } from '@/lib/video-alert-playback'
+import { formatRawAlertTimestamp, getAlertDisplayTimestamp, normalizeBackendMediaUrl, resolveAlertPlaybackVideos } from '@/lib/video-alert-playback'
 
 export default function VideoAlertsPage() {
   const router = useRouter()
@@ -52,14 +52,6 @@ export default function VideoAlertsPage() {
     return Number.isNaN(d.getTime()) ? null : d.toISOString()
   }
 
-  const normalizeVideoUrl = (url) => {
-    const clean = String(url || '').trim()
-    if (!clean) return ''
-    if (/^https?:\/\//i.test(clean)) return clean
-    if (clean.startsWith('/')) return clean
-    return `/${clean.replace(/^\/+/, '')}`
-  }
-
   const findAlertVehicleId = (alert) =>
     String(
       alert?.vehicleId ||
@@ -84,7 +76,11 @@ export default function VideoAlertsPage() {
   }
 
   const resolvePlaybackWindowVideo = async (alert) => {
-    const videos = await resolveAlertPlaybackVideos(alert)
+    const videos = await resolveAlertPlaybackVideos(
+      alert,
+      '/api/video-server',
+      { beforeMs: 30 * 1000, afterMs: 30 * 1000 }
+    )
     return videos[0] || null
   }
 
@@ -120,11 +116,13 @@ export default function VideoAlertsPage() {
     const add = (label, url, key) => {
       const clean = String(url || '').trim()
       if (!clean) return
-      if (out.some((x) => x.url === clean)) return
+      const normalized = String(normalizeBackendMediaUrl(clean, '/api/video-server') || '').trim()
+      if (!normalized.startsWith('/api/video-server/')) return
+      if (out.some((x) => x.url === normalized)) return
       out.push({
         key: key || `video-${out.length + 1}`,
         label,
-        url: clean
+        url: normalized
       })
     }
 
@@ -134,9 +132,6 @@ export default function VideoAlertsPage() {
     add('Post-Incident Video', clips.postStorageUrl || clips.post, 'post')
     add('Camera Pre Video', clips.cameraPreVideo, 'camera_pre')
     add('Camera Post Video', clips.cameraPostVideo, 'camera_post')
-    add('Pre-Incident Video', alert?.preIncidentVideoUrl || mediaPayload?.preIncidentVideoUrl || mediaPayload?.clipUrls?.pre, 'pre_fallback')
-    add('Post-Incident Video', alert?.postIncidentVideoUrl || mediaPayload?.postIncidentVideoUrl || mediaPayload?.clipUrls?.post, 'post_fallback')
-    add('Camera Video', alert?.cameraVideoUrl || mediaPayload?.cameraVideoUrl || mediaPayload?.clipUrls?.camera, 'camera_fallback')
     add('Raw Pre Video', alert?.preIncidentRawUrl || mediaPayload?.clipUrls?.preRaw, 'pre_raw')
     add('Raw Post Video', alert?.postIncidentRawUrl || mediaPayload?.clipUrls?.postRaw, 'post_raw')
 
@@ -226,7 +221,11 @@ export default function VideoAlertsPage() {
       const normalized = normalizeAlert(alertPayload, screenshotPayload)
       if ((normalized.videos?.length || 0) === 0) {
         try {
-          const playbackVideos = await resolveAlertPlaybackVideos(normalized)
+          const playbackVideos = await resolveAlertPlaybackVideos(
+            normalized,
+            '/api/video-server',
+            { beforeMs: 30 * 1000, afterMs: 30 * 1000 }
+          )
           if (playbackVideos.length > 0) {
             normalized.videos = playbackVideos
           } else {
@@ -362,10 +361,37 @@ export default function VideoAlertsPage() {
           setLoading(false)
           return
         }
+        const alertPool = [
+          selectedAlert,
+          ...alerts.critical,
+          ...alerts.high,
+          ...alerts.medium,
+          ...alerts.low,
+        ].filter(Boolean)
+        const alertToResolve = alertPool.find((entry: any) => String(entry?.id || '') === String(alertId))
+        let resolvedWindowVideos: Array<{ key: string; label: string; url: string }> = []
+        if (alertToResolve) {
+          try {
+            resolvedWindowVideos = await resolveAlertPlaybackVideos(
+              alertToResolve,
+              '/api/video-server',
+              { beforeMs: 60 * 1000, afterMs: 0 }
+            )
+          } catch (playbackErr) {
+            console.warn('Failed to pull resolved-alert playback window:', playbackErr)
+          }
+        }
         await fetch(`/api/video-server/alerts/${alertId}/close`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ closureType: 'resolved', notes, actor: currentUser.id })
+          body: JSON.stringify({
+            closureType: 'resolved',
+            notes,
+            actor: currentUser.id,
+            payload: {
+              resolvedWindowVideos,
+            },
+          })
         })
         setSelectedAlert(null)
         setNotes('')
