@@ -13,6 +13,8 @@ interface HLSPlayerProps {
 }
 
 const resolvedVehicleIdCache = new Map<string, string>();
+const PLAYLIST_PROBE_TIMEOUT_MS = 5000;
+const START_LIVE_TIMEOUT_MS = 5000;
 
 export default function HLSPlayer({ vehicleId, channel, vehicleName, onStop, fallbackVehicleIds = [] }: HLSPlayerProps) {
   const targetLiveDelaySeconds = 3;
@@ -186,7 +188,7 @@ export default function HLSPlayer({ vehicleId, channel, vehicleName, onStop, fal
           const response = await fetch(probeUrl, {
             method: 'GET',
             cache: 'no-store',
-            signal: AbortSignal.timeout(1500),
+            signal: AbortSignal.timeout(PLAYLIST_PROBE_TIMEOUT_MS),
           });
 
           if (response.ok) {
@@ -213,6 +215,7 @@ export default function HLSPlayer({ vehicleId, channel, vehicleName, onStop, fal
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ channel }),
+            signal: AbortSignal.timeout(START_LIVE_TIMEOUT_MS),
           });
 
           if (response.ok) {
@@ -253,6 +256,16 @@ export default function HLSPlayer({ vehicleId, channel, vehicleName, onStop, fal
 
       setStatus('Requesting live stream...');
       const started = await requestStartLive();
+      if (!mounted) return;
+
+      const playlistAfterStartUrl = await probeExistingPlaylist();
+      if (!mounted) return;
+
+      if (playlistAfterStartUrl) {
+        setStatus('Loading live stream...');
+        attachHls(video, playlistAfterStartUrl);
+        return;
+      }
 
       if (!started && candidateVehicleIds.length === 0) {
         setStatus('Failed to start');
