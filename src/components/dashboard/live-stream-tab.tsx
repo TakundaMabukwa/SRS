@@ -48,7 +48,7 @@ type VehicleCatalogRow = {
 };
 
 type RuntimeRecord = Record<string, unknown>;
-type LivePreviewStreamRow = {
+type LiveVideoStreamRow = {
   vehicleId?: string;
   channel?: number;
   updatedAtMs?: number;
@@ -106,7 +106,7 @@ function readRuntimeRecord(value: unknown): RuntimeRecord {
     : {};
 }
 
-function parseLivePreviewRows(payload: unknown): LivePreviewStreamRow[] {
+function parseLiveVideoRows(payload: unknown): LiveVideoStreamRow[] {
   const root = readRuntimeRecord(payload);
   const rows = Array.isArray(root.rows)
     ? root.rows
@@ -128,13 +128,13 @@ function parseLivePreviewRows(payload: unknown): LivePreviewStreamRow[] {
         vehicleId,
         channel,
         updatedAtMs: Number.isFinite(updatedAtMs) ? updatedAtMs : undefined,
-      } satisfies LivePreviewStreamRow;
+      } satisfies LiveVideoStreamRow;
     })
-    .filter((row): row is LivePreviewStreamRow => !!row);
+    .filter((row): row is LiveVideoStreamRow => !!row);
 }
 
 function parseRuntimeVehicles(payload: unknown): ConnectedVehicle[] {
-  const rows = parseLivePreviewRows(payload);
+  const rows = parseLiveVideoRows(payload);
   const byVehicle = new Map<string, Set<number>>();
 
   for (const row of rows) {
@@ -308,7 +308,7 @@ export default function LiveStreamTab() {
   }, [supabase]);
 
   const fetchRuntimeVehicles = useCallback(async () => {
-    const runtimeEndpoints = [`/api/live-preview/streams?maxAgeMs=${LIVE_WARM_MAX_AGE_MS}`];
+    const runtimeEndpoints = [`/api/live-video/streams?maxAgeMs=${LIVE_WARM_MAX_AGE_MS}`];
 
     for (const endpoint of runtimeEndpoints) {
       try {
@@ -500,8 +500,8 @@ export default function LiveStreamTab() {
           <div className="flex items-center gap-2 text-xs text-slate-600">
             <Activity className="h-3.5 w-3.5" />
             {online
-              ? `${getActiveStreamCount(vehicle)} warm channel(s) ready`
-              : "No active live preview session"}
+              ? `${getActiveStreamCount(vehicle)} live channel(s) ready`
+              : "No active live video session"}
           </div>
           <Button
             size="sm"
@@ -568,7 +568,7 @@ export default function LiveStreamTab() {
                     <td className="px-4 py-3 font-mono text-xs text-slate-600">{vehicle.phone || vehicle.id}</td>
                     <td className="px-4 py-3 text-slate-600">
                       {online
-                        ? `${getActiveStreamCount(vehicle)} warm`
+                        ? `${getActiveStreamCount(vehicle)} live`
                         : "Unavailable"}
                     </td>
                     <td className="px-4 py-3 text-center">

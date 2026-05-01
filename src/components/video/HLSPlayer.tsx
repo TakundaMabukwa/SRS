@@ -1,7 +1,7 @@
-/* eslint-disable @next/next/no-img-element */
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import Hls from 'hls.js';
 import { AlertCircle, Loader2 } from 'lucide-react';
 
 interface HLSPlayerProps {
@@ -21,7 +21,8 @@ export default function HLSPlayer({
   onStop,
   fallbackVehicleIds = [],
 }: HLSPlayerProps) {
-  const [status, setStatus] = useState('Connecting live preview...');
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const [status, setStatus] = useState('Connecting live video...');
   const [error, setError] = useState(false);
   const [reloadToken, setReloadToken] = useState(0);
 
@@ -40,20 +41,128 @@ export default function HLSPlayer({
   const streamUrl = useMemo(() => {
     const params = new URLSearchParams({
       channel: String(channel),
-      waitMs: '12000',
+      waitMs: '15000',
       maxAgeMs: String(LIVE_WARM_MAX_AGE_MS),
       _ts: String(reloadToken || Date.now()),
     });
     if (fallbackKey) {
       params.set('fallbackIds', fallbackKey);
     }
-    return `/api/live-preview/vehicles/${encodeURIComponent(vehicleId)}/live.mjpeg?${params.toString()}`;
+    return `/api/live-video/vehicles/${encodeURIComponent(vehicleId)}/playlist.m3u8?${params.toString()}`;
   }, [channel, fallbackKey, reloadToken, vehicleId]);
 
   useEffect(() => {
-    setStatus('Connecting live preview...');
+    const videoEl = videoRef.current;
+    if (!videoEl) {
+      return;
+    }
+
+    setStatus('Connecting live video...');
     setError(false);
-  }, [vehicleId, channel, fallbackKey, reloadToken]);
+
+    let destroyed = false;
+    let hls: Hls | null = null;
+
+    const markStreaming = () => {
+      if (destroyed) {
+        return;
+      }
+      setStatus('Streaming');
+      setError(false);
+    };
+
+    const markUnavailable = (message = 'Live video unavailable') => {
+      if (destroyed) {
+        return;
+      }
+      setStatus(message);
+      setError(true);
+    };
+
+    const tryPlay = () => {
+      void videoEl.play().catch(() => {
+        // Autoplay can be blocked briefly during route changes; keep the stream attached.
+      });
+    };
+
+    const onPlaying = () => {
+      markStreaming();
+    };
+
+    const onLoadedData = () => {
+      markStreaming();
+      tryPlay();
+    };
+
+    const onWaiting = () => {
+      if (!destroyed) {
+        setStatus('Buffering live video...');
+      }
+    };
+
+    const onVideoError = () => {
+      markUnavailable();
+    };
+
+    videoEl.muted = true;
+    videoEl.autoplay = true;
+    videoEl.playsInline = true;
+    videoEl.preload = 'auto';
+
+    videoEl.addEventListener('playing', onPlaying);
+    videoEl.addEventListener('loadeddata', onLoadedData);
+    videoEl.addEventListener('waiting', onWaiting);
+    videoEl.addEventListener('error', onVideoError);
+
+    if (videoEl.canPlayType('application/vnd.apple.mpegurl')) {
+      videoEl.src = streamUrl;
+      tryPlay();
+    } else if (Hls.isSupported()) {
+      hls = new Hls({
+        enableWorker: true,
+        lowLatencyMode: true,
+        liveSyncDurationCount: 2,
+        liveMaxLatencyDurationCount: 4,
+        maxLiveSyncPlaybackRate: 1.5,
+        backBufferLength: 30,
+        manifestLoadingTimeOut: 15000,
+        levelLoadingTimeOut: 15000,
+        fragLoadingTimeOut: 15000,
+      });
+
+      hls.loadSource(streamUrl);
+      hls.attachMedia(videoEl);
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        tryPlay();
+      });
+      hls.on(Hls.Events.LEVEL_LOADED, () => {
+        markStreaming();
+      });
+      hls.on(Hls.Events.ERROR, (_, data) => {
+        if (data?.fatal) {
+          markUnavailable();
+          hls?.destroy();
+          hls = null;
+        }
+      });
+    } else {
+      markUnavailable('Live video unsupported');
+    }
+
+    return () => {
+      destroyed = true;
+      videoEl.pause();
+      videoEl.removeAttribute('src');
+      videoEl.load();
+      videoEl.removeEventListener('playing', onPlaying);
+      videoEl.removeEventListener('loadeddata', onLoadedData);
+      videoEl.removeEventListener('waiting', onWaiting);
+      videoEl.removeEventListener('error', onVideoError);
+      if (hls) {
+        hls.destroy();
+      }
+    };
+  }, [streamUrl]);
 
   useEffect(() => {
     if (!error) {
@@ -61,7 +170,7 @@ export default function HLSPlayer({
     }
 
     const timer = setTimeout(() => {
-      setStatus('Retrying live preview...');
+      setStatus('Retrying live video...');
       setError(false);
       setReloadToken((value) => value + 1);
     }, 3000);
@@ -90,26 +199,19 @@ export default function HLSPlayer({
         </div>
       </div>
       <div className="relative w-full aspect-video bg-slate-900 rounded overflow-hidden">
-        <img
-          key={streamUrl}
-          src={streamUrl}
-          alt={vehicleName || `${vehicleId} channel ${channel}`}
+        <video
+          ref={videoRef}
+          muted
+          autoPlay
+          playsInline
           className={`w-full h-full object-cover bg-black ${error ? 'hidden' : 'block'}`}
-          onLoad={() => {
-            setStatus('Streaming');
-            setError(false);
-          }}
-          onError={() => {
-            setStatus('Live preview unavailable');
-            setError(true);
-          }}
         />
         {error && (
           <div className="absolute inset-0 flex items-center justify-center">
             <div className="text-center text-slate-400">
               <AlertCircle className="w-12 h-12 mx-auto mb-2" />
-              <p className="text-sm">Live preview unavailable</p>
-              <p className="text-xs mt-1">Vehicle may be offline or channel idle</p>
+              <p className="text-sm">Live video unavailable</p>
+              <p className="text-xs mt-1">Vehicle may be offline or stream not warm yet</p>
             </div>
           </div>
         )}
@@ -123,7 +225,7 @@ export default function HLSPlayer({
         )}
       </div>
       <div className="text-xs text-gray-400 mt-2 font-mono">
-        MJPEG live preview | CH {channel}
+        HLS live video | CH {channel}
       </div>
     </div>
   );
