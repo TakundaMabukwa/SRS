@@ -394,7 +394,8 @@ export default function VideoAlertsDashboardTab({
     const vehicleMeta = incoming?.metadata?.vehicle || incoming?.vehicle || {};
     const presentation = getAlertPresentation(incoming);
     if (presentation.silent) return null;
-    const firstOccurrenceTimestamp = getAlertFirstOccurrenceTimestamp(incoming) || incoming.timestamp || incoming.created_at || incoming.alert_timestamp || new Date().toISOString();
+    const sourceTimestamp = incoming.timestamp || incoming.created_at || incoming.alert_timestamp || new Date().toISOString();
+    const firstOccurrenceTimestamp = getAlertFirstOccurrenceTimestamp(incoming) || sourceTimestamp;
     const lastOccurrenceTimestamp = getAlertLastOccurrenceTimestamp(incoming) || firstOccurrenceTimestamp;
     const displayTimestamp = getAlertDisplayTimestamp(incoming) || lastOccurrenceTimestamp || firstOccurrenceTimestamp;
     const id = String(incoming.id || incoming.alert_id || incoming.alertId || "").trim();
@@ -420,9 +421,11 @@ export default function VideoAlertsDashboardTab({
       vehicleId: String(incoming.vehicleId || incoming.device_id || incoming.vehicle_id || vehicleMeta.vehicleId || fallbackVehicleId || "").trim(),
       device_id: String(incoming.device_id || incoming.vehicleId || incoming.vehicle_id || vehicleMeta.vehicleId || fallbackVehicleId || "").trim(),
       driver_name: incoming.driver_name || incoming.driver || incoming?.metadata?.driverName || "Unknown",
-      timestamp: firstOccurrenceTimestamp,
+      timestamp: displayTimestamp || sourceTimestamp,
       lastOccurrenceTimestamp,
       firstOccurrenceTimestamp,
+      displayTimestamp,
+      playbackTimestamp: displayTimestamp || lastOccurrenceTimestamp || firstOccurrenceTimestamp,
       repeated_count: Number(incoming.repeated_count || incoming.repeatedCount || 1) || 1,
     };
   }, [getAlertPresentation, resolveVehicleIdentity]);

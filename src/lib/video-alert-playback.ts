@@ -102,6 +102,10 @@ function readPlaybackRecord(value: unknown): PlaybackJsonRecord {
     : {};
 }
 
+function hasPlaybackRecordValues(record: PlaybackJsonRecord | null | undefined) {
+  return !!record && Object.keys(record).length > 0;
+}
+
 function getPlaybackMessage(value: unknown) {
   const record = readPlaybackRecord(value);
   return String(record.message || "").trim();
@@ -252,6 +256,9 @@ export function normalizeBackendMediaUrl(url: string, videoProxyBase = DEFAULT_V
   if (value.startsWith("/media/")) {
     return `${videoProxyBase}${value}`;
   }
+  if (value.startsWith("/api/video-server/")) {
+    return `${videoProxyBase}${value.slice("/api/video-server".length)}`;
+  }
   if (value.startsWith("/api/")) {
     return `${videoProxyBase}${value.slice(4)}`;
   }
@@ -309,13 +316,22 @@ function getRawAlertTimestampValue(value: unknown) {
   return String(value || "").trim();
 }
 
-function timestampToComparableMs(value: unknown) {
+function hasExplicitTimezone(value: string) {
+  return /(?:[zZ]|[+-]\d{2}:?\d{2})$/.test(String(value || "").trim());
+}
+
+function normalizeAlertTimestampToIso(value: unknown) {
   const raw = getRawAlertTimestampValue(value);
-  if (!raw) return Number.NaN;
+  if (!raw) return "";
+
+  if (hasExplicitTimezone(raw)) {
+    const nativeDate = new Date(raw);
+    return Number.isNaN(nativeDate.getTime()) ? "" : nativeDate.toISOString();
+  }
 
   const parsedRaw = parseRawAlertTimestampParts(raw);
   if (parsedRaw) {
-    return Date.UTC(
+    const localDate = new Date(
       parsedRaw.year,
       Math.max(0, parsedRaw.month - 1),
       parsedRaw.day,
@@ -324,9 +340,15 @@ function timestampToComparableMs(value: unknown) {
       parsedRaw.second,
       0
     );
+    return Number.isNaN(localDate.getTime()) ? "" : localDate.toISOString();
   }
 
-  const nativeMs = new Date(raw).getTime();
+  const nativeDate = new Date(raw);
+  return Number.isNaN(nativeDate.getTime()) ? "" : nativeDate.toISOString();
+}
+
+function timestampToComparableMs(value: unknown) {
+  const nativeMs = new Date(normalizeAlertTimestampToIso(value)).getTime();
   return Number.isFinite(nativeMs) ? nativeMs : Number.NaN;
 }
 
@@ -439,12 +461,25 @@ export function getAlertDisplayTimestamp(alert: PlaybackJsonRecord | null | unde
 }
 
 export function getAlertPlaybackTimestamp(alert: PlaybackJsonRecord | null | undefined) {
+  const explicitPlaybackTimestamp = getRawAlertTimestampValue(
+    alert?.playbackTimestamp ||
+    alert?.playback_timestamp
+  );
+  if (explicitPlaybackTimestamp) {
+    return explicitPlaybackTimestamp;
+  }
+
+  const lastOccurrence = getAlertDisplayTimestamp(alert);
+  if (lastOccurrence) {
+    return lastOccurrence;
+  }
+
   const firstOccurrence = pickEarliestTimestamp(collectAlertFirstOccurrenceCandidates(alert));
-  return firstOccurrence || getAlertDisplayTimestamp(alert);
+  return firstOccurrence || null;
 }
 
 export function getAlertFirstOccurrenceTimestamp(alert: PlaybackJsonRecord | null | undefined) {
-  return getAlertPlaybackTimestamp(alert);
+  return pickEarliestTimestamp(collectAlertFirstOccurrenceCandidates(alert));
 }
 
 export function getAlertLastOccurrenceTimestamp(alert: PlaybackJsonRecord | null | undefined) {
@@ -548,14 +583,18 @@ function getAlertPlaybackWindow(
     metadata.event_end_time ||
     null;
 
-  const baseTime = new Date(timestamp);
+  const normalizedPlaybackTimestamp = normalizeAlertTimestampToIso(timestamp);
+  const baseTime = new Date(normalizedPlaybackTimestamp || timestamp);
   if (Number.isNaN(baseTime.getTime())) return null;
 
+  const normalizedStartCandidate = normalizeAlertTimestampToIso(startCandidate);
+  const normalizedEndCandidate = normalizeAlertTimestampToIso(endCandidate);
+
   const start = !hasExplicitWindow && startCandidate
-    ? new Date(startCandidate)
+    ? new Date(normalizedStartCandidate || String(startCandidate))
     : new Date(baseTime.getTime() - beforeMs);
   const end = !hasExplicitWindow && endCandidate
-    ? new Date(endCandidate)
+    ? new Date(normalizedEndCandidate || String(endCandidate))
     : new Date(baseTime.getTime() + afterMs);
 
   if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end <= start) {
@@ -584,6 +623,84 @@ function getAlertPlaybackCacheKey(
     startIso: playbackWindow?.startIso || "",
     endIso: playbackWindow?.endIso || "",
   });
+}
+
+async function fetchDetailedAlertForPlayback(
+  alert: PlaybackJsonRecord,
+  videoProxyBase = DEFAULT_VIDEO_PROXY_BASE
+) {
+  const alertId = String(alert?.id || "").trim();
+  if (!alertId) return null;
+
+  for (const playbackBase of getPlaybackRequestBases(videoProxyBase)) {
+    try {
+      const response = await fetch(
+        `${playbackBase}/alerts/${encodeURIComponent(alertId)}?ensureMedia=true`,
+        {
+          cache: "no-store",
+          signal: timeoutSignal(8000),
+        }
+      );
+      if (!response.ok) continue;
+
+      const json = await response.json().catch(() => ({}));
+      const jsonRecord = readPlaybackRecord(json);
+      const nestedDataRecord = readPlaybackRecord(jsonRecord.data);
+      const detailAlertCandidates = [
+        readPlaybackRecord(jsonRecord.alert),
+        readPlaybackRecord(nestedDataRecord.alert),
+        nestedDataRecord,
+      ];
+      const detailAlert =
+        detailAlertCandidates.find((record) => hasPlaybackRecordValues(record)) ||
+        null;
+
+      if (!detailAlert) continue;
+
+      const canonicalTimestamp =
+        getRawAlertTimestampValue(detailAlert.timestamp) ||
+        getRawAlertTimestampValue(detailAlert.alert_timestamp) ||
+        getRawAlertTimestampValue(detailAlert.created_at) ||
+        "";
+      const canonicalLastOccurrence =
+        getRawAlertTimestampValue(detailAlert.lastOccurrenceTimestamp) ||
+        getRawAlertTimestampValue(detailAlert.last_occurrence_timestamp) ||
+        getRawAlertTimestampValue(detailAlert.displayTimestamp) ||
+        canonicalTimestamp;
+      const canonicalFirstOccurrence =
+        getRawAlertTimestampValue(detailAlert.firstOccurrenceTimestamp) ||
+        getRawAlertTimestampValue(detailAlert.first_occurrence_timestamp) ||
+        canonicalTimestamp;
+
+      return {
+        ...alert,
+        ...detailAlert,
+        timestamp: canonicalTimestamp || detailAlert.timestamp || alert.timestamp,
+        firstOccurrenceTimestamp:
+          canonicalFirstOccurrence ||
+          detailAlert.firstOccurrenceTimestamp ||
+          alert.firstOccurrenceTimestamp,
+        lastOccurrenceTimestamp:
+          canonicalLastOccurrence ||
+          detailAlert.lastOccurrenceTimestamp ||
+          alert.lastOccurrenceTimestamp,
+        displayTimestamp:
+          canonicalLastOccurrence ||
+          canonicalTimestamp ||
+          detailAlert.displayTimestamp ||
+          alert.displayTimestamp,
+        playbackTimestamp:
+          canonicalTimestamp ||
+          detailAlert.playbackTimestamp ||
+          detailAlert.timestamp ||
+          alert.playbackTimestamp,
+      } satisfies PlaybackJsonRecord;
+    } catch {
+      // Try next playback base.
+    }
+  }
+
+  return null;
 }
 
 async function resolvePlaybackWindowForAlert(
@@ -732,6 +849,19 @@ export async function resolveAlertPlaybackVideos(
   const id = String(alert?.id || alertSource || "").trim();
   if (!id || !alert) return [];
 
-  return resolvePlaybackWindowForAlert(alert, videoProxyBase, windowOptions);
+  try {
+    return await resolvePlaybackWindowForAlert(alert, videoProxyBase, windowOptions);
+  } catch (initialError) {
+    const detailedAlert = await fetchDetailedAlertForPlayback(alert, videoProxyBase);
+    if (detailedAlert) {
+      try {
+        return await resolvePlaybackWindowForAlert(detailedAlert, videoProxyBase, windowOptions);
+      } catch {
+        // Fall through to the original error to preserve the first failure context.
+      }
+    }
+
+    throw initialError;
+  }
 }
 

@@ -88,7 +88,16 @@ import DispatchReportModal from '@/components/video-alerts/dispatch-report-modal
 import IncidentReportTemplateModal from '@/components/video-alerts/incident-report-template-modal';
 import type { SavedAlertArtifact } from '@/components/video-alerts/report-support';
 import { useVideoWebSocket } from "@/hooks/use-video-websocket";
-import { formatRawAlertTimestamp, getAlertDisplayTimestamp as getSharedAlertDisplayTimestamp, getAlertPlaybackSignature, resolveAlertPlaybackVideos, resolveMediaUrlForCurrentOrigin } from "@/lib/video-alert-playback";
+import {
+  formatRawAlertTimestamp,
+  getAlertDisplayTimestamp as getSharedAlertDisplayTimestamp,
+  getAlertFirstOccurrenceTimestamp as getSharedAlertFirstOccurrenceTimestamp,
+  getAlertLastOccurrenceTimestamp as getSharedAlertLastOccurrenceTimestamp,
+  getAlertPlaybackSignature,
+  getAlertPlaybackTimestamp as getSharedAlertPlaybackTimestamp,
+  resolveAlertPlaybackVideos,
+  resolveMediaUrlForCurrentOrigin,
+} from "@/lib/video-alert-playback";
 import { toast } from "sonner";
 
 const VideoAlertsDashboardTab = dynamic(
@@ -3809,8 +3818,32 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
       }
     };
 
+    const baseFirstOccurrenceTimestamp =
+      getSharedAlertFirstOccurrenceTimestamp(alertSeed) ||
+      alertSeed?.timestamp ||
+      alertSeed?.created_at ||
+      alertSeed?.alert_timestamp ||
+      null;
+    const baseLastOccurrenceTimestamp =
+      getSharedAlertLastOccurrenceTimestamp(alertSeed) ||
+      baseFirstOccurrenceTimestamp;
+    const baseDisplayTimestamp =
+      getSharedAlertDisplayTimestamp(alertSeed) ||
+      baseLastOccurrenceTimestamp ||
+      baseFirstOccurrenceTimestamp;
+    const basePlaybackTimestamp =
+      getSharedAlertPlaybackTimestamp(alertSeed) ||
+      baseDisplayTimestamp ||
+      baseLastOccurrenceTimestamp ||
+      baseFirstOccurrenceTimestamp;
+
     const baseAlert = {
       ...alertSeed,
+      timestamp: baseDisplayTimestamp || alertSeed?.timestamp,
+      firstOccurrenceTimestamp: baseFirstOccurrenceTimestamp,
+      lastOccurrenceTimestamp: baseLastOccurrenceTimestamp,
+      displayTimestamp: baseDisplayTimestamp,
+      playbackTimestamp: basePlaybackTimestamp,
       vehicle_registration:
         alertSeed?.vehicle_registration ||
         trip?.vehicleassignments?.[0]?.vehicle?.name ||
@@ -3989,9 +4022,38 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
         : [];
 
       const requestState = alertVideoRequestStateRef.current[alertId] || {};
+      const mergedFirstOccurrenceTimestamp =
+        getSharedAlertFirstOccurrenceTimestamp(detailAlert) ||
+        baseFirstOccurrenceTimestamp;
+      const mergedLastOccurrenceTimestamp =
+        getSharedAlertLastOccurrenceTimestamp(detailAlert) ||
+        baseLastOccurrenceTimestamp ||
+        mergedFirstOccurrenceTimestamp;
+      const mergedDisplayTimestamp =
+        getSharedAlertDisplayTimestamp(detailAlert) ||
+        baseDisplayTimestamp ||
+        mergedLastOccurrenceTimestamp ||
+        mergedFirstOccurrenceTimestamp;
+      const mergedPlaybackTimestamp =
+        getSharedAlertPlaybackTimestamp({
+          ...baseAlert,
+          ...detailAlert,
+          firstOccurrenceTimestamp: mergedFirstOccurrenceTimestamp,
+          lastOccurrenceTimestamp: mergedLastOccurrenceTimestamp,
+          displayTimestamp: mergedDisplayTimestamp,
+        }) ||
+        mergedDisplayTimestamp ||
+        mergedLastOccurrenceTimestamp ||
+        mergedFirstOccurrenceTimestamp;
+
       const merged: any = {
         ...baseAlert,
         ...detailAlert,
+        timestamp: mergedDisplayTimestamp || detailAlert?.timestamp || baseAlert?.timestamp,
+        firstOccurrenceTimestamp: mergedFirstOccurrenceTimestamp,
+        lastOccurrenceTimestamp: mergedLastOccurrenceTimestamp,
+        displayTimestamp: mergedDisplayTimestamp,
+        playbackTimestamp: mergedPlaybackTimestamp,
         severity:
           detailAlert?.severity ||
           detailAlert?.priority ||

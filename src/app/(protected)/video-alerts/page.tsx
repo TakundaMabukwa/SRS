@@ -24,7 +24,7 @@ import {
   ExternalLink
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { formatRawAlertTimestamp, getAlertDisplayTimestamp, normalizeBackendMediaUrl, resolveAlertPlaybackVideos } from '@/lib/video-alert-playback'
+import { formatRawAlertTimestamp, getAlertDisplayTimestamp, getAlertFirstOccurrenceTimestamp, getAlertLastOccurrenceTimestamp, normalizeBackendMediaUrl, resolveAlertPlaybackVideos } from '@/lib/video-alert-playback'
 
 export default function VideoAlertsPage() {
   const router = useRouter()
@@ -155,6 +155,21 @@ export default function VideoAlertsPage() {
   const normalizeAlert = (raw, mediaPayload = null) => {
     const metadata = raw?.metadata || {}
     const vehicleMeta = metadata?.vehicle || raw?.vehicle || {}
+    const sourceTimestamp =
+      raw?.timestamp ||
+      raw?.created_at ||
+      raw?.alert_timestamp ||
+      null
+    const firstOccurrenceTimestamp =
+      getAlertFirstOccurrenceTimestamp(raw) ||
+      sourceTimestamp
+    const lastOccurrenceTimestamp =
+      getAlertLastOccurrenceTimestamp(raw) ||
+      firstOccurrenceTimestamp
+    const displayTimestamp =
+      getAlertDisplayTimestamp(raw) ||
+      lastOccurrenceTimestamp ||
+      firstOccurrenceTimestamp
     const lat = toNum(raw?.location?.latitude ?? raw?.latitude ?? metadata?.locationFix?.latitude)
     const lon = toNum(raw?.location?.longitude ?? raw?.longitude ?? metadata?.locationFix?.longitude)
     const location = {
@@ -178,6 +193,11 @@ export default function VideoAlertsPage() {
         vehicleMeta?.vehicleId ||
         null,
       driver_name: raw?.driver_name || null,
+      timestamp: displayTimestamp || sourceTimestamp,
+      firstOccurrenceTimestamp,
+      lastOccurrenceTimestamp,
+      displayTimestamp,
+      playbackTimestamp: displayTimestamp || lastOccurrenceTimestamp || firstOccurrenceTimestamp || sourceTimestamp,
       location,
       metadata,
       screenshots: normalizeScreenshots(raw, mediaPayload),
