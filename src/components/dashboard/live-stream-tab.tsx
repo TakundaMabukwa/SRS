@@ -48,6 +48,11 @@ type VehicleCatalogRow = {
 };
 
 type RuntimeRecord = Record<string, unknown>;
+type LivePreviewStreamRow = {
+  vehicleId?: string;
+  channel?: number;
+  updatedAtMs?: number;
+};
 
 type PinnedFeed = {
   vehicleId: string;
@@ -64,18 +69,31 @@ type StreamEntry = {
   vehicleName: string;
 };
 
+const LIVE_WARM_MAX_AGE_MS = 20000;
+const LIVE_REFRESH_INTERVAL_MS = 10000;
+
 function getChannelNumber(channel: VehicleChannel): number {
   return channel.logicalChannel ?? channel.channel ?? 1;
 }
 
-function getLiveChannels(channels: VehicleChannel[] | undefined): number[] {
-  const discovered = Array.isArray(channels)
+function getWarmChannelsFromList(channels: VehicleChannel[] | undefined): number[] {
+  return Array.isArray(channels)
     ? channels
         .map(getChannelNumber)
         .filter((value, index, values) => Number.isFinite(value) && value > 0 && values.indexOf(value) === index)
+        .sort((a, b) => a - b)
+    : [];
+}
+
+function getWarmChannelNumbers(vehicle: Pick<ConnectedVehicle, "channels" | "activeStreams">): number[] {
+  const active = Array.isArray(vehicle.activeStreams)
+    ? vehicle.activeStreams
+        .map((value) => Number(value))
+        .filter((value, index, values) => Number.isFinite(value) && value > 0 && values.indexOf(value) === index)
+        .sort((a, b) => a - b)
     : [];
 
-  return Array.from(new Set([1, 2, ...discovered]));
+  return active.length ? active : getWarmChannelsFromList(vehicle.channels);
 }
 
 function toVehicleKey(vehicle: ConnectedVehicle): string {
@@ -88,78 +106,63 @@ function readRuntimeRecord(value: unknown): RuntimeRecord {
     : {};
 }
 
-function parseRuntimeChannel(channel: unknown): VehicleChannel | null {
-  const record = readRuntimeRecord(channel);
-  const logicalChannel = Number(record.logicalChannel ?? record.channelId ?? record.channel ?? 0);
-  const channelNumber = Number(record.channel ?? record.logicalChannel ?? record.channelId ?? 0);
-  const resolvedChannel = logicalChannel || channelNumber;
-  if (!Number.isFinite(resolvedChannel) || resolvedChannel <= 0) {
-    return null;
-  }
-  return {
-    logicalChannel: logicalChannel > 0 ? logicalChannel : resolvedChannel,
-    channel: channelNumber > 0 ? channelNumber : resolvedChannel,
-  };
+function parseLivePreviewRows(payload: unknown): LivePreviewStreamRow[] {
+  const root = readRuntimeRecord(payload);
+  const rows = Array.isArray(root.rows)
+    ? root.rows
+    : Array.isArray(root.data)
+      ? root.data
+      : [];
+
+  return rows
+    .map((entry) => {
+      const record = readRuntimeRecord(entry);
+      const vehicleId = String(record.vehicleId ?? record.id ?? "").trim();
+      const channel = Number(record.channel ?? 0);
+      const updatedAtMs = Number(record.updatedAtMs ?? 0);
+      if (!vehicleId || !Number.isFinite(channel) || channel <= 0) {
+        return null;
+      }
+
+      return {
+        vehicleId,
+        channel,
+        updatedAtMs: Number.isFinite(updatedAtMs) ? updatedAtMs : undefined,
+      } satisfies LivePreviewStreamRow;
+    })
+    .filter((row): row is LivePreviewStreamRow => !!row);
 }
 
 function parseRuntimeVehicles(payload: unknown): ConnectedVehicle[] {
-  const root = readRuntimeRecord(payload);
-  const rootData = readRuntimeRecord(root.data);
-  const vehicles = Array.isArray(payload)
-    ? payload
-    : Array.isArray(root.vehicles)
-      ? root.vehicles
-      : Array.isArray(root.data)
-        ? root.data
-        : Array.isArray(rootData.vehicles)
-          ? rootData.vehicles
-          : Array.isArray(rootData.devices)
-            ? rootData.devices
-            : [];
+  const rows = parseLivePreviewRows(payload);
+  const byVehicle = new Map<string, Set<number>>();
 
-  return vehicles
-    .map((entry) => {
-      const record = readRuntimeRecord(entry);
-      const rawChannels = Array.isArray(record.channels) ? record.channels : [];
-      const channels = rawChannels
-        .map(parseRuntimeChannel)
-        .filter((channel): channel is VehicleChannel => !!channel);
-      const id = String(
-        record.id ??
-          record.deviceId ??
-          record.vehicleId ??
-          record.phone ??
-          record.terminalPhone ??
-          ""
-      ).trim();
-      const phone = String(record.phone ?? record.terminalPhone ?? record.sim ?? "").trim();
-      if (!id && !phone) return null;
+  for (const row of rows) {
+    const vehicleId = String(row.vehicleId || "").trim();
+    const channel = Number(row.channel || 0);
+    if (!vehicleId || !Number.isFinite(channel) || channel <= 0) {
+      continue;
+    }
 
-      const activeStreams = rawChannels
-        .map((channel) => {
-          const channelRecord = readRuntimeRecord(channel);
-          const channelNumber = Number(
-            channelRecord.logicalChannel ??
-              channelRecord.channelId ??
-              channelRecord.channel ??
-              0
-          );
-          const hasStreamUrl = String(channelRecord.streamUrl ?? channelRecord.playUrl ?? "").trim().length > 0;
-          const isActive = hasStreamUrl || channelRecord.active === true || channelRecord.streaming === true;
-          return isActive && Number.isFinite(channelNumber) && channelNumber > 0 ? channelNumber : null;
-        })
-        .filter((value): value is number => value !== null);
+    if (!byVehicle.has(vehicleId)) {
+      byVehicle.set(vehicleId, new Set<number>());
+    }
+    byVehicle.get(vehicleId)?.add(channel);
+  }
 
-      return {
-        id: id || phone,
-        name: String((record.name ?? record.plateName ?? record.displayLabel ?? id) || phone).trim(),
-        phone: phone || undefined,
-        channels,
-        connected: record.connected !== false,
-        activeStreams: Array.from(new Set(activeStreams)).sort((a, b) => a - b),
-      } satisfies ConnectedVehicle;
-    })
-    .filter((vehicle): vehicle is ConnectedVehicle => !!vehicle);
+  return Array.from(byVehicle.entries()).map(([vehicleId, channelSet]) => {
+    const channels = Array.from(channelSet).sort((a, b) => a - b);
+    return {
+      id: vehicleId,
+      name: vehicleId,
+      channels: channels.map((channel) => ({
+        logicalChannel: channel,
+        channel,
+      })),
+      connected: true,
+      activeStreams: channels,
+    } satisfies ConnectedVehicle;
+  });
 }
 
 function mergeRuntimeIntoCatalog(
@@ -189,20 +192,25 @@ function mergeRuntimeIntoCatalog(
           .find(Boolean) || null;
 
       if (!runtimeMatch) {
-        return vehicle;
+        return {
+          ...vehicle,
+          connected: false,
+          channels: [],
+          activeStreams: [],
+        };
       }
+
+      const warmChannels = getWarmChannelNumbers(runtimeMatch);
 
       return {
         ...vehicle,
         phone: vehicle.phone || runtimeMatch.phone || "",
-        channels: runtimeMatch.channels?.length ? runtimeMatch.channels : vehicle.channels,
-        connected: runtimeMatch.connected !== false,
-        activeStreams: Array.from(
-          new Set([
-            ...(Array.isArray(vehicle.activeStreams) ? vehicle.activeStreams : []),
-            ...(Array.isArray(runtimeMatch.activeStreams) ? runtimeMatch.activeStreams : []),
-          ])
-        ).sort((a, b) => Number(a) - Number(b)),
+        channels: warmChannels.map((channel) => ({
+          logicalChannel: channel,
+          channel,
+        })),
+        connected: warmChannels.length > 0,
+        activeStreams: warmChannels,
       };
     })
     .sort((a, b) => {
@@ -213,25 +221,15 @@ function mergeRuntimeIntoCatalog(
 }
 
 function getActiveStreamCount(vehicle: ConnectedVehicle): number {
-  return Array.isArray(vehicle.activeStreams)
-    ? vehicle.activeStreams
-        .map((value) => Number(value))
-        .filter((value, index, values) => Number.isFinite(value) && value > 0 && values.indexOf(value) === index).length
-    : 0;
-}
-
-function isVehicleActive(vehicle: ConnectedVehicle): boolean {
-  return getActiveStreamCount(vehicle) > 0;
+  return getWarmChannelNumbers(vehicle).length;
 }
 
 function isVehicleOnline(vehicle: ConnectedVehicle): boolean {
-  return vehicle.connected !== false;
+  return getActiveStreamCount(vehicle) > 0;
 }
 
 function getVehicleStatusRank(vehicle: ConnectedVehicle): number {
-  if (isVehicleActive(vehicle)) return 0;
-  if (isVehicleOnline(vehicle)) return 1;
-  return 2;
+  return isVehicleOnline(vehicle) ? 0 : 1;
 }
 
 export default function LiveStreamTab() {
@@ -246,6 +244,7 @@ export default function LiveStreamTab() {
   const [pipPosition, setPipPosition] = useState({ x: 24, y: 96 });
   const [isDraggingPip, setIsDraggingPip] = useState(false);
   const pipDragOffsetRef = useRef({ x: 0, y: 0 });
+  const catalogVehiclesRef = useRef<ConnectedVehicle[]>([]);
   const supabase = createClient();
 
   const fetchCatalogVehicles = useCallback(async () => {
@@ -283,7 +282,7 @@ export default function LiveStreamTab() {
         registration: registration || undefined,
         fleetNumber: fleetNumber || undefined,
         displayLabel: displayLabel || primaryKey,
-        connected: undefined,
+        connected: false,
         activeStreams: [],
       };
 
@@ -309,13 +308,13 @@ export default function LiveStreamTab() {
   }, [supabase]);
 
   const fetchRuntimeVehicles = useCallback(async () => {
-    const runtimeEndpoints = ["/api/video-server/vehicles/connected"];
+    const runtimeEndpoints = [`/api/live-preview/streams?maxAgeMs=${LIVE_WARM_MAX_AGE_MS}`];
 
     for (const endpoint of runtimeEndpoints) {
       try {
         const response = await fetch(endpoint, {
           cache: "no-store",
-          signal: AbortSignal.timeout(1500),
+          signal: AbortSignal.timeout(4000),
         });
         if (!response.ok) continue;
         const data = await response.json();
@@ -340,14 +339,19 @@ export default function LiveStreamTab() {
     }
 
     try {
-      const catalogVehicles = await fetchCatalogVehicles();
-      setVehicles(catalogVehicles);
-      setLoading(false);
+      const catalogVehicles =
+        background && catalogVehiclesRef.current.length > 0
+          ? catalogVehiclesRef.current
+          : await fetchCatalogVehicles();
+      catalogVehiclesRef.current = catalogVehicles;
+
+      if (!background) {
+        setVehicles(catalogVehicles);
+        setLoading(false);
+      }
 
       const runtimeVehicles = await fetchRuntimeVehicles();
-      if (runtimeVehicles.length > 0) {
-        setVehicles(mergeRuntimeIntoCatalog(catalogVehicles, runtimeVehicles));
-      }
+      setVehicles(mergeRuntimeIntoCatalog(catalogVehicles, runtimeVehicles));
     } catch (error) {
       console.error("Failed to fetch vehicles:", error);
       setVehicles([]);
@@ -360,6 +364,38 @@ export default function LiveStreamTab() {
   useEffect(() => {
     void fetchConnectedVehicles();
   }, [fetchConnectedVehicles]);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      void fetchConnectedVehicles({ background: true });
+    }, LIVE_REFRESH_INTERVAL_MS);
+
+    return () => clearInterval(timer);
+  }, [fetchConnectedVehicles]);
+
+  useEffect(() => {
+    setSelectedVehicles((previous) => {
+      const nextIds = Array.from(previous).filter((vehicleId) => {
+        const vehicle = vehicles.find((entry) => entry.id === vehicleId);
+        return !!vehicle && getWarmChannelNumbers(vehicle).length > 0;
+      });
+
+      return nextIds.length === previous.size ? previous : new Set(nextIds);
+    });
+
+    setPinnedFeed((previous) => {
+      if (!previous) {
+        return previous;
+      }
+
+      const vehicle = vehicles.find((entry) => entry.id === previous.vehicleId);
+      if (!vehicle || !getWarmChannelNumbers(vehicle).includes(previous.channel)) {
+        return null;
+      }
+
+      return previous;
+    });
+  }, [vehicles]);
 
   const toggleVehicle = (vehicleId: string) => {
     const vehicle = vehicles.find((entry) => entry.id === vehicleId);
@@ -406,7 +442,7 @@ export default function LiveStreamTab() {
     const vehicle = vehicles.find((v) => v.id === vehicleId);
     if (!vehicle) return [];
 
-    const channels = getLiveChannels(vehicle.channels);
+    const channels = getWarmChannelNumbers(vehicle);
 
     return channels.map((channelNumber, idx) => {
       const fallbackVehicleIds = Array.from(
@@ -448,9 +484,9 @@ export default function LiveStreamTab() {
             </div>
           </div>
           {online ? (
-            <Badge className={`${isVehicleActive(vehicle) ? "bg-cyan-600 hover:bg-cyan-600" : "bg-emerald-600 hover:bg-emerald-600"} text-white`}>
+            <Badge className="bg-cyan-600 hover:bg-cyan-600 text-white">
               <Wifi className="mr-1 h-3 w-3" />
-              {isVehicleActive(vehicle) ? "Active" : "Online"}
+              Ready
             </Badge>
           ) : (
             <Badge variant="outline">
@@ -464,10 +500,8 @@ export default function LiveStreamTab() {
           <div className="flex items-center gap-2 text-xs text-slate-600">
             <Activity className="h-3.5 w-3.5" />
             {online
-              ? isVehicleActive(vehicle)
-                ? `${getActiveStreamCount(vehicle)} live stream(s)`
-                : `${getLiveChannels(vehicle.channels).length} channel(s) ready`
-              : "No active listener session"}
+              ? `${getActiveStreamCount(vehicle)} warm channel(s) ready`
+              : "No active live preview session"}
           </div>
           <Button
             size="sm"
@@ -523,8 +557,8 @@ export default function LiveStreamTab() {
                   <tr key={vehicle.id} className="border-t hover:bg-slate-50">
                     <td className="px-4 py-3">
                       {online ? (
-                        <Badge className={`${isVehicleActive(vehicle) ? "bg-cyan-600 hover:bg-cyan-600" : "bg-emerald-600 hover:bg-emerald-600"} text-white`}>
-                          {isVehicleActive(vehicle) ? "Active" : "Online"}
+                        <Badge className="bg-cyan-600 hover:bg-cyan-600 text-white">
+                          Ready
                         </Badge>
                       ) : (
                         <Badge variant="outline">Offline</Badge>
@@ -534,9 +568,7 @@ export default function LiveStreamTab() {
                     <td className="px-4 py-3 font-mono text-xs text-slate-600">{vehicle.phone || vehicle.id}</td>
                     <td className="px-4 py-3 text-slate-600">
                       {online
-                        ? isVehicleActive(vehicle)
-                          ? `${getActiveStreamCount(vehicle)} active / ${getLiveChannels(vehicle.channels).length}`
-                          : `${getLiveChannels(vehicle.channels).length} ready`
+                        ? `${getActiveStreamCount(vehicle)} warm`
                         : "Unavailable"}
                     </td>
                     <td className="px-4 py-3 text-center">

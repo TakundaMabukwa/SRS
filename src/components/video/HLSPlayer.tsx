@@ -1,7 +1,7 @@
+/* eslint-disable @next/next/no-img-element */
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
-import Hls from 'hls.js';
+import { useEffect, useMemo, useState } from 'react';
 import { AlertCircle, Loader2 } from 'lucide-react';
 
 interface HLSPlayerProps {
@@ -12,347 +12,69 @@ interface HLSPlayerProps {
   fallbackVehicleIds?: string[];
 }
 
-const resolvedVehicleIdCache = new Map<string, string>();
-const PLAYLIST_PROBE_TIMEOUT_MS = 5000;
-const START_LIVE_TIMEOUT_MS = 5000;
-const START_LIVE_REQUESTS = new Map<string, Promise<boolean>>();
+const LIVE_WARM_MAX_AGE_MS = 20000;
 
-function manifestLooksPlayable(manifest: string): boolean {
-  const text = String(manifest || '').trim();
-  if (!text.includes('#EXTM3U')) return false;
-  return text.includes('#EXTINF') || /\.ts(\?|$)/i.test(text) || /\.m4s(\?|$)/i.test(text);
-}
-
-export default function HLSPlayer({ vehicleId, channel, vehicleName, onStop, fallbackVehicleIds = [] }: HLSPlayerProps) {
-  const targetLiveDelaySeconds = 3;
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const hlsRef = useRef<Hls | null>(null);
-  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const statsTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const startLiveCooldownUntilRef = useRef(0);
-  const fatalErrorCountRef = useRef(0);
-  const [status, setStatus] = useState('Starting stream...');
-  const [stats, setStats] = useState('Waiting for stream...');
+export default function HLSPlayer({
+  vehicleId,
+  channel,
+  vehicleName,
+  onStop,
+  fallbackVehicleIds = [],
+}: HLSPlayerProps) {
+  const [status, setStatus] = useState('Connecting live preview...');
   const [error, setError] = useState(false);
-  const fallbackKey = fallbackVehicleIds.map((value) => String(value || '').trim()).filter(Boolean).join('|');
+  const [reloadToken, setReloadToken] = useState(0);
+
+  const fallbackKey = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          fallbackVehicleIds
+            .map((value) => String(value || '').trim())
+            .filter(Boolean)
+        )
+      ).join(','),
+    [fallbackVehicleIds]
+  );
+
+  const streamUrl = useMemo(() => {
+    const params = new URLSearchParams({
+      channel: String(channel),
+      waitMs: '12000',
+      maxAgeMs: String(LIVE_WARM_MAX_AGE_MS),
+      _ts: String(reloadToken || Date.now()),
+    });
+    if (fallbackKey) {
+      params.set('fallbackIds', fallbackKey);
+    }
+    return `/api/live-preview/vehicles/${encodeURIComponent(vehicleId)}/live.mjpeg?${params.toString()}`;
+  }, [channel, fallbackKey, reloadToken, vehicleId]);
 
   useEffect(() => {
-    let mounted = true;
-    const cacheKey = `${vehicleId}:${channel}`;
-    const cachedCandidate = resolvedVehicleIdCache.get(cacheKey);
-    const candidateVehicleIds = Array.from(
-      new Set([cachedCandidate, vehicleId, ...fallbackKey.split('|')].map((value) => String(value || '').trim()).filter(Boolean))
-    );
-    let activeVehicleId = vehicleId;
+    setStatus('Connecting live preview...');
+    setError(false);
+  }, [vehicleId, channel, fallbackKey, reloadToken]);
 
-    const clearRetry = () => {
-      if (retryTimerRef.current) {
-        clearTimeout(retryTimerRef.current);
-        retryTimerRef.current = null;
-      }
-    };
+  useEffect(() => {
+    if (!error) {
+      return;
+    }
 
-    const clearStatsTimer = () => {
-      if (statsTimerRef.current) {
-        clearInterval(statsTimerRef.current);
-        statsTimerRef.current = null;
-      }
-    };
-
-    const cleanupHls = () => {
-      clearRetry();
-      clearStatsTimer();
-      fatalErrorCountRef.current = 0;
-      if (hlsRef.current) {
-        hlsRef.current.destroy();
-        hlsRef.current = null;
-      }
-      const video = videoRef.current;
-      if (video) {
-        try {
-          video.pause();
-        } catch {}
-        video.removeAttribute('src');
-        video.load();
-      }
-    };
-
-    const attachNativeHls = (video: HTMLVideoElement, hlsUrl: string) => {
-      video.src = `${hlsUrl}?_ts=${Date.now()}`;
-      video.addEventListener(
-        'loadedmetadata',
-        () => {
-          if (!mounted) return;
-          setStatus('Streaming');
-          setError(false);
-        },
-        { once: true }
-      );
-      video.addEventListener(
-        'error',
-        () => {
-          if (!mounted) return;
-          setStatus('Stream unavailable');
-          setError(true);
-        },
-        { once: true }
-      );
-    };
-
-    const attachHls = (video: HTMLVideoElement, hlsUrl: string) => {
-      if (Hls.isSupported()) {
-        const hls = new Hls({
-          enableWorker: true,
-          lowLatencyMode: false,
-          backBufferLength: 20,
-          maxBufferLength: 10,
-          maxMaxBufferLength: 14,
-          liveSyncDurationCount: 3,
-          liveMaxLatencyDurationCount: 6,
-          liveDurationInfinity: true,
-          maxLiveSyncPlaybackRate: 1.05,
-        });
-
-        hlsRef.current = hls;
-        hls.loadSource(`${hlsUrl}?_ts=${Date.now()}`);
-        hls.attachMedia(video);
-
-        hls.on(Hls.Events.MANIFEST_PARSED, () => {
-          if (!mounted) return;
-          fatalErrorCountRef.current = 0;
-          setStatus('Streaming');
-          setError(false);
-          video.play().catch(() => {});
-        });
-
-        hls.on(Hls.Events.LEVEL_UPDATED, (_event, data) => {
-          if (!mounted || !Number.isFinite(data.details?.edge)) return;
-          const liveEdge = Number(data.details.edge);
-          const latency = liveEdge - video.currentTime;
-          if (Number.isFinite(latency) && latency > targetLiveDelaySeconds + 1.5) {
-            const targetTime = Math.max(0, liveEdge - targetLiveDelaySeconds);
-            if (Math.abs(video.currentTime - targetTime) > 0.25) {
-              video.currentTime = targetTime;
-            }
-          }
-        });
-
-        hls.on(Hls.Events.ERROR, (_event, data) => {
-          if (!data.fatal || !mounted) return;
-
-          fatalErrorCountRef.current += 1;
-
-          if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
-            setStatus('Recovering stream...');
-            setError(false);
-            try {
-              hls.startLoad();
-            } catch {}
-            if (fatalErrorCountRef.current < 3) {
-              return;
-            }
-          }
-
-          if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
-            setStatus('Recovering stream...');
-            setError(false);
-            try {
-              hls.recoverMediaError();
-            } catch {}
-            if (fatalErrorCountRef.current < 3) {
-              return;
-            }
-          }
-
-          setStatus('Reconnecting stream...');
-          setError(false);
-          cleanupHls();
-          retryTimerRef.current = setTimeout(() => {
-            if (!mounted) return;
-            void startStreamAndAttach();
-          }, 2500);
-        });
-
-        return;
-      }
-
-      if (video.canPlayType('application/vnd.apple.mpegurl')) {
-        attachNativeHls(video, hlsUrl);
-        return;
-      }
-
-      setStatus('HLS not supported');
-      setError(true);
-    };
-
-    const buildHlsUrl = (candidateId: string) =>
-      `/api/hls-proxy/${encodeURIComponent(candidateId)}/${encodeURIComponent(String(channel))}/playlist.m3u8`;
-
-    const probeExistingPlaylist = async () => {
-      for (const candidateId of candidateVehicleIds) {
-        const probeUrl = `${buildHlsUrl(candidateId)}?_probe=${Date.now()}`;
-        try {
-          const response = await fetch(probeUrl, {
-            method: 'GET',
-            cache: 'no-store',
-            signal: AbortSignal.timeout(PLAYLIST_PROBE_TIMEOUT_MS),
-          });
-
-          if (!response.ok) {
-            continue;
-          }
-
-          const manifest = await response.text();
-          if (manifestLooksPlayable(manifest)) {
-            activeVehicleId = candidateId;
-            resolvedVehicleIdCache.set(cacheKey, candidateId);
-            return buildHlsUrl(candidateId);
-          }
-        } catch {}
-      }
-
-      return null;
-    };
-
-    const requestStartLive = async () => {
-      if (Date.now() < startLiveCooldownUntilRef.current) {
-        return false;
-      }
-
-      const requestKey = `${candidateVehicleIds.join('|')}:${channel}`;
-      const existingRequest = START_LIVE_REQUESTS.get(requestKey);
-      if (existingRequest) {
-        return existingRequest;
-      }
-
-      const startRequest = (async () => {
-        let sawNotConnected = false;
-
-        for (const candidateId of candidateVehicleIds) {
-          try {
-            const response = await fetch(`/api/video-server/vehicles/${encodeURIComponent(candidateId)}/start-live`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ channel }),
-              signal: AbortSignal.timeout(START_LIVE_TIMEOUT_MS),
-            });
-
-            if (response.ok) {
-              activeVehicleId = candidateId;
-              resolvedVehicleIdCache.set(cacheKey, candidateId);
-              return true;
-            }
-
-            if (response.status === 404) {
-              sawNotConnected = true;
-            }
-          } catch {}
-        }
-
-        if (sawNotConnected) {
-          startLiveCooldownUntilRef.current = Date.now() + 15000;
-        }
-
-        return false;
-      })().finally(() => {
-        START_LIVE_REQUESTS.delete(requestKey);
-      });
-
-      START_LIVE_REQUESTS.set(requestKey, startRequest);
-      return startRequest;
-    };
-
-    const waitForPlayablePlaylist = async (attempts: number, delayMs: number) => {
-      for (let attempt = 0; attempt < attempts; attempt += 1) {
-        const playlistUrl = await probeExistingPlaylist();
-        if (playlistUrl) {
-          return playlistUrl;
-        }
-        if (attempt < attempts - 1) {
-          await new Promise((resolve) => setTimeout(resolve, delayMs));
-        }
-      }
-      return null;
-    };
-
-    const startStreamAndAttach = async () => {
-      const video = videoRef.current;
-      if (!video || !mounted) return;
-
-      cleanupHls();
-      setStatus('Checking live stream...');
+    const timer = setTimeout(() => {
+      setStatus('Retrying live preview...');
       setError(false);
+      setReloadToken((value) => value + 1);
+    }, 3000);
 
-      const existingPlaylistUrl = await waitForPlayablePlaylist(1, 0);
-      if (!mounted) return;
+    return () => clearTimeout(timer);
+  }, [error]);
 
-      if (existingPlaylistUrl) {
-        setStatus('Loading live stream...');
-        attachHls(video, existingPlaylistUrl);
-        return;
-      }
-
-      setStatus('Requesting live stream...');
-      const started = await requestStartLive();
-      if (!mounted) return;
-
-      setStatus(started ? 'Waiting for stream data...' : 'Waiting for stream...');
-      const playlistAfterStartUrl = await waitForPlayablePlaylist(4, 1800);
-      if (!mounted) return;
-
-      if (playlistAfterStartUrl) {
-        setStatus('Loading live stream...');
-        attachHls(video, playlistAfterStartUrl);
-        return;
-      }
-
-      if (!started && candidateVehicleIds.length === 0) {
-        setStatus('Failed to start');
-        setError(true);
-        return;
-      }
-
-      const hlsUrl = buildHlsUrl(activeVehicleId);
-      setStatus(started ? 'Loading stream...' : 'Waiting for stream...');
-      attachHls(video, hlsUrl);
-    };
-
-    const video = videoRef.current;
-    const updateStats = () => {
-      if (!video) return;
-      if (video.buffered.length > 0) {
-        const bufferedEnd = video.buffered.end(video.buffered.length - 1);
-        const buffered = Math.max(0, bufferedEnd - video.currentTime);
-        const liveLag = Math.max(0, bufferedEnd - video.currentTime);
-        if (liveLag > targetLiveDelaySeconds + 1.5 && !video.paused) {
-          video.currentTime = Math.max(0, bufferedEnd - targetLiveDelaySeconds);
-        }
-        setStats(`Buffer: ${buffered.toFixed(1)}s | Time: ${video.currentTime.toFixed(1)}s | Lag: ${liveLag.toFixed(1)}s`);
-      }
-    };
-
-    video?.addEventListener('timeupdate', updateStats);
-    video?.addEventListener('waiting', updateStats);
-    video?.addEventListener('stalled', updateStats);
-    statsTimerRef.current = setInterval(updateStats, 1000);
-    void startStreamAndAttach();
-
-    return () => {
-      mounted = false;
-      video?.removeEventListener('timeupdate', updateStats);
-      video?.removeEventListener('waiting', updateStats);
-      video?.removeEventListener('stalled', updateStats);
-      clearStatsTimer();
-      cleanupHls();
-    };
-  }, [vehicleId, channel, fallbackKey]);
-
-  const isStreaming = status === 'Streaming';
+  const isStreaming = !error && status === 'Streaming';
 
   return (
     <div className="bg-slate-800 rounded-lg p-4 shadow-lg">
       <div className="flex justify-between items-center mb-2">
-        <h3 className="text-teal-400 font-bold text-sm">📹 {vehicleName || `${vehicleId} - Ch ${channel}`}</h3>
+        <h3 className="text-teal-400 font-bold text-sm">{vehicleName || `${vehicleId} - Ch ${channel}`}</h3>
         <div className="flex items-center gap-2">
           <span className={`text-xs ${isStreaming ? 'text-green-400' : error ? 'text-red-400' : 'text-yellow-400'}`}>
             {status}
@@ -367,22 +89,27 @@ export default function HLSPlayer({ vehicleId, channel, vehicleName, onStop, fal
           )}
         </div>
       </div>
-      <div className="relative w-full aspect-video bg-slate-900 rounded">
-        <video
-          ref={videoRef}
-          controls
-          autoPlay
-          muted
-          playsInline
-          className="w-full h-full bg-black rounded"
-          style={{ display: isStreaming ? 'block' : 'none' }}
+      <div className="relative w-full aspect-video bg-slate-900 rounded overflow-hidden">
+        <img
+          key={streamUrl}
+          src={streamUrl}
+          alt={vehicleName || `${vehicleId} channel ${channel}`}
+          className={`w-full h-full object-cover bg-black ${error ? 'hidden' : 'block'}`}
+          onLoad={() => {
+            setStatus('Streaming');
+            setError(false);
+          }}
+          onError={() => {
+            setStatus('Live preview unavailable');
+            setError(true);
+          }}
         />
         {error && (
           <div className="absolute inset-0 flex items-center justify-center">
             <div className="text-center text-slate-400">
               <AlertCircle className="w-12 h-12 mx-auto mb-2" />
-              <p className="text-sm">Stream not available</p>
-              <p className="text-xs mt-1">Vehicle may be offline</p>
+              <p className="text-sm">Live preview unavailable</p>
+              <p className="text-xs mt-1">Vehicle may be offline or channel idle</p>
             </div>
           </div>
         )}
@@ -395,7 +122,9 @@ export default function HLSPlayer({ vehicleId, channel, vehicleName, onStop, fal
           </div>
         )}
       </div>
-      <div className="text-xs text-gray-400 mt-2 font-mono">{stats}</div>
+      <div className="text-xs text-gray-400 mt-2 font-mono">
+        MJPEG live preview | CH {channel}
+      </div>
     </div>
   );
 }

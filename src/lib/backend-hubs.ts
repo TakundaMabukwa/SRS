@@ -51,6 +51,18 @@ export function getLiveVideoRuntimeBaseUrl() {
   return getExplicitLiveVideoBaseUrl() || getListenerBaseUrl();
 }
 
+export function getLivePreviewBaseUrl() {
+  return normalizeBaseUrl(
+    process.env.LIVE_PREVIEW_BASE_URL ||
+      process.env.NEXT_PUBLIC_LIVE_PREVIEW_BASE_URL ||
+      process.env.PLAYBACK_HUB_BASE_URL ||
+      process.env.NEXT_PUBLIC_PLAYBACK_HUB_BASE_URL ||
+      process.env.VIDEO_ARCHIVE_BASE_URL ||
+      process.env.NEXT_PUBLIC_VIDEO_ARCHIVE_BASE_URL,
+    getPlaybackHubBaseUrl()
+  );
+}
+
 export function getPlaybackHubBaseUrl() {
   return normalizeBaseUrl(
     process.env.PLAYBACK_HUB_BASE_URL ||
