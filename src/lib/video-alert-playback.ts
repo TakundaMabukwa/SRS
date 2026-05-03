@@ -12,15 +12,33 @@ type AlertPlaybackWindowOptions = {
   afterMs?: number;
 };
 
+type AlertPlaybackReadyMapOptions = {
+  maxConcurrency?: number;
+  falseTtlMs?: number;
+  force?: boolean;
+};
+
 type PlaybackJsonRecord = Record<string, unknown>;
+type PlaybackReadyCacheEntry = {
+  ready: boolean;
+  checkedAt: number;
+};
 
 const DEFAULT_VIDEO_PROXY_BASE = "/api/video-server";
 const ALERT_PLAYBACK_WINDOW_BEFORE_MS = 60 * 1000;
 const ALERT_PLAYBACK_WINDOW_AFTER_MS = 60 * 1000;
+const ALERT_READY_FALSE_TTL_MS = 15 * 1000;
 const PLAYBACK_CACHE_PREFIX = "alert-playback:";
 const playbackVideoCache = new Map<string, AlertPlaybackVideo[]>();
+const playbackReadyCache = new Map<string, PlaybackReadyCacheEntry>();
+const playbackReadyPending = new Map<string, Promise<boolean>>();
 const APPROX_AVAILABLE_RANGE_PATTERN =
   /Approx available range:\s*([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:\.\-+Z]+)\s+to\s+([0-9]{4}-[0-9]{2}-[0-9:\.\-+Z]+)/i;
+
+export const ALERT_READY_WINDOW_OPTIONS: AlertPlaybackWindowOptions = {
+  beforeMs: 30 * 1000,
+  afterMs: 30 * 1000,
+};
 
 function resolvePlaybackWindowOptions(options?: AlertPlaybackWindowOptions) {
   const beforeCandidate = Number(options?.beforeMs);
@@ -212,7 +230,6 @@ async function fetchAlertAvailabilitySummary(
     }
 
     for (const availabilityPath of [
-      `${playbackBase}/vehicles/${encodeURIComponent(vehicleId)}/videos/availability?date=${encodeURIComponent(dateKey)}`,
       `${playbackBase}/vehicles/${encodeURIComponent(vehicleId)}/video/availability?date=${encodeURIComponent(dateKey)}`,
     ]) {
       try {
@@ -671,29 +688,59 @@ async function fetchDetailedAlertForPlayback(
         getRawAlertTimestampValue(detailAlert.firstOccurrenceTimestamp) ||
         getRawAlertTimestampValue(detailAlert.first_occurrence_timestamp) ||
         canonicalTimestamp;
+      const existingTimestamp =
+        getRawAlertTimestampValue(alert.timestamp) ||
+        getRawAlertTimestampValue(alert.created_at) ||
+        "";
+      const existingFirstOccurrence =
+        getRawAlertTimestampValue(alert.firstOccurrenceTimestamp) ||
+        getRawAlertTimestampValue(alert.first_occurrence_timestamp) ||
+        existingTimestamp;
+      const existingLastOccurrence =
+        getRawAlertTimestampValue(alert.lastOccurrenceTimestamp) ||
+        getRawAlertTimestampValue(alert.last_occurrence_timestamp) ||
+        getRawAlertTimestampValue(alert.displayTimestamp) ||
+        existingTimestamp;
+      const existingPlaybackTimestamp =
+        getRawAlertTimestampValue(alert.playbackTimestamp) ||
+        getRawAlertTimestampValue(alert.playback_timestamp) ||
+        existingLastOccurrence ||
+        existingTimestamp;
 
       return {
         ...alert,
         ...detailAlert,
-        timestamp: canonicalTimestamp || detailAlert.timestamp || alert.timestamp,
+        timestamp:
+          existingTimestamp ||
+          canonicalTimestamp ||
+          getRawAlertTimestampValue(detailAlert.timestamp) ||
+          getRawAlertTimestampValue(detailAlert.created_at) ||
+          getRawAlertTimestampValue(alert.timestamp),
         firstOccurrenceTimestamp:
+          existingFirstOccurrence ||
           canonicalFirstOccurrence ||
-          detailAlert.firstOccurrenceTimestamp ||
-          alert.firstOccurrenceTimestamp,
+          getRawAlertTimestampValue(detailAlert.firstOccurrenceTimestamp) ||
+          getRawAlertTimestampValue(detailAlert.first_occurrence_timestamp) ||
+          getRawAlertTimestampValue(alert.firstOccurrenceTimestamp),
         lastOccurrenceTimestamp:
+          existingLastOccurrence ||
           canonicalLastOccurrence ||
-          detailAlert.lastOccurrenceTimestamp ||
-          alert.lastOccurrenceTimestamp,
+          getRawAlertTimestampValue(detailAlert.lastOccurrenceTimestamp) ||
+          getRawAlertTimestampValue(detailAlert.last_occurrence_timestamp) ||
+          getRawAlertTimestampValue(detailAlert.displayTimestamp) ||
+          getRawAlertTimestampValue(alert.lastOccurrenceTimestamp),
         displayTimestamp:
+          getRawAlertTimestampValue(alert.displayTimestamp) ||
+          existingLastOccurrence ||
           canonicalLastOccurrence ||
           canonicalTimestamp ||
-          detailAlert.displayTimestamp ||
-          alert.displayTimestamp,
+          getRawAlertTimestampValue(detailAlert.displayTimestamp),
         playbackTimestamp:
-          canonicalTimestamp ||
-          detailAlert.playbackTimestamp ||
-          detailAlert.timestamp ||
-          alert.playbackTimestamp,
+          existingPlaybackTimestamp ||
+          getRawAlertTimestampValue(detailAlert.playbackTimestamp) ||
+          getRawAlertTimestampValue(detailAlert.playback_timestamp) ||
+          canonicalLastOccurrence ||
+          canonicalTimestamp,
       } satisfies PlaybackJsonRecord;
     } catch {
       // Try next playback base.
@@ -863,5 +910,142 @@ export async function resolveAlertPlaybackVideos(
 
     throw initialError;
   }
+}
+
+function isClosedOrResolvedAlert(alert: PlaybackJsonRecord | null | undefined) {
+  const status = String(alert?.status || "").trim().toLowerCase();
+  return status === "closed" || status === "resolved";
+}
+
+function getAlertReadyCacheKey(
+  alert: PlaybackJsonRecord | null | undefined,
+  windowOptions: AlertPlaybackWindowOptions = {}
+) {
+  return getAlertPlaybackCacheKey(alert, windowOptions);
+}
+
+export function clearAlertPlaybackReadyCache(
+  alertSource?: AlertPlaybackSource,
+  windowOptions: AlertPlaybackWindowOptions = ALERT_READY_WINDOW_OPTIONS
+) {
+  if (!alertSource || typeof alertSource !== "object") {
+    playbackReadyCache.clear();
+    return;
+  }
+
+  const cacheKey = getAlertReadyCacheKey(alertSource, windowOptions);
+  if (!cacheKey) return;
+  playbackReadyCache.delete(cacheKey);
+}
+
+export async function isAlertPlaybackReady(
+  alertSource: AlertPlaybackSource,
+  videoProxyBase = DEFAULT_VIDEO_PROXY_BASE,
+  windowOptions: AlertPlaybackWindowOptions = ALERT_READY_WINDOW_OPTIONS,
+  options: AlertPlaybackReadyMapOptions = {}
+) {
+  const alert = typeof alertSource === "object" && alertSource !== null ? alertSource : null;
+  if (!alert) return false;
+  if (isClosedOrResolvedAlert(alert)) return true;
+
+  const cacheKey = getAlertReadyCacheKey(alert, windowOptions);
+  if (!cacheKey) return false;
+
+  const falseTtlMs = Number.isFinite(Number(options.falseTtlMs))
+    ? Math.max(0, Number(options.falseTtlMs))
+    : ALERT_READY_FALSE_TTL_MS;
+  const now = Date.now();
+  const cached = playbackReadyCache.get(cacheKey);
+  if (!options.force && cached) {
+    if (cached.ready) return true;
+    if (now - cached.checkedAt < falseTtlMs) return false;
+  }
+
+  const pending = playbackReadyPending.get(cacheKey);
+  if (!options.force && pending) {
+    return pending;
+  }
+
+  const readinessPromise = resolveAlertPlaybackVideos(alert, videoProxyBase, windowOptions)
+    .then((videos) => Array.isArray(videos) && videos.length > 0)
+    .catch(() => false)
+    .then((ready) => {
+      playbackReadyCache.set(cacheKey, { ready, checkedAt: Date.now() });
+      return ready;
+    })
+    .finally(() => {
+      playbackReadyPending.delete(cacheKey);
+    });
+
+  playbackReadyPending.set(cacheKey, readinessPromise);
+  return readinessPromise;
+}
+
+export async function resolveAlertPlaybackReadyMap<T extends PlaybackJsonRecord>(
+  alerts: T[],
+  videoProxyBase = DEFAULT_VIDEO_PROXY_BASE,
+  windowOptions: AlertPlaybackWindowOptions = ALERT_READY_WINDOW_OPTIONS,
+  options: AlertPlaybackReadyMapOptions = {}
+) {
+  const alertList = Array.isArray(alerts) ? alerts : [];
+  const readyMap: Record<string, boolean> = {};
+  const queue = alertList.filter((alert) => {
+    const alertId = String(alert?.id || "").trim();
+    if (!alertId) return false;
+    if (isClosedOrResolvedAlert(alert)) {
+      readyMap[alertId] = true;
+      return false;
+    }
+    return true;
+  });
+
+  if (queue.length === 0) return readyMap;
+
+  const maxConcurrencyCandidate = Number(options.maxConcurrency);
+  const maxConcurrency = Number.isFinite(maxConcurrencyCandidate) && maxConcurrencyCandidate > 0
+    ? Math.min(queue.length, Math.floor(maxConcurrencyCandidate))
+    : Math.min(queue.length, 4);
+
+  let nextIndex = 0;
+  const workers = Array.from({ length: maxConcurrency }, async () => {
+    while (nextIndex < queue.length) {
+      const currentIndex = nextIndex;
+      nextIndex += 1;
+
+      const alert = queue[currentIndex];
+      const alertId = String(alert?.id || "").trim();
+      if (!alertId) continue;
+
+      readyMap[alertId] = await isAlertPlaybackReady(
+        alert,
+        videoProxyBase,
+        windowOptions,
+        options
+      );
+    }
+  });
+
+  await Promise.all(workers);
+  return readyMap;
+}
+
+export async function filterAlertsWithReadyPlayback<T extends PlaybackJsonRecord>(
+  alerts: T[],
+  videoProxyBase = DEFAULT_VIDEO_PROXY_BASE,
+  windowOptions: AlertPlaybackWindowOptions = ALERT_READY_WINDOW_OPTIONS,
+  options: AlertPlaybackReadyMapOptions = {}
+) {
+  const readyMap = await resolveAlertPlaybackReadyMap(
+    alerts,
+    videoProxyBase,
+    windowOptions,
+    options
+  );
+
+  return (Array.isArray(alerts) ? alerts : []).filter((alert) => {
+    if (isClosedOrResolvedAlert(alert)) return true;
+    const alertId = String(alert?.id || "").trim();
+    return !!readyMap[alertId];
+  });
 }
 
