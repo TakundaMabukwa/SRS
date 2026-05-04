@@ -10,6 +10,8 @@ type AlertPlaybackSource = string | PlaybackJsonRecord;
 type AlertPlaybackWindowOptions = {
   beforeMs?: number;
   afterMs?: number;
+  preferLatestAvailable?: boolean;
+  latestAvailableDurationMs?: number;
 };
 
 type AlertPlaybackReadyMapOptions = {
@@ -835,6 +837,10 @@ async function resolvePlaybackWindowForAlert(
   if (!vehicleId || !playbackWindow) return [];
 
   const { startIso, endIso } = playbackWindow;
+  const preferLatestAvailable = windowOptions.preferLatestAvailable === true;
+  const latestAvailableDurationMs = Number.isFinite(Number(windowOptions.latestAvailableDurationMs))
+    ? Math.max(1000, Number(windowOptions.latestAvailableDurationMs))
+    : ALERT_LAST_AVAILABLE_FALLBACK_MS;
   const requestChannelPlaybackForRange = async (
     targetChannel: number,
     range: { startIso: string; endIso: string },
@@ -906,6 +912,57 @@ async function resolvePlaybackWindowForAlert(
     throw new Error(`CH${targetChannel}: ${lastFailureMessage}`);
   };
 
+  const resolveLatestAvailableVideos = async () => {
+    const availabilityRows = await fetchAlertAvailabilityRows(vehicleId, startIso, videoProxyBase);
+    const latestByChannel = getLatestAvailabilityByChannel(availabilityRows);
+    const latestAnyChannel = Array.from(latestByChannel.values())
+      .filter((value): value is NonNullable<typeof value> => !!value)
+      .sort((a, b) => b.endMs - a.endMs)[0];
+    if (!latestAnyChannel) return [] as AlertPlaybackVideo[];
+
+    const fallbackSettledVideos = await Promise.allSettled(
+      channelCandidates.map((targetChannel) => {
+        const preferred = latestByChannel.get(targetChannel) || latestAnyChannel;
+        if (!preferred) {
+          throw new Error(`CH${targetChannel}: No available stored playback range.`);
+        }
+        const fallbackStartMs = Math.max(
+          preferred.startMs,
+          preferred.endMs - latestAvailableDurationMs
+        );
+        const fallbackRange = {
+          startIso: new Date(fallbackStartMs).toISOString(),
+          endIso: new Date(preferred.endMs).toISOString(),
+        };
+
+        return requestChannelPlaybackForRange(
+          targetChannel,
+          fallbackRange,
+          "Nearest Available Playback (last 339s)",
+          "alert_window_latest",
+          preferred.channel
+        );
+      })
+    );
+
+    return dedupePlaybackVideos(
+      fallbackSettledVideos
+        .filter(
+          (result): result is PromiseFulfilledResult<AlertPlaybackVideo> =>
+            result.status === "fulfilled"
+        )
+        .map((result) => result.value)
+    );
+  };
+
+  if (preferLatestAvailable) {
+    const latestAvailableVideos = await resolveLatestAvailableVideos();
+    if (latestAvailableVideos.length > 0) {
+      writeCachedPlaybackVideos(cacheKey, latestAvailableVideos);
+      return latestAvailableVideos;
+    }
+  }
+
   const settledVideos = await Promise.allSettled(
     channelCandidates.map((targetChannel) =>
       requestChannelPlaybackForRange(
@@ -930,51 +987,11 @@ async function resolvePlaybackWindowForAlert(
     return dedupedVideos;
   }
 
-  // Fallback: load the latest 339 seconds from available stored coverage.
-  const availabilityRows = await fetchAlertAvailabilityRows(vehicleId, startIso, videoProxyBase);
-  const latestByChannel = getLatestAvailabilityByChannel(availabilityRows);
-  const latestAnyChannel = Array.from(latestByChannel.values())
-    .filter((value): value is NonNullable<typeof value> => !!value)
-    .sort((a, b) => b.endMs - a.endMs)[0];
-
-  if (latestAnyChannel) {
-    const fallbackSettledVideos = await Promise.allSettled(
-      channelCandidates.map((targetChannel) => {
-        const preferred = latestByChannel.get(targetChannel) || latestAnyChannel;
-        if (!preferred) {
-          throw new Error(`CH${targetChannel}: No available stored playback range.`);
-        }
-        const fallbackStartMs = Math.max(
-          preferred.startMs,
-          preferred.endMs - ALERT_LAST_AVAILABLE_FALLBACK_MS
-        );
-        const fallbackRange = {
-          startIso: new Date(fallbackStartMs).toISOString(),
-          endIso: new Date(preferred.endMs).toISOString(),
-        };
-
-        return requestChannelPlaybackForRange(
-          targetChannel,
-          fallbackRange,
-          "Nearest Available Playback (last 339s)",
-          "alert_window_latest",
-          preferred.channel
-        );
-      })
-    );
-
-    const fallbackVideos = dedupePlaybackVideos(
-      fallbackSettledVideos
-        .filter(
-          (result): result is PromiseFulfilledResult<AlertPlaybackVideo> =>
-            result.status === "fulfilled"
-        )
-        .map((result) => result.value)
-    );
-
-    if (fallbackVideos.length > 0) {
-      writeCachedPlaybackVideos(cacheKey, fallbackVideos);
-      return fallbackVideos;
+  if (!preferLatestAvailable) {
+    const latestAvailableVideos = await resolveLatestAvailableVideos();
+    if (latestAvailableVideos.length > 0) {
+      writeCachedPlaybackVideos(cacheKey, latestAvailableVideos);
+      return latestAvailableVideos;
     }
   }
 

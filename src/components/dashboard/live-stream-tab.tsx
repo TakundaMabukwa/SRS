@@ -69,7 +69,7 @@ type StreamEntry = {
   vehicleName: string;
 };
 
-const LIVE_WARM_MAX_AGE_MS = 20000;
+const LIVE_WARM_MAX_AGE_MS = 15000;
 const LIVE_REFRESH_INTERVAL_MS = 10000;
 
 function getChannelNumber(channel: VehicleChannel): number {
@@ -366,9 +366,9 @@ export default function LiveStreamTab() {
 
   const fetchRuntimeVehicles = useCallback(async () => {
     const runtimeEndpoints = [
-      `/api/video-server/vehicles`,
       `/api/video-server/vehicles/connected`,
-      `/api/live-video/streams?maxAgeMs=${LIVE_WARM_MAX_AGE_MS}`,
+      `/api/video-server/vehicles`,
+      `/api/live-preview/streams?maxAgeMs=${LIVE_WARM_MAX_AGE_MS}`,
     ];
 
     for (const endpoint of runtimeEndpoints) {

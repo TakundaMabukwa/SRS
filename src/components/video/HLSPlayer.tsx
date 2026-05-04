@@ -1,7 +1,6 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import Hls from 'hls.js';
 import { AlertCircle, Loader2 } from 'lucide-react';
 
 interface HLSPlayerProps {
@@ -12,9 +11,24 @@ interface HLSPlayerProps {
   fallbackVehicleIds?: string[];
 }
 
-const LIVE_WARM_MAX_AGE_MS = 20000;
-const LIVE_CONNECT_TIMEOUT_MS = 20000;
-const LIVE_RETRY_DELAY_MS = 3000;
+const PREVIEW_WAIT_MS = 2500;
+const PREVIEW_MAX_AGE_MS = 15000;
+const PREVIEW_CONNECT_TIMEOUT_MS = 12000;
+const PREVIEW_RETRY_DELAY_MS = 3000;
+const SCREENSHOT_MAX_AGE_MS = 120000;
+const SCREENSHOT_REFRESH_MS = 2500;
+const START_LIVE_THROTTLE_MS = 12000;
+
+type PreviewMode = 'mjpeg' | 'screenshot';
+
+function normalizeVehicleAlias(value: string) {
+  const trimmed = String(value || '').trim();
+  if (!/^\d+$/.test(trimmed)) return trimmed;
+  if (trimmed.startsWith('862') && trimmed.length > 12) {
+    return trimmed.slice(3);
+  }
+  return trimmed;
+}
 
 export default function HLSPlayer({
   vehicleId,
@@ -23,116 +37,69 @@ export default function HLSPlayer({
   onStop,
   fallbackVehicleIds = [],
 }: HLSPlayerProps) {
-  const videoRef = useRef<HTMLVideoElement | null>(null);
-  const [status, setStatus] = useState('Connecting live video...');
+  const lastStartRequestAtRef = useRef<Map<string, number>>(new Map());
+  const connectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const [status, setStatus] = useState('Connecting live preview...');
   const [error, setError] = useState(false);
   const [reloadToken, setReloadToken] = useState(0);
+  const [mode, setMode] = useState<PreviewMode>('mjpeg');
+  const [snapshotUrl, setSnapshotUrl] = useState('');
+
+  const streamStartCandidates = useMemo(() => {
+    const ordered = [vehicleId, ...fallbackVehicleIds]
+      .map((value) => String(value || '').trim())
+      .filter(Boolean);
+    const candidates: string[] = [];
+    const seen = new Set<string>();
+
+    for (const id of ordered) {
+      const alias = normalizeVehicleAlias(id);
+      if (seen.has(id) || (alias && alias !== id && seen.has(alias))) {
+        continue;
+      }
+      candidates.push(id);
+      seen.add(id);
+      if (alias && alias !== id && !seen.has(alias)) {
+        candidates.push(alias);
+        seen.add(alias);
+      }
+    }
+
+    return candidates;
+  }, [vehicleId, fallbackVehicleIds]);
 
   const fallbackKey = useMemo(
     () =>
-      Array.from(
-        new Set(
-          fallbackVehicleIds
-            .map((value) => String(value || '').trim())
-            .filter(Boolean)
-        )
-      ).join(','),
-    [fallbackVehicleIds]
+      streamStartCandidates
+        .filter((value, index, values) => values.indexOf(value) === index)
+        .join(','),
+    [streamStartCandidates]
   );
 
-  const streamUrl = useMemo(() => {
+  const mjpegUrl = useMemo(() => {
     const params = new URLSearchParams({
       channel: String(channel),
-      waitMs: '15000',
-      maxAgeMs: String(LIVE_WARM_MAX_AGE_MS),
+      waitMs: String(PREVIEW_WAIT_MS),
+      maxAgeMs: String(PREVIEW_MAX_AGE_MS),
       _ts: String(reloadToken || Date.now()),
     });
     if (fallbackKey) {
       params.set('fallbackIds', fallbackKey);
     }
-    return `/api/live-video/vehicles/${encodeURIComponent(vehicleId)}/playlist.m3u8?${params.toString()}`;
+    return `/api/live-preview/vehicles/${encodeURIComponent(vehicleId)}/live.mjpeg?${params.toString()}`;
   }, [channel, fallbackKey, reloadToken, vehicleId]);
 
-  const streamStartCandidates = useMemo(
-    () =>
-      Array.from(
-        new Set(
-          [vehicleId, ...fallbackVehicleIds]
-            .map((value) => String(value || '').trim())
-            .filter(Boolean)
-        )
-      ),
-    [fallbackVehicleIds, vehicleId]
-  );
-
-  useEffect(() => {
-    const videoEl = videoRef.current;
-    if (!videoEl) {
-      return;
-    }
-
-    setStatus('Connecting live video...');
-    setError(false);
-
-    let destroyed = false;
-    let hls: Hls | null = null;
-    let connectTimeout: ReturnType<typeof setTimeout> | null = null;
-
-    const markStreaming = () => {
-      if (destroyed) {
+  const startLive = useMemo(
+    () => async () => {
+      const startKey = `${vehicleId}:${channel}:${fallbackKey}`;
+      const now = Date.now();
+      const last = lastStartRequestAtRef.current.get(startKey) || 0;
+      if (now - last < START_LIVE_THROTTLE_MS) {
         return;
       }
-      if (connectTimeout) {
-        clearTimeout(connectTimeout);
-        connectTimeout = null;
-      }
-      setStatus('Streaming');
-      setError(false);
-    };
+      lastStartRequestAtRef.current.set(startKey, now);
 
-    const markUnavailable = (message = 'Live video unavailable') => {
-      if (destroyed) {
-        return;
-      }
-      if (connectTimeout) {
-        clearTimeout(connectTimeout);
-        connectTimeout = null;
-      }
-      setStatus(message);
-      setError(true);
-    };
-
-    const tryPlay = () => {
-      void videoEl.play().catch(() => {
-        // Autoplay can be blocked briefly during route changes; keep the stream attached.
-      });
-    };
-
-    const onPlaying = () => {
-      markStreaming();
-    };
-
-    const onLoadedData = () => {
-      markStreaming();
-      tryPlay();
-    };
-
-    const onWaiting = () => {
-      if (!destroyed) {
-        setStatus('Buffering live video...');
-      }
-    };
-
-    const onVideoError = () => {
-      markUnavailable();
-    };
-
-    videoEl.muted = true;
-    videoEl.autoplay = true;
-    videoEl.playsInline = true;
-    videoEl.preload = 'auto';
-
-    const requestStartLive = async () => {
       for (const candidateId of streamStartCandidates) {
         try {
           const response = await fetch(
@@ -147,99 +114,100 @@ export default function HLSPlayer({
             break;
           }
         } catch {
-          // Try next candidate id.
+          // Try the next id.
         }
       }
-    };
-    void requestStartLive();
-
-    connectTimeout = setTimeout(() => {
-      markUnavailable('Live video startup timed out');
-    }, LIVE_CONNECT_TIMEOUT_MS);
-
-    videoEl.addEventListener('playing', onPlaying);
-    videoEl.addEventListener('loadeddata', onLoadedData);
-    videoEl.addEventListener('waiting', onWaiting);
-    videoEl.addEventListener('error', onVideoError);
-
-    if (videoEl.canPlayType('application/vnd.apple.mpegurl')) {
-      videoEl.src = streamUrl;
-      tryPlay();
-    } else if (Hls.isSupported()) {
-      hls = new Hls({
-        enableWorker: true,
-        lowLatencyMode: true,
-        liveSyncDurationCount: 2,
-        liveMaxLatencyDurationCount: 4,
-        maxLiveSyncPlaybackRate: 1.5,
-        backBufferLength: 30,
-        manifestLoadingTimeOut: 15000,
-        levelLoadingTimeOut: 15000,
-        fragLoadingTimeOut: 15000,
-      });
-
-      hls.loadSource(streamUrl);
-      hls.attachMedia(videoEl);
-      hls.on(Hls.Events.MANIFEST_PARSED, () => {
-        tryPlay();
-      });
-      hls.on(Hls.Events.LEVEL_LOADED, () => {
-        markStreaming();
-      });
-      hls.on(Hls.Events.ERROR, (_, data) => {
-        if (data?.fatal) {
-          markUnavailable();
-          hls?.destroy();
-          hls = null;
-          return;
-        }
-
-        if (data?.type === Hls.ErrorTypes.NETWORK_ERROR) {
-          setStatus('Reconnecting live video...');
-          try {
-            hls?.startLoad();
-          } catch {
-            // Retry loop below will reload the player if needed.
-          }
-        }
-      });
-    } else {
-      markUnavailable('Live video unsupported');
-    }
-
-    return () => {
-      destroyed = true;
-      videoEl.pause();
-      videoEl.removeAttribute('src');
-      videoEl.load();
-      videoEl.removeEventListener('playing', onPlaying);
-      videoEl.removeEventListener('loadeddata', onLoadedData);
-      videoEl.removeEventListener('waiting', onWaiting);
-      videoEl.removeEventListener('error', onVideoError);
-      if (hls) {
-        hls.destroy();
-      }
-      if (connectTimeout) {
-        clearTimeout(connectTimeout);
-      }
-    };
-  }, [channel, streamStartCandidates, streamUrl]);
+    },
+    [channel, fallbackKey, streamStartCandidates, vehicleId]
+  );
 
   useEffect(() => {
-    if (!error) {
-      return;
+    setMode('mjpeg');
+    setError(false);
+    setStatus('Connecting live preview...');
+    setSnapshotUrl('');
+    void startLive();
+
+    if (connectTimeoutRef.current) {
+      clearTimeout(connectTimeoutRef.current);
     }
-
-    const timer = setTimeout(() => {
-      setStatus('Retrying live video...');
+    connectTimeoutRef.current = setTimeout(() => {
+      setMode('screenshot');
+      setStatus('Switching to snapshot preview...');
       setError(false);
-      setReloadToken((value) => value + 1);
-    }, LIVE_RETRY_DELAY_MS);
+    }, PREVIEW_CONNECT_TIMEOUT_MS);
 
+    return () => {
+      if (connectTimeoutRef.current) {
+        clearTimeout(connectTimeoutRef.current);
+        connectTimeoutRef.current = null;
+      }
+    };
+  }, [mjpegUrl, startLive]);
+
+  useEffect(() => {
+    if (mode !== 'screenshot') return;
+
+    const buildSnapshotUrl = () => {
+      const params = new URLSearchParams({
+        channel: String(channel),
+        maxAgeMs: String(SCREENSHOT_MAX_AGE_MS),
+        _ts: String(Date.now()),
+      });
+      if (fallbackKey) {
+        params.set('fallbackIds', fallbackKey);
+      }
+      return `/api/live-preview/vehicles/${encodeURIComponent(vehicleId)}/screenshot?${params.toString()}`;
+    };
+
+    setSnapshotUrl(buildSnapshotUrl());
+    const timer = setInterval(() => {
+      setSnapshotUrl(buildSnapshotUrl());
+    }, SCREENSHOT_REFRESH_MS);
+
+    return () => clearInterval(timer);
+  }, [mode, channel, fallbackKey, vehicleId]);
+
+  const handleMjpegLoaded = () => {
+    if (connectTimeoutRef.current) {
+      clearTimeout(connectTimeoutRef.current);
+      connectTimeoutRef.current = null;
+    }
+    setStatus('Streaming (preview)');
+    setError(false);
+  };
+
+  const handleMjpegError = () => {
+    if (connectTimeoutRef.current) {
+      clearTimeout(connectTimeoutRef.current);
+      connectTimeoutRef.current = null;
+    }
+    setMode('screenshot');
+    setStatus('MJPEG unavailable, using snapshots...');
+    setError(false);
+  };
+
+  const handleSnapshotLoaded = () => {
+    setStatus('Streaming (snapshots)');
+    setError(false);
+  };
+
+  const handleSnapshotError = () => {
+    setStatus('Live preview unavailable');
+    setError(true);
+  };
+
+  useEffect(() => {
+    if (!error) return;
+    const timer = setTimeout(() => {
+      setError(false);
+      setStatus('Retrying live preview...');
+      setReloadToken((value) => value + 1);
+    }, PREVIEW_RETRY_DELAY_MS);
     return () => clearTimeout(timer);
   }, [error]);
 
-  const isStreaming = !error && status === 'Streaming';
+  const isStreaming = !error && (status.startsWith('Streaming') || status.includes('using snapshots'));
 
   return (
     <div className="bg-slate-800 rounded-lg p-4 shadow-lg">
@@ -260,22 +228,36 @@ export default function HLSPlayer({
         </div>
       </div>
       <div className="relative w-full aspect-video bg-slate-900 rounded overflow-hidden">
-        <video
-          ref={videoRef}
-          muted
-          autoPlay
-          playsInline
-          className={`w-full h-full object-cover bg-black ${error ? 'hidden' : 'block'}`}
-        />
+        {mode === 'mjpeg' ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={mjpegUrl}
+            alt={`${vehicleName || vehicleId} CH${channel} live preview`}
+            className={`w-full h-full object-cover bg-black ${error ? 'hidden' : 'block'}`}
+            onLoad={handleMjpegLoaded}
+            onError={handleMjpegError}
+          />
+        ) : (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={snapshotUrl}
+            alt={`${vehicleName || vehicleId} CH${channel} live snapshot`}
+            className={`w-full h-full object-cover bg-black ${error ? 'hidden' : 'block'}`}
+            onLoad={handleSnapshotLoaded}
+            onError={handleSnapshotError}
+          />
+        )}
+
         {error && (
           <div className="absolute inset-0 flex items-center justify-center">
             <div className="text-center text-slate-400">
               <AlertCircle className="w-12 h-12 mx-auto mb-2" />
-              <p className="text-sm">Live video unavailable</p>
-              <p className="text-xs mt-1">Vehicle may be offline or stream not warm yet</p>
+              <p className="text-sm">Live preview unavailable</p>
+              <p className="text-xs mt-1">Vehicle may be offline or not sending decodable frames</p>
             </div>
           </div>
         )}
+
         {!error && !isStreaming && (
           <div className="absolute inset-0 flex items-center justify-center">
             <div className="text-center text-slate-400">
@@ -286,7 +268,8 @@ export default function HLSPlayer({
         )}
       </div>
       <div className="text-xs text-gray-400 mt-2 font-mono">
-        HLS live video | CH {channel}
+        {mode === 'mjpeg' ? 'MJPEG live preview | CH ' : 'Snapshot live preview | CH '}
+        {channel}
       </div>
     </div>
   );

@@ -3170,7 +3170,12 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
             resolvedWindowVideos = await resolveAlertPlaybackVideos(
               selectedAlert,
               videoProxyBase,
-              { beforeMs: 60 * 1000, afterMs: 0 }
+              {
+                beforeMs: 60 * 1000,
+                afterMs: 0,
+                preferLatestAvailable: true,
+                latestAvailableDurationMs: 339 * 1000,
+              }
             );
           } catch (videoError) {
             console.warn("Failed to pull resolved-alert playback window:", videoError);
@@ -3358,7 +3363,12 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
       const playbackVideos = await resolveAlertPlaybackVideos(
         alertForPlayback,
         videoProxyBase,
-        { beforeMs: 30 * 1000, afterMs: 30 * 1000 }
+        {
+          beforeMs: 30 * 1000,
+          afterMs: 30 * 1000,
+          preferLatestAvailable: true,
+          latestAvailableDurationMs: 339 * 1000,
+        }
       );
       const seen = new Set<string>();
       const entries = playbackVideos
@@ -3739,7 +3749,12 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
         const videos = await resolveAlertPlaybackVideos(
           selectedAlert,
           videoProxyBase,
-          { beforeMs: 30 * 1000, afterMs: 30 * 1000 }
+          {
+            beforeMs: 30 * 1000,
+            afterMs: 30 * 1000,
+            preferLatestAvailable: true,
+            latestAvailableDurationMs: 339 * 1000,
+          }
         );
         if (!cancelled) {
           setSelectedAlertPlaybackVideos(videos);
@@ -6516,7 +6531,13 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
                         <div>
                           <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Vehicle</p>
                           <p className="mt-1 font-semibold text-slate-900">
-                            {selectedAlert.vehicle_registration || selectedAlert.fleet_number || selectedAlert.vehicleId || "N/A"}
+                            {selectedAlertDriverInfo.registration ||
+                              selectedAlertDriverInfo.fleetNumber ||
+                              selectedAlert?.vehicle_registration ||
+                              selectedAlert?.fleet_number ||
+                              selectedAlert?.vehicleId ||
+                              selectedAlert?.device_id ||
+                              "N/A"}
                           </p>
                         </div>
                       </div>

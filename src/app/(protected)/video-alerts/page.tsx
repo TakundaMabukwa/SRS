@@ -88,7 +88,11 @@ export default function VideoAlertsPage() {
     const videos = await resolveAlertPlaybackVideos(
       alert,
       '/api/video-server',
-      ALERT_READY_WINDOW_OPTIONS
+      {
+        ...ALERT_READY_WINDOW_OPTIONS,
+        preferLatestAvailable: true,
+        latestAvailableDurationMs: 339 * 1000,
+      }
     )
     return videos[0] || null
   }
@@ -253,7 +257,12 @@ export default function VideoAlertsPage() {
           const playbackVideos = await resolveAlertPlaybackVideos(
             normalized,
             '/api/video-server',
-            { beforeMs: 30 * 1000, afterMs: 30 * 1000 }
+            {
+              beforeMs: 30 * 1000,
+              afterMs: 30 * 1000,
+              preferLatestAvailable: true,
+              latestAvailableDurationMs: 339 * 1000,
+            }
           )
           if (playbackVideos.length > 0) {
             normalized.videos = playbackVideos
@@ -414,7 +423,12 @@ export default function VideoAlertsPage() {
             resolvedWindowVideos = await resolveAlertPlaybackVideos(
               alertToResolve,
               '/api/video-server',
-              { beforeMs: 60 * 1000, afterMs: 0 }
+              {
+                beforeMs: 60 * 1000,
+                afterMs: 0,
+                preferLatestAvailable: true,
+                latestAvailableDurationMs: 339 * 1000,
+              }
             )
           } catch (playbackErr) {
             console.warn('Failed to pull resolved-alert playback window:', playbackErr)

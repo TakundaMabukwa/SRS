@@ -6,14 +6,41 @@ export const revalidate = 0;
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
+function normalizeVehicleAlias(value: string) {
+  const trimmed = String(value || "").trim();
+  if (!/^\d+$/.test(trimmed)) return trimmed;
+  if (trimmed.startsWith("862") && trimmed.length > 12) {
+    return trimmed.slice(3);
+  }
+  return trimmed;
+}
+
 function buildCandidateVehicleIds(vehicleId: string, fallbackIds: string | null) {
-  return Array.from(
-    new Set(
-      [vehicleId, ...(fallbackIds ? fallbackIds.split(",") : [])]
-        .map((value) => String(value || "").trim())
-        .filter(Boolean)
-    )
-  );
+  const ordered = [vehicleId, ...(fallbackIds ? fallbackIds.split(",") : [])]
+    .map((value) => String(value || "").trim())
+    .filter(Boolean);
+
+  const candidates: string[] = [];
+  const seenAliases = new Set<string>();
+
+  for (const id of ordered) {
+    const alias = normalizeVehicleAlias(id);
+    if (seenAliases.has(id)) {
+      continue;
+    }
+    if (alias && alias !== id && seenAliases.has(alias)) {
+      continue;
+    }
+    candidates.push(id);
+    seenAliases.add(id);
+
+    if (alias && alias !== id && !seenAliases.has(alias)) {
+      candidates.push(alias);
+      seenAliases.add(alias);
+    }
+  }
+
+  return candidates;
 }
 
 function decodeUriSafe(value: string) {
@@ -80,15 +107,22 @@ export async function GET(
   const fallbackIds = request.nextUrl.searchParams.get("fallbackIds");
   const candidates = buildCandidateVehicleIds(vehicleId, fallbackIds);
   const channel = String(request.nextUrl.searchParams.get("channel") || "1").trim() || "1";
-  const waitMs = String(request.nextUrl.searchParams.get("waitMs") || "15000").trim() || "15000";
-  const maxAgeMs = String(request.nextUrl.searchParams.get("maxAgeMs") || "20000").trim() || "20000";
+  const waitMs = String(request.nextUrl.searchParams.get("waitMs") || "2500").trim() || "2500";
+  const maxAgeMs = String(request.nextUrl.searchParams.get("maxAgeMs") || "10000").trim() || "10000";
+  const waitMsNumber = Number(waitMs);
+  const upstreamWaitMs = Number.isFinite(waitMsNumber)
+    ? Math.max(0, Math.min(3000, waitMsNumber))
+    : 2500;
+  const upstreamTimeoutMs = Number.isFinite(waitMsNumber) && waitMsNumber > 0
+    ? Math.max(4500, Math.min(9000, upstreamWaitMs + 5000))
+    : 8000;
   const upstreamBase = getLivePreviewBaseUrl();
 
   let lastErrorResponse: Response | null = null;
 
   for (const candidateId of candidates) {
     const query = new URLSearchParams({
-      waitMs,
+      waitMs: String(upstreamWaitMs),
       maxAgeMs,
     });
     const upstreamUrl = `${upstreamBase}/api/vehicles/${encodeURIComponent(candidateId)}/live-hls/${encodeURIComponent(channel)}/playlist.m3u8?${query.toString()}`;
@@ -96,6 +130,7 @@ export async function GET(
     try {
       const response = await fetch(upstreamUrl, {
         cache: "no-store",
+        signal: AbortSignal.timeout(upstreamTimeoutMs),
       });
 
       if (response.ok) {
@@ -113,7 +148,7 @@ export async function GET(
       }
 
       lastErrorResponse = response;
-      if (response.status !== 404) {
+      if (response.status === 401 || response.status === 403) {
         break;
       }
     } catch (error) {

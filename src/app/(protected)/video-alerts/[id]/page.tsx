@@ -191,6 +191,7 @@ export default function AlertDetailPage({ params }) {
   const [screenshotsLoading, setScreenshotsLoading] = useState(false);
   const [derivedScreenshotUrl, setDerivedScreenshotUrl] = useState("");
   const [derivedScreenshotLoading, setDerivedScreenshotLoading] = useState(false);
+  const [vehicleRegistration, setVehicleRegistration] = useState<string>("");
   const alertPlaybackSignature = useMemo(
     () => getAlertPlaybackSignature(selectedAlert),
     [selectedAlert]
@@ -281,6 +282,76 @@ export default function AlertDetailPage({ params }) {
     }
   }, [alertId, alerts]);
 
+  // Fetch vehicle registration using vehicle lookup API
+  useEffect(() => {
+    let cancelled = false;
+
+    const fetchVehicleRegistration = async () => {
+      if (!selectedAlert) {
+        setVehicleRegistration("");
+        return;
+      }
+
+      // Extract vehicle identifiers from alert
+      const vehicleMeta = selectedAlert?.metadata?.vehicle || selectedAlert?.vehicle || {};
+      const identifiers = Array.from(
+        new Set(
+          [
+            selectedAlert?.vehicleId,
+            selectedAlert?.device_id,
+            selectedAlert?.vehicle_id,
+            vehicleMeta?.vehicleId,
+            vehicleMeta?.terminalId,
+          ]
+            .map((value) => String(value || "").trim())
+            .filter(Boolean)
+        )
+      );
+
+      if (identifiers.length === 0) {
+        setVehicleRegistration("");
+        return;
+      }
+
+      try {
+        const res = await fetch(
+          `/api/vehicle-lookup?deviceIds=${encodeURIComponent(identifiers.join(","))}`,
+          {
+            cache: "no-store",
+            signal: AbortSignal.timeout(10000),
+          }
+        );
+
+        if (!res.ok) {
+          setVehicleRegistration("");
+          return;
+        }
+
+        const json = await res.json();
+        const vehicles = Array.isArray(json?.vehicles) ? json.vehicles : [];
+
+        if (!cancelled && vehicles.length > 0) {
+          // Use the first matching vehicle's plate
+          const plate = String(vehicles[0]?.plate || "").trim();
+          setVehicleRegistration(plate);
+        } else if (!cancelled) {
+          setVehicleRegistration("");
+        }
+      } catch (error) {
+        console.warn("Vehicle registration lookup failed:", error);
+        if (!cancelled) {
+          setVehicleRegistration("");
+        }
+      }
+    };
+
+    void fetchVehicleRegistration();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedAlert]);
+
   // Auto-refresh screenshots every 30 seconds
   useEffect(() => {
     if (!selectedAlert || selectedAlert.status === "closed") return;
@@ -316,7 +387,12 @@ export default function AlertDetailPage({ params }) {
         const videos = await resolveAlertPlaybackVideos(
           selectedAlert,
           '/api/video-server',
-          { beforeMs: 30 * 1000, afterMs: 30 * 1000 }
+          {
+            beforeMs: 30 * 1000,
+            afterMs: 30 * 1000,
+            preferLatestAvailable: true,
+            latestAvailableDurationMs: 339 * 1000,
+          }
         );
         console.info("[AlertDetail] Resolved event videos", {
           alertId: selectedAlert?.id,
@@ -784,7 +860,7 @@ export default function AlertDetailPage({ params }) {
                   <div>
                     <p className="text-slate-600">Vehicle</p>
                     <p className="font-medium text-slate-900">
-                      {selectedAlert.vehicle_registration || "N/A"}
+                      {vehicleRegistration || selectedAlert.vehicle_registration || "N/A"}
                     </p>
                   </div>
                 </div>

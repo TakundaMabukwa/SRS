@@ -19,16 +19,16 @@ export async function GET(request: Request) {
     const upstreamUrl = `${upstreamBase}/api/live-hls/streams${query.toString() ? `?${query.toString()}` : ""}`;
     const response = await fetch(upstreamUrl, {
       cache: "no-store",
-      signal: AbortSignal.timeout(12000),
+      signal: AbortSignal.timeout(3500),
     });
 
     const payload = await response.json().catch(() => ({}));
     return NextResponse.json(payload, { status: response.status });
   } catch (error) {
-    console.error("[live-video/streams] Proxy failed:", error);
+    console.warn("[live-video/streams] Proxy fallback:", error);
     return NextResponse.json(
-      { success: false, message: "Failed to fetch live video streams" },
-      { status: 500 }
+      { success: true, count: 0, rows: [] },
+      { status: 200 }
     );
   }
 }
