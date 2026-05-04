@@ -24,7 +24,16 @@ import {
   ExternalLink
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { formatRawAlertTimestamp, getAlertDisplayTimestamp, getAlertFirstOccurrenceTimestamp, getAlertLastOccurrenceTimestamp, normalizeBackendMediaUrl, resolveAlertPlaybackVideos } from '@/lib/video-alert-playback'
+import {
+  ALERT_READY_WINDOW_OPTIONS,
+  filterAlertsWithReadyPlayback,
+  formatRawAlertTimestamp,
+  getAlertDisplayTimestamp,
+  getAlertFirstOccurrenceTimestamp,
+  getAlertLastOccurrenceTimestamp,
+  normalizeBackendMediaUrl,
+  resolveAlertPlaybackVideos,
+} from '@/lib/video-alert-playback'
 
 export default function VideoAlertsPage() {
   const router = useRouter()
@@ -79,7 +88,7 @@ export default function VideoAlertsPage() {
     const videos = await resolveAlertPlaybackVideos(
       alert,
       '/api/video-server',
-      { beforeMs: 30 * 1000, afterMs: 30 * 1000 }
+      ALERT_READY_WINDOW_OPTIONS
     )
     return videos[0] || null
   }
@@ -294,9 +303,19 @@ export default function VideoAlertsPage() {
         }
       }
 
+      const normalizedAlerts = alertRows.map((rawAlert) => normalizeAlert(rawAlert))
+      const readyAlerts = await filterAlertsWithReadyPlayback(
+        normalizedAlerts,
+        '/api/video-server',
+        ALERT_READY_WINDOW_OPTIONS,
+        {
+          falseTtlMs: 30000,
+          maxConcurrency: 3,
+        }
+      )
+
       const grouped = { critical: [], high: [], medium: [], low: [] }
-      alertRows.forEach((rawAlert) => {
-        const alert = normalizeAlert(rawAlert)
+      readyAlerts.forEach((alert) => {
         const priority = alert.priority || 'low'
         if (grouped[priority]) grouped[priority].push(alert)
       })

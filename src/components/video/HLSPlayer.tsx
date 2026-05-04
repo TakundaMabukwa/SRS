@@ -13,6 +13,8 @@ interface HLSPlayerProps {
 }
 
 const LIVE_WARM_MAX_AGE_MS = 20000;
+const LIVE_CONNECT_TIMEOUT_MS = 20000;
+const LIVE_RETRY_DELAY_MS = 3000;
 
 export default function HLSPlayer({
   vehicleId,
@@ -51,6 +53,18 @@ export default function HLSPlayer({
     return `/api/live-video/vehicles/${encodeURIComponent(vehicleId)}/playlist.m3u8?${params.toString()}`;
   }, [channel, fallbackKey, reloadToken, vehicleId]);
 
+  const streamStartCandidates = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          [vehicleId, ...fallbackVehicleIds]
+            .map((value) => String(value || '').trim())
+            .filter(Boolean)
+        )
+      ),
+    [fallbackVehicleIds, vehicleId]
+  );
+
   useEffect(() => {
     const videoEl = videoRef.current;
     if (!videoEl) {
@@ -62,10 +76,15 @@ export default function HLSPlayer({
 
     let destroyed = false;
     let hls: Hls | null = null;
+    let connectTimeout: ReturnType<typeof setTimeout> | null = null;
 
     const markStreaming = () => {
       if (destroyed) {
         return;
+      }
+      if (connectTimeout) {
+        clearTimeout(connectTimeout);
+        connectTimeout = null;
       }
       setStatus('Streaming');
       setError(false);
@@ -74,6 +93,10 @@ export default function HLSPlayer({
     const markUnavailable = (message = 'Live video unavailable') => {
       if (destroyed) {
         return;
+      }
+      if (connectTimeout) {
+        clearTimeout(connectTimeout);
+        connectTimeout = null;
       }
       setStatus(message);
       setError(true);
@@ -109,6 +132,31 @@ export default function HLSPlayer({
     videoEl.playsInline = true;
     videoEl.preload = 'auto';
 
+    const requestStartLive = async () => {
+      for (const candidateId of streamStartCandidates) {
+        try {
+          const response = await fetch(
+            `/api/video-server/vehicles/${encodeURIComponent(candidateId)}/start-live`,
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ channel }),
+            }
+          );
+          if (response.ok) {
+            break;
+          }
+        } catch {
+          // Try next candidate id.
+        }
+      }
+    };
+    void requestStartLive();
+
+    connectTimeout = setTimeout(() => {
+      markUnavailable('Live video startup timed out');
+    }, LIVE_CONNECT_TIMEOUT_MS);
+
     videoEl.addEventListener('playing', onPlaying);
     videoEl.addEventListener('loadeddata', onLoadedData);
     videoEl.addEventListener('waiting', onWaiting);
@@ -143,6 +191,16 @@ export default function HLSPlayer({
           markUnavailable();
           hls?.destroy();
           hls = null;
+          return;
+        }
+
+        if (data?.type === Hls.ErrorTypes.NETWORK_ERROR) {
+          setStatus('Reconnecting live video...');
+          try {
+            hls?.startLoad();
+          } catch {
+            // Retry loop below will reload the player if needed.
+          }
         }
       });
     } else {
@@ -161,8 +219,11 @@ export default function HLSPlayer({
       if (hls) {
         hls.destroy();
       }
+      if (connectTimeout) {
+        clearTimeout(connectTimeout);
+      }
     };
-  }, [streamUrl]);
+  }, [channel, streamStartCandidates, streamUrl]);
 
   useEffect(() => {
     if (!error) {
@@ -173,7 +234,7 @@ export default function HLSPlayer({
       setStatus('Retrying live video...');
       setError(false);
       setReloadToken((value) => value + 1);
-    }, 3000);
+    }, LIVE_RETRY_DELAY_MS);
 
     return () => clearTimeout(timer);
   }, [error]);

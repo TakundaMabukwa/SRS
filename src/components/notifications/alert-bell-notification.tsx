@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { formatDistanceToNow } from "date-fns";
+import { ALERT_READY_WINDOW_OPTIONS, filterAlertsWithReadyPlayback } from "@/lib/video-alert-playback";
 
 export default function AlertBellNotification() {
   const router = useRouter();
@@ -55,6 +56,16 @@ export default function AlertBellNotification() {
                 : [];
         }
       }
+
+      nextAlerts = await filterAlertsWithReadyPlayback(
+        nextAlerts,
+        '/api/video-server',
+        ALERT_READY_WINDOW_OPTIONS,
+        {
+          falseTtlMs: 30000,
+          maxConcurrency: 3,
+        }
+      );
 
       const newCount = nextAlerts.length;
       if (newCount > prevCountRef.current && prevCountRef.current > 0) {

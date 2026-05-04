@@ -70,6 +70,8 @@ function getWsCandidates() {
 export function useVideoWebSocket(onMessage?: (data: WebSocketMessage) => void) {
   const ws = useRef<WebSocket | null>(null)
   const onMessageRef = useRef(onMessage)
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const urlCursorRef = useRef(0)
   const [connected, setConnected] = useState(false)
   const [lastMessage, setLastMessage] = useState<WebSocketMessage | null>(null)
 
@@ -80,28 +82,76 @@ export function useVideoWebSocket(onMessage?: (data: WebSocketMessage) => void) 
   useEffect(() => {
     let isActive = true
     const urls = getWsCandidates()
+    const reconnectDelayMs = 3000
+    const connectTimeoutMs = 8000
     if (!urls.length) {
       console.error('Alert hub base URL is not set. WebSocket disabled.')
       return
     }
 
-    const connect = () => {
-      let idx = 0
+    const clearReconnectTimer = () => {
+      if (reconnectTimerRef.current) {
+        clearTimeout(reconnectTimerRef.current)
+        reconnectTimerRef.current = null
+      }
+    }
+
+    const scheduleReconnect = () => {
+      if (!isActive || reconnectTimerRef.current) return
+      reconnectTimerRef.current = setTimeout(() => {
+        reconnectTimerRef.current = null
+        openSocket()
+      }, reconnectDelayMs)
+    }
+
+    const openSocket = () => {
+      if (!isActive || urls.length === 0) return
+      clearReconnectTimer()
+
+      const current = ws.current
+      if (current) {
+        ws.current = null
+        current.onopen = null
+        current.onmessage = null
+        current.onerror = null
+        current.onclose = null
+        current.close()
+      }
+
+      let attempts = 0
+      const startIndex = urlCursorRef.current % urls.length
+
       const tryNext = () => {
-        const nextUrl = urls[idx++]
-        if (!nextUrl) {
+        if (!isActive) return
+        if (attempts >= urls.length) {
+          setConnected(false)
+          scheduleReconnect()
           return
         }
+
+        const idx = (startIndex + attempts) % urls.length
+        const nextUrl = urls[idx]
+        attempts += 1
+
+        let socket: WebSocket
         try {
-          ws.current = new WebSocket(nextUrl)
+          socket = new WebSocket(nextUrl)
         } catch {
           tryNext()
           return
         }
 
-        const socket = ws.current
+        ws.current = socket
+        urlCursorRef.current = idx + 1
+
+        const openTimeout = setTimeout(() => {
+          if (socket.readyState === WebSocket.CONNECTING) {
+            socket.close()
+          }
+        }, connectTimeoutMs)
 
         socket.onopen = () => {
+          clearTimeout(openTimeout)
           if (!isActive || ws.current !== socket) return
           setConnected(true)
           console.log('WebSocket connected')
@@ -119,33 +169,35 @@ export function useVideoWebSocket(onMessage?: (data: WebSocketMessage) => void) 
         }
 
         socket.onerror = () => {
-          // Silent error handling - will reconnect on close
+          clearTimeout(openTimeout)
+          // Let onclose handle reconnect path.
         }
 
         socket.onclose = () => {
+          clearTimeout(openTimeout)
           if (ws.current === socket) {
             ws.current = null
           }
           if (!isActive) return
           setConnected(false)
-          if (idx < urls.length) {
-            tryNext()
-            return
+          if (socket.readyState !== WebSocket.OPEN) {
+            if (attempts < urls.length) {
+              tryNext()
+              return
+            }
+            scheduleReconnect()
           }
         }
       }
 
-      try {
-        tryNext()
-      } catch (err) {
-        console.error('WebSocket connection error:', err)
-      }
+      tryNext()
     }
 
-    connect()
+    openSocket()
 
     return () => {
       isActive = false
+      clearReconnectTimer()
       const socket = ws.current
       ws.current = null
       if (socket) {

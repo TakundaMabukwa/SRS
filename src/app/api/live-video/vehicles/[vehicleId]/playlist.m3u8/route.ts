@@ -16,6 +16,41 @@ function buildCandidateVehicleIds(vehicleId: string, fallbackIds: string | null)
   );
 }
 
+function decodeUriSafe(value: string) {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+function normalizeAssetPath(rawPath: string, resolvedVehicleId: string, channel: string) {
+  const [pathPart, queryPart = ""] = String(rawPath || "").split("?");
+  const decodedPath = decodeUriSafe(pathPart).replace(/^https?:\/\/[^/]+/i, "").replace(/^\/+/, "");
+
+  const candidatePrefixes = [
+    `media/live-hls/${resolvedVehicleId}/ch${channel}/`,
+    `live-hls/${resolvedVehicleId}/ch${channel}/`,
+    `media/live-hls/${encodeURIComponent(resolvedVehicleId)}/ch${encodeURIComponent(channel)}/`,
+    `live-hls/${encodeURIComponent(resolvedVehicleId)}/ch${encodeURIComponent(channel)}/`,
+  ];
+
+  const withoutPrefix = candidatePrefixes.reduce((acc, prefix) => {
+    return acc.startsWith(prefix) ? acc.slice(prefix.length) : acc;
+  }, decodedPath);
+
+  const cleanedSegments = withoutPrefix
+    .split("/")
+    .map((segment) => segment.trim())
+    .filter((segment) => !!segment && segment !== "." && segment !== "..")
+    .map((segment) => encodeURIComponent(segment));
+
+  return {
+    encodedPath: cleanedSegments.join("/"),
+    query: queryPart.trim(),
+  };
+}
+
 function rewritePlaylist(text: string, resolvedVehicleId: string, channel: string) {
   const assetBase = `/api/live-video/assets/${encodeURIComponent(resolvedVehicleId)}/${encodeURIComponent(channel)}`;
 
@@ -23,16 +58,16 @@ function rewritePlaylist(text: string, resolvedVehicleId: string, channel: strin
     .split(/\r?\n/)
     .map((line) => {
       const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith("#") || /^https?:\/\//i.test(trimmed)) {
+      if (!trimmed || trimmed.startsWith("#")) {
         return line;
       }
 
-      const encodedPath = trimmed
-        .split("/")
-        .map((segment) => encodeURIComponent(segment))
-        .join("/");
+      const { encodedPath, query } = normalizeAssetPath(trimmed, resolvedVehicleId, channel);
+      if (!encodedPath) {
+        return line;
+      }
 
-      return `${assetBase}/${encodedPath}`;
+      return `${assetBase}/${encodedPath}${query ? `?${query}` : ""}`;
     })
     .join("\n");
 }

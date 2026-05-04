@@ -2,12 +2,18 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { useToast } from '@/hooks/use-toast';
+import { ALERT_READY_WINDOW_OPTIONS, filterAlertsWithReadyPlayback } from '@/lib/video-alert-playback';
 
 interface AlertStats {
   newCount: number;
   criticalCount: number;
   unattendedCount: number;
 }
+
+type PolledAlert = {
+  status?: string;
+  priority?: string;
+};
 
 async function readJsonSafely(res: Response) {
   const contentType = res.headers.get('content-type') || '';
@@ -33,8 +39,18 @@ export function useAlertPolling() {
       if (res.ok) {
         const data = await readJsonSafely(res);
         if (data.success && data.alerts) {
-          const newCount = data.alerts.filter((a: any) => a.status === 'new').length;
-          const criticalCount = data.alerts.filter((a: any) => a.priority === 'critical').length;
+          const readyAlerts = await filterAlertsWithReadyPlayback(
+            Array.isArray(data.alerts) ? data.alerts : [],
+            '/api/video-server',
+            ALERT_READY_WINDOW_OPTIONS,
+            {
+              falseTtlMs: 30000,
+              maxConcurrency: 3,
+            }
+          );
+
+          const newCount = readyAlerts.filter((a: PolledAlert) => a.status === 'new').length;
+          const criticalCount = readyAlerts.filter((a: PolledAlert) => a.priority === 'critical').length;
           
           if (newCount > lastAlertCount) {
             toast({

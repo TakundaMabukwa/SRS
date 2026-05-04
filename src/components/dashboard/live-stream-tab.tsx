@@ -134,19 +134,79 @@ function parseLiveVideoRows(payload: unknown): LiveVideoStreamRow[] {
 }
 
 function parseRuntimeVehicles(payload: unknown): ConnectedVehicle[] {
-  const rows = parseLiveVideoRows(payload);
-  const byVehicle = new Map<string, Set<number>>();
+  const root = readRuntimeRecord(payload);
+  const rootData = readRuntimeRecord(root.data);
+  const rows = Array.isArray(payload)
+    ? payload
+    : Array.isArray(root.data)
+      ? root.data
+      : Array.isArray(root.vehicles)
+        ? root.vehicles
+        : Array.isArray(rootData.vehicles)
+          ? rootData.vehicles
+          : [];
 
-  for (const row of rows) {
+  const fromVehicles = rows
+    .map((entry) => {
+      const record = readRuntimeRecord(entry);
+      const id = String(
+        record.id ??
+          record.vehicleId ??
+          record.deviceId ??
+          record.phone ??
+          ""
+      ).trim();
+      if (!id) return null;
+
+      const phone = String(record.phone ?? "").trim();
+      const connected = record.connected !== false;
+      const channelsRaw = Array.isArray(record.channels) ? record.channels : [];
+      const channels = channelsRaw
+        .map((channelEntry) => {
+          const channelRecord = readRuntimeRecord(channelEntry);
+          const channel = Number(
+            channelRecord.logicalChannel ??
+              channelRecord.channel ??
+              channelRecord.channelId ??
+              0
+          );
+          if (!Number.isFinite(channel) || channel <= 0) return null;
+          return {
+            logicalChannel: channel,
+            channel,
+          } satisfies VehicleChannel;
+        })
+        .filter((channel): channel is VehicleChannel => !!channel);
+
+      const activeStreams = Array.isArray(record.activeStreams)
+        ? record.activeStreams
+            .map((value) => Number(value))
+            .filter((value, index, values) => Number.isFinite(value) && value > 0 && values.indexOf(value) === index)
+            .sort((a, b) => a - b)
+        : [];
+
+      return {
+        id,
+        name: String(record.displayLabel ?? record.registration ?? id).trim() || id,
+        phone,
+        channels,
+        connected,
+        activeStreams,
+      } satisfies ConnectedVehicle;
+    })
+    .filter((vehicle): vehicle is ConnectedVehicle => !!vehicle);
+
+  if (fromVehicles.length > 0) {
+    return fromVehicles;
+  }
+
+  const liveRows = parseLiveVideoRows(payload);
+  const byVehicle = new Map<string, Set<number>>();
+  for (const row of liveRows) {
     const vehicleId = String(row.vehicleId || "").trim();
     const channel = Number(row.channel || 0);
-    if (!vehicleId || !Number.isFinite(channel) || channel <= 0) {
-      continue;
-    }
-
-    if (!byVehicle.has(vehicleId)) {
-      byVehicle.set(vehicleId, new Set<number>());
-    }
+    if (!vehicleId || !Number.isFinite(channel) || channel <= 0) continue;
+    if (!byVehicle.has(vehicleId)) byVehicle.set(vehicleId, new Set<number>());
     byVehicle.get(vehicleId)?.add(channel);
   }
 
@@ -155,10 +215,7 @@ function parseRuntimeVehicles(payload: unknown): ConnectedVehicle[] {
     return {
       id: vehicleId,
       name: vehicleId,
-      channels: channels.map((channel) => ({
-        logicalChannel: channel,
-        channel,
-      })),
+      channels: channels.map((channel) => ({ logicalChannel: channel, channel })),
       connected: true,
       activeStreams: channels,
     } satisfies ConnectedVehicle;
@@ -209,7 +266,7 @@ function mergeRuntimeIntoCatalog(
           logicalChannel: channel,
           channel,
         })),
-        connected: warmChannels.length > 0,
+        connected: runtimeMatch.connected === true || warmChannels.length > 0,
         activeStreams: warmChannels,
       };
     })
@@ -225,7 +282,7 @@ function getActiveStreamCount(vehicle: ConnectedVehicle): number {
 }
 
 function isVehicleOnline(vehicle: ConnectedVehicle): boolean {
-  return getActiveStreamCount(vehicle) > 0;
+  return vehicle.connected === true || getActiveStreamCount(vehicle) > 0;
 }
 
 function getVehicleStatusRank(vehicle: ConnectedVehicle): number {
@@ -308,7 +365,11 @@ export default function LiveStreamTab() {
   }, [supabase]);
 
   const fetchRuntimeVehicles = useCallback(async () => {
-    const runtimeEndpoints = [`/api/live-video/streams?maxAgeMs=${LIVE_WARM_MAX_AGE_MS}`];
+    const runtimeEndpoints = [
+      `/api/video-server/vehicles`,
+      `/api/video-server/vehicles/connected`,
+      `/api/live-video/streams?maxAgeMs=${LIVE_WARM_MAX_AGE_MS}`,
+    ];
 
     for (const endpoint of runtimeEndpoints) {
       try {
@@ -328,6 +389,38 @@ export default function LiveStreamTab() {
     }
 
     return [] as ConnectedVehicle[];
+  }, []);
+
+  const requestStreamStart = useCallback(async (vehicle: ConnectedVehicle) => {
+    const candidateIds = Array.from(
+      new Set(
+        [vehicle.id, vehicle.phone]
+          .map((value) => String(value || "").trim())
+          .filter(Boolean)
+      )
+    );
+    if (candidateIds.length === 0) return;
+
+    const warmChannels = getWarmChannelNumbers(vehicle);
+    const channel = Number(warmChannels[0] || 1) || 1;
+
+    for (const candidateId of candidateIds) {
+      try {
+        const response = await fetch(
+          `/api/video-server/vehicles/${encodeURIComponent(candidateId)}/start-live`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ channel }),
+          }
+        );
+        if (response.ok) {
+          return;
+        }
+      } catch {
+        // Try next candidate vehicle identifier.
+      }
+    }
   }, []);
 
   const fetchConnectedVehicles = useCallback(async (options?: { background?: boolean }) => {
@@ -397,7 +490,7 @@ export default function LiveStreamTab() {
     });
   }, [vehicles]);
 
-  const toggleVehicle = (vehicleId: string) => {
+  const toggleVehicle = async (vehicleId: string) => {
     const vehicle = vehicles.find((entry) => entry.id === vehicleId);
     if (!vehicle) return;
 
@@ -410,6 +503,7 @@ export default function LiveStreamTab() {
     } else if (!isVehicleOnline(vehicle)) {
       return;
     } else {
+      void requestStreamStart(vehicle);
       next.add(vehicleId);
     }
     setSelectedVehicles(next);

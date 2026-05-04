@@ -27,6 +27,7 @@ type PlaybackReadyCacheEntry = {
 const DEFAULT_VIDEO_PROXY_BASE = "/api/video-server";
 const ALERT_PLAYBACK_WINDOW_BEFORE_MS = 60 * 1000;
 const ALERT_PLAYBACK_WINDOW_AFTER_MS = 60 * 1000;
+const ALERT_LAST_AVAILABLE_FALLBACK_MS = 339 * 1000;
 const ALERT_READY_FALSE_TTL_MS = 15 * 1000;
 const PLAYBACK_CACHE_PREFIX = "alert-playback:";
 const playbackVideoCache = new Map<string, AlertPlaybackVideo[]>();
@@ -165,6 +166,119 @@ function parseApproxAvailableRange(message: string) {
   };
 }
 
+function extractChannelAvailabilityBounds(
+  row: PlaybackJsonRecord,
+  fallbackDurationMs = ALERT_LAST_AVAILABLE_FALLBACK_MS
+) {
+  const channel = Number(row.channel || 0);
+  if (!Number.isFinite(channel) || channel <= 0) return null;
+
+  const startRaw =
+    row.first_packet_time ||
+    row.approx_first_packet_time ||
+    row.earliestTime ||
+    row.startTime ||
+    row.start ||
+    row.from ||
+    "";
+  const endRaw =
+    row.last_packet_time ||
+    row.approx_last_packet_time ||
+    row.latestTime ||
+    row.endTime ||
+    row.end ||
+    row.to ||
+    "";
+
+  const endMs = timestampToComparableMs(endRaw);
+  if (!Number.isFinite(endMs)) return null;
+
+  const rawStartMs = timestampToComparableMs(startRaw);
+  const fallbackStartMs = Math.max(0, endMs - Math.max(1000, fallbackDurationMs));
+  const startMs = Number.isFinite(rawStartMs)
+    ? Math.max(Math.min(rawStartMs, endMs), fallbackStartMs)
+    : fallbackStartMs;
+
+  if (!Number.isFinite(startMs) || startMs >= endMs) return null;
+
+  return {
+    channel,
+    startIso: new Date(startMs).toISOString(),
+    endIso: new Date(endMs).toISOString(),
+    startMs,
+    endMs,
+  };
+}
+
+function getLatestAvailabilityByChannel(rows: PlaybackJsonRecord[]) {
+  const byChannel = new Map<number, ReturnType<typeof extractChannelAvailabilityBounds>>();
+
+  for (const row of rows) {
+    const bounds = extractChannelAvailabilityBounds(row);
+    if (!bounds) continue;
+    const existing = byChannel.get(bounds.channel);
+    if (!existing || bounds.endMs > existing.endMs) {
+      byChannel.set(bounds.channel, bounds);
+    }
+  }
+
+  return byChannel;
+}
+
+async function fetchAlertAvailabilityRows(
+  vehicleId: string,
+  referenceIso: string,
+  videoProxyBase = DEFAULT_VIDEO_PROXY_BASE
+) {
+  const referenceDate = new Date(referenceIso);
+  if (Number.isNaN(referenceDate.getTime())) return [] as PlaybackJsonRecord[];
+
+  const dayStart = new Date(referenceDate);
+  dayStart.setUTCHours(0, 0, 0, 0);
+  const dayEnd = new Date(referenceDate);
+  dayEnd.setUTCHours(23, 59, 59, 999);
+  const dateKey = dayStart.toISOString().slice(0, 10);
+
+  for (const playbackBase of getPlaybackRequestBases(videoProxyBase)) {
+    try {
+      const coverageQuery = new URLSearchParams({
+        vehicleId,
+        from: dayStart.toISOString(),
+        to: dayEnd.toISOString(),
+      });
+      const coverageResponse = await fetch(
+        `${playbackBase}/video/coverage?${coverageQuery.toString()}`,
+        {
+          cache: "no-store",
+          signal: timeoutSignal(12000),
+        }
+      );
+      const coverageJson = await coverageResponse.json().catch(() => ({}));
+      const coverageRows = getPlaybackRows(coverageJson);
+      if (coverageRows.length > 0) return coverageRows;
+    } catch {
+      // Fall through to approximate availability.
+    }
+
+    try {
+      const availabilityResponse = await fetch(
+        `${playbackBase}/vehicles/${encodeURIComponent(vehicleId)}/video/availability?date=${encodeURIComponent(dateKey)}`,
+        {
+          cache: "no-store",
+          signal: timeoutSignal(12000),
+        }
+      );
+      const availabilityJson = await availabilityResponse.json().catch(() => ({}));
+      const availabilityRows = getPlaybackRows(availabilityJson);
+      if (availabilityRows.length > 0) return availabilityRows;
+    } catch {
+      // Try the next endpoint.
+    }
+  }
+
+  return [] as PlaybackJsonRecord[];
+}
+
 function buildChannelAvailabilitySummary(rows: PlaybackJsonRecord[]) {
   const channelSummaries = rows
     .map((row) => {
@@ -199,54 +313,8 @@ async function fetchAlertAvailabilitySummary(
   referenceIso: string,
   videoProxyBase = DEFAULT_VIDEO_PROXY_BASE
 ) {
-  const referenceDate = new Date(referenceIso);
-  if (Number.isNaN(referenceDate.getTime())) return "";
-
-  const dayStart = new Date(referenceDate);
-  dayStart.setUTCHours(0, 0, 0, 0);
-  const dayEnd = new Date(referenceDate);
-  dayEnd.setUTCHours(23, 59, 59, 999);
-  const dateKey = dayStart.toISOString().slice(0, 10);
-
-  for (const playbackBase of getPlaybackRequestBases(videoProxyBase)) {
-    try {
-      const coverageQuery = new URLSearchParams({
-        vehicleId,
-        from: dayStart.toISOString(),
-        to: dayEnd.toISOString(),
-      });
-      const coverageResponse = await fetch(
-        `${playbackBase}/video/coverage?${coverageQuery.toString()}`,
-        {
-          cache: "no-store",
-          signal: timeoutSignal(12000),
-        }
-      );
-      const coverageJson = await coverageResponse.json().catch(() => ({}));
-      const coverageSummary = buildChannelAvailabilitySummary(getPlaybackRows(coverageJson));
-      if (coverageSummary) return coverageSummary;
-    } catch {
-      // Fall through to approximate availability.
-    }
-
-    for (const availabilityPath of [
-      `${playbackBase}/vehicles/${encodeURIComponent(vehicleId)}/video/availability?date=${encodeURIComponent(dateKey)}`,
-    ]) {
-      try {
-        const availabilityResponse = await fetch(availabilityPath, {
-          cache: "no-store",
-          signal: timeoutSignal(12000),
-        });
-        const availabilityJson = await availabilityResponse.json().catch(() => ({}));
-        const availabilitySummary = buildChannelAvailabilitySummary(getPlaybackRows(availabilityJson));
-        if (availabilitySummary) return availabilitySummary;
-      } catch {
-        // Try the next endpoint.
-      }
-    }
-  }
-
-  return "";
+  const rows = await fetchAlertAvailabilityRows(vehicleId, referenceIso, videoProxyBase);
+  return buildChannelAvailabilitySummary(rows);
 }
 
 export function normalizeBackendMediaUrl(url: string, videoProxyBase = DEFAULT_VIDEO_PROXY_BASE) {
@@ -767,18 +835,24 @@ async function resolvePlaybackWindowForAlert(
   if (!vehicleId || !playbackWindow) return [];
 
   const { startIso, endIso } = playbackWindow;
-  const query = new URLSearchParams({
-    from: startIso,
-    to: endIso,
-  });
-
-  const requestChannelPlayback = async (targetChannel: number) => {
-    let lastFailureMessage = `No playback available for channel ${targetChannel}.`;
+  const requestChannelPlaybackForRange = async (
+    targetChannel: number,
+    range: { startIso: string; endIso: string },
+    labelPrefix: string,
+    keyPrefix: string,
+    requestedChannelOverride?: number
+  ) => {
+    const requestedChannel = Number(requestedChannelOverride || targetChannel) || targetChannel;
+    let lastFailureMessage = `No playback available for channel ${requestedChannel}.`;
+    const query = new URLSearchParams({
+      from: range.startIso,
+      to: range.endIso,
+    });
 
     for (const playbackBase of getPlaybackRequestBases(videoProxyBase)) {
       try {
         const res = await fetch(
-          `${playbackBase}/vehicles/${encodeURIComponent(vehicleId)}/video/${encodeURIComponent(String(targetChannel))}?${query.toString()}`,
+          `${playbackBase}/vehicles/${encodeURIComponent(vehicleId)}/video/${encodeURIComponent(String(requestedChannel))}?${query.toString()}`,
           {
             cache: "no-store",
             signal: timeoutSignal(15000),
@@ -794,18 +868,18 @@ async function resolvePlaybackWindowForAlert(
         const successfulChannel =
           channels.find(
             (entry) =>
-              Number(entry.channel || 0) === Number(targetChannel) && entry.success === true
+              Number(entry.channel || 0) === Number(requestedChannel) && entry.success === true
           ) ||
           channels.find((entry) => entry.success === true) ||
           null;
 
         if (!successfulChannel) {
           throw new Error(
-            getPlaybackMessage(json) || `No playback available for channel ${targetChannel}.`
+            getPlaybackMessage(json) || `No playback available for channel ${requestedChannel}.`
           );
         }
 
-        const resolvedChannel = Number(successfulChannel.channel || targetChannel);
+        const resolvedChannel = Number(successfulChannel.channel || requestedChannel);
         const sourceUrl = String(
           successfulChannel.playUrl ||
             successfulChannel.mp4Url ||
@@ -819,8 +893,8 @@ async function resolvePlaybackWindowForAlert(
         }
 
         return {
-          key: `alert_window_${String(alert?.id || vehicleId)}_${resolvedChannel}_${startIso}_${endIso}`,
-          label: `Alert-time Playback CH${resolvedChannel}`,
+          key: `${keyPrefix}_${String(alert?.id || vehicleId)}_${resolvedChannel}_${range.startIso}_${range.endIso}`,
+          label: `${labelPrefix} CH${resolvedChannel}`,
           url: normalizeBackendMediaUrl(sourceUrl, videoProxyBase),
         } satisfies AlertPlaybackVideo;
       } catch (error) {
@@ -833,7 +907,14 @@ async function resolvePlaybackWindowForAlert(
   };
 
   const settledVideos = await Promise.allSettled(
-    channelCandidates.map((targetChannel) => requestChannelPlayback(targetChannel))
+    channelCandidates.map((targetChannel) =>
+      requestChannelPlaybackForRange(
+        targetChannel,
+        { startIso, endIso },
+        "Alert-time Playback",
+        "alert_window"
+      )
+    )
   );
 
   const resolvedVideos = settledVideos
@@ -847,6 +928,54 @@ async function resolvePlaybackWindowForAlert(
   if (dedupedVideos.length > 0) {
     writeCachedPlaybackVideos(cacheKey, dedupedVideos);
     return dedupedVideos;
+  }
+
+  // Fallback: load the latest 339 seconds from available stored coverage.
+  const availabilityRows = await fetchAlertAvailabilityRows(vehicleId, startIso, videoProxyBase);
+  const latestByChannel = getLatestAvailabilityByChannel(availabilityRows);
+  const latestAnyChannel = Array.from(latestByChannel.values())
+    .filter((value): value is NonNullable<typeof value> => !!value)
+    .sort((a, b) => b.endMs - a.endMs)[0];
+
+  if (latestAnyChannel) {
+    const fallbackSettledVideos = await Promise.allSettled(
+      channelCandidates.map((targetChannel) => {
+        const preferred = latestByChannel.get(targetChannel) || latestAnyChannel;
+        if (!preferred) {
+          throw new Error(`CH${targetChannel}: No available stored playback range.`);
+        }
+        const fallbackStartMs = Math.max(
+          preferred.startMs,
+          preferred.endMs - ALERT_LAST_AVAILABLE_FALLBACK_MS
+        );
+        const fallbackRange = {
+          startIso: new Date(fallbackStartMs).toISOString(),
+          endIso: new Date(preferred.endMs).toISOString(),
+        };
+
+        return requestChannelPlaybackForRange(
+          targetChannel,
+          fallbackRange,
+          "Nearest Available Playback (last 339s)",
+          "alert_window_latest",
+          preferred.channel
+        );
+      })
+    );
+
+    const fallbackVideos = dedupePlaybackVideos(
+      fallbackSettledVideos
+        .filter(
+          (result): result is PromiseFulfilledResult<AlertPlaybackVideo> =>
+            result.status === "fulfilled"
+        )
+        .map((result) => result.value)
+    );
+
+    if (fallbackVideos.length > 0) {
+      writeCachedPlaybackVideos(cacheKey, fallbackVideos);
+      return fallbackVideos;
+    }
   }
 
   const failureMessages = settledVideos
