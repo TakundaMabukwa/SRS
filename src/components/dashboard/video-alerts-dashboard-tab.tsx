@@ -171,27 +171,6 @@ const OFFICIAL_ALERT_ALIAS_MAP: Record<string, AlertNameMapping> = {
 
 const MIN_READY_VIDEO_BYTES = 500 * 1024;
 const MAX_EXACT_READY_CHECKS = 12;
-const SILENCED_ALERT_LABELS = [
-  "storage failure",
-  "storage unit failure",
-  "dms: forward camera invisible too long",
-  "forward camera invisible too long",
-  "other video equipment failure",
-  "special alarm recording threshold",
-];
-const SILENCED_ALERT_SIGNALS = new Set([
-  "jtt1078_storage_failure",
-  "platform_video_alarm_0103",
-  "platform_video_alarm_0104",
-  "platform_video_alarm_0107",
-  "custom_keyword_storage_failure",
-  "dms_10104_forward_invisible_too_long",
-]);
-
-function shouldSilenceAlertValue(value: unknown) {
-  const normalized = String(value || "").trim().toLowerCase();
-  return !!normalized && SILENCED_ALERT_LABELS.some((matcher) => normalized.includes(matcher));
-}
 
 export default function VideoAlertsDashboardTab({
   onOpenAlertDetail,
@@ -302,32 +281,6 @@ export default function VideoAlertsDashboardTab({
       .map((value) => String(value || "").trim())
       .filter(Boolean);
 
-    const signalValues = [
-      ...(Array.isArray(metadata?.alertSignals) ? metadata.alertSignals : []),
-      ...(Array.isArray(metadata?.alertSignalDetails) ? metadata.alertSignalDetails.map((detail: any) => detail?.code) : []),
-    ]
-      .map((value) => String(value || "").trim().toLowerCase())
-      .filter(Boolean);
-
-    if (candidateValues.some((value) => shouldSilenceAlertValue(value)) || signalValues.some((value) => SILENCED_ALERT_SIGNALS.has(value))) {
-      return {
-        title: "",
-        typeLabel: "",
-        codeLabel: "",
-        silent: true,
-      };
-    }
-
-    const silent = candidateValues.some((value) => /abnormal\s+driving/i.test(value));
-    if (silent) {
-      return {
-        title: "",
-        typeLabel: "",
-        codeLabel: "",
-        silent: true,
-      };
-    }
-
     for (const value of candidateValues) {
       const structured = getStructuredAlertMapping(value);
       if (!structured) continue;
@@ -340,7 +293,6 @@ export default function VideoAlertsDashboardTab({
         title: structured.title,
         typeLabel: structured.title,
         codeLabel,
-        silent: false,
       };
     }
 
@@ -349,7 +301,6 @@ export default function VideoAlertsDashboardTab({
       title: fallback,
       typeLabel: fallback,
       codeLabel: "",
-      silent: false,
     };
   }, [getStructuredAlertMapping]);
 
@@ -393,7 +344,6 @@ export default function VideoAlertsDashboardTab({
 
     const vehicleMeta = incoming?.metadata?.vehicle || incoming?.vehicle || {};
     const presentation = getAlertPresentation(incoming);
-    if (presentation.silent) return null;
     const firstOccurrenceTimestamp = getAlertFirstOccurrenceTimestamp(incoming) || incoming.timestamp || incoming.created_at || incoming.alert_timestamp || new Date().toISOString();
     const lastOccurrenceTimestamp = getAlertLastOccurrenceTimestamp(incoming) || firstOccurrenceTimestamp;
     const displayTimestamp = getAlertDisplayTimestamp(incoming) || lastOccurrenceTimestamp || firstOccurrenceTimestamp;
@@ -1476,7 +1426,10 @@ export default function VideoAlertsDashboardTab({
             <div className="mt-1 text-[10px] uppercase tracking-wide text-slate-400">
               {String(alert?.status || "new")}
             </div>
-            <div className="mt-1 text-[11px] leading-4 text-slate-500">
+            <div className="mt-1 text-[10px] uppercase tracking-wide text-slate-400">
+              Last Occurrence
+            </div>
+            <div className="text-[11px] leading-4 text-slate-500">
               {formatRawAlertTimestamp(getGroupedAlertTimestamp(alert), "datetime") || "Unknown time"}
             </div>
           </div>
@@ -1639,7 +1592,7 @@ export default function VideoAlertsDashboardTab({
         </div>
         <div className="min-w-0 text-[11px] text-slate-600">
           {Number(alert?.count || 1) > 1 ? `x${alert.count}` : "x1"}
-          <div className="text-[10px] text-slate-400">{formatRawAlertTimestamp(getGroupedAlertTimestamp(alert), "time")}</div>
+          <div className="text-[10px] text-slate-400">Last: {formatRawAlertTimestamp(getGroupedAlertTimestamp(alert), "time")}</div>
         </div>
         <div className="flex justify-end">
           <Button

@@ -11,9 +11,11 @@ import {
   buildAlertEventSummary,
   deriveReportSiteLabel,
   formatReportDate,
+  formatReportDateTime,
   normalizeReportScreenshots,
   normalizeReportVideos,
   renderElementToPdfBlob,
+  resolveAlertEventTimestamp,
   resolveReportLocationText,
   saveAlertArtifactBundle,
 } from '@/components/video-alerts/report-support'
@@ -95,7 +97,8 @@ export default function AccidentReportModal({
   const [reportingOfficer, setReportingOfficer] = useState('')
   const [policePhone, setPolicePhone] = useState('')
 
-  const timestamp = alertDetails?.timestamp || driverInfo.timestamp
+  const timestamp = resolveAlertEventTimestamp(alertDetails, driverInfo.timestamp)
+  const lastOccurrenceText = formatReportDateTime(alertDetails?.lastOccurrenceTimestamp || timestamp)
   const reportDate = formatReportDate(timestamp)
   const incidentDate = getIncidentDateText(timestamp)
   const locationText = useMemo(
@@ -250,6 +253,7 @@ export default function AccidentReportModal({
               <div className="col-span-5">
                 <div className="h-full min-h-[86px] border border-black p-2 text-xs">
                   <p><span className="font-semibold">Alert ID:</span> {alertDetails?.id || 'N/A'}</p>
+                  <p><span className="font-semibold">Last Occurrence:</span> {lastOccurrenceText || 'N/A'}</p>
                   <p><span className="font-semibold">Vehicle:</span> {driverInfo.registration ? `${driverInfo.fleetNumber} - ${driverInfo.registration}` : driverInfo.fleetNumber || 'N/A'}</p>
                   <p><span className="font-semibold">Registration:</span> {driverInfo.registration || 'N/A'}</p>
                   <p><span className="font-semibold">Driver:</span> {driverInfo.name || 'N/A'}</p>

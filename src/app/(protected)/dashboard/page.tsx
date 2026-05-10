@@ -1280,6 +1280,7 @@ function RoutingSection({ userRole, handleViewMap, setCurrentTripForNote, setNot
   const videoProxyBase = "/api/video-server"
   const initialTripsLoadedRef = useRef(false)
   const alertHydrationMediaBackoffRef = useRef<Record<string, number>>({})
+  const groupedAlertsHydrationEpochRef = useRef(0)
   const normalizeId = useCallback((value: unknown) => {
     return value === null || value === undefined ? "" : String(value).trim()
   }, [])
@@ -1601,19 +1602,40 @@ function RoutingSection({ userRole, handleViewMap, setCurrentTripForNote, setNot
 
   const fetchGroupedAlerts = useCallback(async () => {
     try {
-      const activeRes = await fetch(`${videoProxyBase}/alerts/active`);
-      if (!activeRes.ok) {
+      const readAlertArray = (payload: any) =>
+        Array.isArray(payload?.alerts)
+          ? payload.alerts
+          : Array.isArray(payload?.data?.alerts)
+            ? payload.data.alerts
+            : Array.isArray(payload?.data)
+              ? payload.data
+              : []
+
+      const activeRes = await fetch(`${videoProxyBase}/alerts/active`, {
+        cache: "no-store",
+        signal: AbortSignal.timeout(10000),
+      });
+
+      let activeList: any[] = []
+      if (activeRes.ok) {
+        const activeJson = await activeRes.json();
+        activeList = readAlertArray(activeJson)
+      } else {
         console.warn("Failed to fetch active alerts:", activeRes.status);
-        return;
       }
-      const activeJson = await activeRes.json();
-      const activeList = Array.isArray(activeJson?.alerts)
-        ? activeJson.alerts
-        : Array.isArray(activeJson?.data?.alerts)
-          ? activeJson.data.alerts
-          : Array.isArray(activeJson?.data)
-            ? activeJson.data
-            : [];
+
+      if (activeList.length === 0) {
+        const fallbackRes = await fetch(`${videoProxyBase}/alerts?status=new&limit=200`, {
+          cache: "no-store",
+          signal: AbortSignal.timeout(10000),
+        })
+        if (fallbackRes.ok) {
+          const fallbackJson = await fallbackRes.json()
+          activeList = readAlertArray(fallbackJson)
+        }
+      }
+
+      const hydrationEpoch = ++groupedAlertsHydrationEpochRef.current
 
       // Render immediately using active list so UI doesn't wait on slow per-alert media calls.
       const immediateAlerts = activeList.map((activeAlert: any) => toBaseDashboardAlert(activeAlert));
@@ -1630,18 +1652,47 @@ function RoutingSection({ userRole, handleViewMap, setCurrentTripForNote, setNot
       // Hydrate a small recent set with light staggering to avoid API stampede.
       hydrateCandidates.forEach((activeAlert: any, idx: number) => {
         setTimeout(async () => {
+          if (groupedAlertsHydrationEpochRef.current !== hydrationEpoch) return
           const detailed = await buildDashboardAlert(activeAlert);
-          setGroupedAlerts((prev) => dedupeAndSortAlerts([detailed, ...prev]));
+          if (groupedAlertsHydrationEpochRef.current !== hydrationEpoch) return
+
+          setGroupedAlerts((prev) => {
+            const detailedId = normalizeId(detailed?.id)
+            if (!detailedId) return prev
+
+            let found = false
+            const updated = prev.map((existing) => {
+              if (normalizeId(existing?.id) === detailedId) {
+                found = true
+                return { ...existing, ...detailed }
+              }
+              return existing
+            })
+
+            return found ? dedupeAndSortAlerts(updated) : prev
+          });
         }, idx * 180);
       });
     } catch (err) {
       console.error("Failed to fetch grouped alerts:", err);
     }
-  }, [buildDashboardAlert, dedupeAndSortAlerts, toAlertTimestamp, toBaseDashboardAlert, videoProxyBase]);
+  }, [buildDashboardAlert, dedupeAndSortAlerts, normalizeId, toAlertTimestamp, toBaseDashboardAlert, videoProxyBase]);
 
   useEffect(() => {
     fetchGroupedAlerts();
   }, [fetchGroupedAlerts, refreshTrigger]);
+
+  useEffect(() => {
+    if (!isVisible) return
+
+    const interval = setInterval(() => {
+      void fetchGroupedAlerts()
+    }, 15000)
+
+    return () => {
+      clearInterval(interval)
+    }
+  }, [fetchGroupedAlerts, isVisible])
 
   const handleTripRoutingWsMessage = useCallback(async (data: any) => {
     const type = String(data?.type || "").toLowerCase();
@@ -2953,6 +3004,13 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
     selectedAlert?.alert_timestamp ||
     selectedAlert?.created_at ||
     null;
+  const selectedAlertLastOccurrenceTs =
+    selectedAlert?.lastOccurrenceTimestamp ||
+    selectedAlert?.last_occurrence ||
+    selectedAlert?.last_occurrence_timestamp ||
+    selectedAlert?.latestTimestamp ||
+    selectedAlertDisplayTs ||
+    null;
   const selectedAlertLocationText =
     selectedAlertResolvedLocationName ||
     (selectedAlertCoordinates
@@ -3577,15 +3635,16 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
       fleetNumber,
       registration: registration || undefined,
       department: clean(selectedAlert?.department) || 'Fleet Operations',
-      timestamp: selectedAlertDisplayTs || selectedAlert?.timestamp || '',
+      timestamp: selectedAlertLastOccurrenceTs || selectedAlertDisplayTs || selectedAlert?.timestamp || '',
       location: selectedAlertLocationText || undefined,
     };
-  }, [selectedAlert, selectedAlertDisplayTs, selectedAlertLocationText]);
+  }, [selectedAlert, selectedAlertDisplayTs, selectedAlertLastOccurrenceTs, selectedAlertLocationText]);
   const selectedAlertReportDetails = useMemo(() => ({
     id: selectedAlert?.id,
     type: selectedAlert?.type || selectedAlert?.alert_type,
     severity: selectedAlert?.priority || selectedAlert?.severity,
     timestamp: selectedAlertDisplayTs || selectedAlert?.timestamp,
+    lastOccurrenceTimestamp: selectedAlertLastOccurrenceTs || selectedAlertDisplayTs || selectedAlert?.timestamp,
     location: selectedAlertResolvedLocationName
       ? {
           address: selectedAlertResolvedLocationName,
@@ -3594,7 +3653,7 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
       : selectedAlert?.location || selectedAlert?.metadata,
     screenshots: selectedAlertScreenshots || [],
     videos: selectedAlertVideoList || [],
-  }), [selectedAlert, selectedAlertCoordinates, selectedAlertDisplayTs, selectedAlertResolvedLocationName, selectedAlertScreenshots, selectedAlertVideoList]);
+  }), [selectedAlert, selectedAlertCoordinates, selectedAlertDisplayTs, selectedAlertLastOccurrenceTs, selectedAlertResolvedLocationName, selectedAlertScreenshots, selectedAlertVideoList]);
   const buildSelectedAlertClosurePayload = useCallback((
     artifact?: SavedAlertArtifact | null,
     resolvedWindowVideos: Array<{ key: string; label: string; url: string }> = []
@@ -3611,6 +3670,7 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
     alertType: selectedAlert?.type || selectedAlert?.alert_type || null,
     severity: selectedAlert?.priority || selectedAlert?.severity || null,
     timestamp: selectedAlertDisplayTs || selectedAlert?.timestamp || null,
+    lastOccurrenceTimestamp: selectedAlertLastOccurrenceTs || selectedAlertDisplayTs || selectedAlert?.timestamp || null,
     locationText: selectedAlertLocationText || null,
     coordinates: selectedAlertCoordinates || null,
     screenshots: selectedAlertScreenshots || [],
@@ -3642,6 +3702,7 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
     selectedAlert?.metadata?.channel,
     selectedAlertCoordinates,
     selectedAlertDisplayTs,
+    selectedAlertLastOccurrenceTs,
     selectedAlertLocationText,
     selectedAlertScreenshots,
     selectedAlertTimeline,
@@ -6061,7 +6122,7 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
                       </Badge>
                     </div>
                     <p className="text-[11px] text-slate-300 truncate">
-                      Alert ID: {selectedAlert.id} | {selectedAlertDisplayTs ? formatRawAlertTimestamp(selectedAlertDisplayTs, "datetime") : 'N/A'}
+                      Alert ID: {selectedAlert.id} | Last Occurrence: {selectedAlertLastOccurrenceTs ? formatRawAlertTimestamp(selectedAlertLastOccurrenceTs, "datetime") : 'N/A'}
                     </p>
                     {alertRealtimeLoading && (
                       <p className="text-[10px] text-amber-300">Refreshing latest alert details...</p>
@@ -6493,6 +6554,15 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
                         <div>
                           <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Alert Type</p>
                           <p className="mt-1 font-semibold text-slate-900">{selectedAlertTitle || "N/A"}</p>
+                        </div>
+                      </div>
+                      <div className="flex items-start gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
+                        <Clock className="w-4 h-4 text-slate-500 mt-0.5" />
+                        <div>
+                          <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Last Occurrence</p>
+                          <p className="mt-1 font-semibold text-slate-900">
+                            {selectedAlertLastOccurrenceTs ? formatRawAlertTimestamp(selectedAlertLastOccurrenceTs, "datetime") : "N/A"}
+                          </p>
                         </div>
                       </div>
                       {selectedAlert.metadata && (

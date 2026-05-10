@@ -16,6 +16,7 @@ import {
   normalizeReportScreenshots,
   normalizeReportVideos,
   renderElementToPdfBlob,
+  resolveAlertEventTimestamp,
   resolveReportLocationText,
   saveAlertArtifactBundle,
 } from '@/components/video-alerts/report-support'
@@ -49,7 +50,8 @@ export default function IncidentReportModal({ isOpen, onClose, onSaved, driverIn
   const [reportCompiledBy, setReportCompiledBy] = useState('')
   const [designation, setDesignation] = useState('')
 
-  const timestamp = alertDetails?.timestamp || driverInfo.timestamp
+  const timestamp = resolveAlertEventTimestamp(alertDetails, driverInfo.timestamp)
+  const lastOccurrenceText = formatReportDateTime(alertDetails?.lastOccurrenceTimestamp || timestamp)
   const dateValue = formatReportDate(timestamp)
   const timeValue = formatReportTime(timestamp)
   const locationText = useMemo(
@@ -157,6 +159,10 @@ export default function IncidentReportModal({ isOpen, onClose, onSaved, driverIn
             <div className="grid grid-cols-12 border border-slate-500">
               <div className="col-span-5 border-r border-slate-500 p-2 font-semibold text-slate-700 underline">Incident Reference Number:</div>
               <div className="col-span-7 p-2">{alertDetails?.id || ''}</div>
+            </div>
+            <div className="grid grid-cols-12 border border-slate-500">
+              <div className="col-span-5 border-r border-slate-500 p-2 font-semibold text-slate-700 underline">Last Occurrence:</div>
+              <div className="col-span-7 p-2">{lastOccurrenceText || 'N/A'}</div>
             </div>
 
             <div className="grid grid-cols-12 border border-slate-500">

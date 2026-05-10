@@ -14,6 +14,7 @@ import {
   normalizeReportScreenshots,
   normalizeReportVideos,
   renderElementToPdfBlob,
+  resolveAlertEventTimestamp,
   resolveReportLocationText,
   SavedAlertArtifact,
   saveAlertArtifactBundle,
@@ -73,8 +74,16 @@ export default function NRCCameraCoveredModal({ isOpen, onClose, onSaved, driver
     [alertDetails?.location, driverInfo.location]
   )
   const siteLabel = useMemo(() => deriveReportSiteLabel(locationText) || 'Event Site', [locationText])
-  const eventDate = useMemo(() => formatReportDate(alertDetails?.timestamp || driverInfo.timestamp), [alertDetails?.timestamp, driverInfo.timestamp])
-  const eventTime = useMemo(() => formatReportTime(alertDetails?.timestamp || driverInfo.timestamp), [alertDetails?.timestamp, driverInfo.timestamp])
+  const reportEventTimestamp = useMemo(
+    () => resolveAlertEventTimestamp(alertDetails, driverInfo.timestamp),
+    [alertDetails, driverInfo.timestamp]
+  )
+  const eventDate = useMemo(() => formatReportDate(reportEventTimestamp), [reportEventTimestamp])
+  const eventTime = useMemo(() => formatReportTime(reportEventTimestamp), [reportEventTimestamp])
+  const lastOccurrenceText = useMemo(
+    () => reportEventTimestamp ? new Date(reportEventTimestamp).toLocaleString('en-GB') : '',
+    [reportEventTimestamp]
+  )
   const eventSummary = useMemo(
     () => buildAlertEventSummary(alertDetails, driverInfo, locationText, 'generic'),
     [alertDetails, driverInfo, locationText]
@@ -226,6 +235,10 @@ export default function NRCCameraCoveredModal({ isOpen, onClose, onSaved, driver
                   <div className="col-span-2 border-r border-black p-2">{driverInfo.registration || 'N/A'}</div>
                   <div className="col-span-1 border-r border-black p-2 bg-slate-100">Alert ID</div>
                   <div className="col-span-3 p-2">{alertDetails?.id || 'N/A'}</div>
+                </div>
+                <div className="grid grid-cols-8 border-b border-black text-sm">
+                  <div className="col-span-2 border-r border-black p-2 bg-slate-100">Last Occurrence</div>
+                  <div className="col-span-6 p-2">{lastOccurrenceText || 'N/A'}</div>
                 </div>
                 <div className="border-b border-black p-2 font-bold bg-slate-100">Classification Of Non-Conformance</div>
                 <div className="grid grid-cols-6 border-b border-black text-sm">

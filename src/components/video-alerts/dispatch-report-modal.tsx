@@ -8,11 +8,13 @@ import EvidenceAnnexure from '@/components/video-alerts/evidence-annexure'
 import {
   buildAlertEventSummary,
   deriveReportSiteLabel,
+  formatReportDateTime,
   ReportAlertDetails,
   SavedAlertArtifact,
   normalizeReportScreenshots,
   normalizeReportVideos,
   renderElementToPdfBlob,
+  resolveAlertEventTimestamp,
   resolveReportLocationText,
   saveAlertArtifactBundle,
 } from '@/components/video-alerts/report-support'
@@ -63,7 +65,8 @@ export default function DispatchReportModal({
   const [ems, setEms] = useState('')
   const [saps, setSaps] = useState('')
 
-  const timestamp = alertDetails?.timestamp || driverInfo.timestamp
+  const timestamp = resolveAlertEventTimestamp(alertDetails, driverInfo.timestamp)
+  const lastOccurrenceText = formatReportDateTime(alertDetails?.lastOccurrenceTimestamp || timestamp)
   const dateOfReport = toDateValue(timestamp)
   const timeOfDispatch = toTimeValue(timestamp)
   const dateOfDispatch = toDateValue(timestamp)
@@ -184,6 +187,10 @@ export default function DispatchReportModal({
                 <input className={lineClass} value={reason} onChange={(e) => setReason(e.target.value)} />
                 <label className="font-semibold uppercase">Date of Dispatch:</label>
                 <input className={lineClass} value={dateOfDispatch} readOnly />
+              </div>
+              <div className="grid grid-cols-[140px_1fr] items-end gap-3">
+                <label className="font-semibold uppercase">Last Occurrence:</label>
+                <input className={lineClass} value={lastOccurrenceText} readOnly />
               </div>
 
               <div className="grid grid-cols-[140px_1fr] items-end gap-3">

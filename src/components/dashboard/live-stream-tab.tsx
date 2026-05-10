@@ -165,6 +165,44 @@ function parseRuntimeVehicles(payload: unknown): ConnectedVehicle[] {
   });
 }
 
+function parseConnectedVehicles(payload: unknown): ConnectedVehicle[] {
+  const root = readRuntimeRecord(payload);
+  const rows = Array.isArray(payload)
+    ? payload
+    : Array.isArray(root.data)
+      ? root.data
+      : Array.isArray(root.vehicles)
+        ? root.vehicles
+        : [];
+
+  return rows
+    .map((entry) => {
+      const record = readRuntimeRecord(entry);
+      const vehicleId = String(record.id ?? record.vehicleId ?? record.phone ?? "").trim();
+      if (!vehicleId) return null;
+
+      const channelsRaw = Array.isArray(record.channels) ? record.channels : [];
+      const channels = getWarmChannelsFromList(channelsRaw as VehicleChannel[]);
+      const activeStreams = Array.isArray(record.activeStreams)
+        ? record.activeStreams
+            .map((value) => Number(value))
+            .filter((value, index, values) => Number.isFinite(value) && value > 0 && values.indexOf(value) === index)
+            .sort((a, b) => a - b)
+        : channels;
+
+      const warm = activeStreams.length ? activeStreams : channels;
+      return {
+        id: vehicleId,
+        name: vehicleId,
+        phone: String(record.phone ?? "").trim(),
+        channels: warm.map((channel) => ({ logicalChannel: channel, channel })),
+        connected: warm.length > 0,
+        activeStreams: warm,
+      } satisfies ConnectedVehicle;
+    })
+    .filter((row): row is ConnectedVehicle => !!row);
+}
+
 function mergeRuntimeIntoCatalog(
   catalogVehicles: ConnectedVehicle[],
   runtimeVehicles: ConnectedVehicle[]
@@ -308,26 +346,35 @@ export default function LiveStreamTab() {
   }, [supabase]);
 
   const fetchRuntimeVehicles = useCallback(async () => {
-    const runtimeEndpoints = [`/api/live-preview/streams?maxAgeMs=${LIVE_WARM_MAX_AGE_MS}`];
-
-    for (const endpoint of runtimeEndpoints) {
-      try {
-        const response = await fetch(endpoint, {
-          cache: "no-store",
-          signal: AbortSignal.timeout(4000),
-        });
-        if (!response.ok) continue;
+    try {
+      const response = await fetch(`/api/live-preview/streams?maxAgeMs=${LIVE_WARM_MAX_AGE_MS}`, {
+        cache: "no-store",
+        signal: AbortSignal.timeout(3500),
+      });
+      if (response.ok) {
         const data = await response.json();
         const parsed = parseRuntimeVehicles(data);
         if (parsed.length > 0) {
           return parsed;
         }
-      } catch {
-        // Try the next runtime endpoint without blocking the catalog.
       }
+    } catch {
+      // Fall through to the listener runtime probe.
     }
 
-    return [] as ConnectedVehicle[];
+    try {
+      const response = await fetch(`/api/video-server/vehicles/connected`, {
+        cache: "no-store",
+        signal: AbortSignal.timeout(4500),
+      });
+      if (!response.ok) {
+        return [] as ConnectedVehicle[];
+      }
+      const data = await response.json();
+      return parseConnectedVehicles(data);
+    } catch {
+      return [] as ConnectedVehicle[];
+    }
   }, []);
 
   const fetchConnectedVehicles = useCallback(async (options?: { background?: boolean }) => {

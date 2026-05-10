@@ -80,16 +80,38 @@ export function useVideoWebSocket(onMessage?: (data: WebSocketMessage) => void) 
   useEffect(() => {
     let isActive = true
     const urls = getWsCandidates()
+    let retryCount = 0
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null
     if (!urls.length) {
       console.error('Alert hub base URL is not set. WebSocket disabled.')
       return
     }
 
+    const clearReconnectTimer = () => {
+      if (reconnectTimer) {
+        clearTimeout(reconnectTimer)
+        reconnectTimer = null
+      }
+    }
+
+    const scheduleReconnect = () => {
+      if (!isActive) return
+      clearReconnectTimer()
+      const delayMs = Math.min(15000, 1000 * Math.pow(2, Math.min(retryCount, 4)))
+      retryCount += 1
+      reconnectTimer = setTimeout(() => {
+        if (!isActive) return
+        connect()
+      }, delayMs)
+    }
+
     const connect = () => {
       let idx = 0
       const tryNext = () => {
+        if (!isActive) return
         const nextUrl = urls[idx++]
         if (!nextUrl) {
+          scheduleReconnect()
           return
         }
         try {
@@ -104,6 +126,8 @@ export function useVideoWebSocket(onMessage?: (data: WebSocketMessage) => void) 
         socket.onopen = () => {
           if (!isActive || ws.current !== socket) return
           setConnected(true)
+          retryCount = 0
+          clearReconnectTimer()
           console.log('WebSocket connected')
         }
 
@@ -132,6 +156,8 @@ export function useVideoWebSocket(onMessage?: (data: WebSocketMessage) => void) 
             tryNext()
             return
           }
+
+          scheduleReconnect()
         }
       }
 
@@ -146,6 +172,7 @@ export function useVideoWebSocket(onMessage?: (data: WebSocketMessage) => void) 
 
     return () => {
       isActive = false
+      clearReconnectTimer()
       const socket = ws.current
       ws.current = null
       if (socket) {

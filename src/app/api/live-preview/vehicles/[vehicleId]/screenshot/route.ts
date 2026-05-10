@@ -59,7 +59,7 @@ export async function GET(
     try {
       const response = await fetch(upstreamUrl, {
         cache: "no-store",
-        signal: AbortSignal.timeout(12000),
+        signal: AbortSignal.timeout(4500),
       });
 
       if (response.ok) {

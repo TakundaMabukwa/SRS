@@ -14,6 +14,7 @@ import {
   normalizeReportScreenshots,
   normalizeReportVideos,
   renderElementToPdfBlob,
+  resolveAlertEventTimestamp,
   resolveReportLocationText,
   saveAlertArtifactBundle,
 } from '@/components/video-alerts/report-support'
@@ -52,7 +53,8 @@ export default function CriminalReportModal({ isOpen, onClose, onSaved, driverIn
   const [actionTaken, setActionTaken] = useState('')
   const [responsiblePerson, setResponsiblePerson] = useState('')
 
-  const timestamp = alertDetails?.timestamp || driverInfo.timestamp
+  const timestamp = resolveAlertEventTimestamp(alertDetails, driverInfo.timestamp)
+  const lastOccurrenceText = formatReportDateTime(alertDetails?.lastOccurrenceTimestamp || timestamp)
   const locationText = useMemo(
     () => resolveReportLocationText(alertDetails?.location, driverInfo.location),
     [alertDetails?.location, driverInfo.location]
@@ -148,6 +150,7 @@ export default function CriminalReportModal({ isOpen, onClose, onSaved, driverIn
             <h4 className="text-center text-2xl font-semibold text-blue-900 underline">Incident Information</h4>
             <div className="grid grid-cols-12 border border-slate-500"><div className="col-span-6 border-r border-slate-500 p-2 font-semibold">Incident Type</div><div className="col-span-6 p-2">{alertDetails?.type || 'Criminal activity'}</div></div>
             <div className="grid grid-cols-12 border border-slate-500"><div className="col-span-6 border-r border-slate-500 p-2 font-semibold">Date & Time of Incident</div><div className="col-span-6 p-2">{formatReportDateTime(timestamp)}</div></div>
+            <div className="grid grid-cols-12 border border-slate-500"><div className="col-span-6 border-r border-slate-500 p-2 font-semibold">Last Occurrence</div><div className="col-span-6 p-2">{lastOccurrenceText || 'N/A'}</div></div>
             <div className="grid grid-cols-12 border border-slate-500"><div className="col-span-6 border-r border-slate-500 p-2 font-semibold">Fleet / Registration</div><div className="col-span-6 p-2">{driverInfo.registration ? `${driverInfo.fleetNumber} - ${driverInfo.registration}` : driverInfo.fleetNumber || 'N/A'}</div></div>
             <div className="grid grid-cols-12 border border-slate-500"><div className="col-span-6 border-r border-slate-500 p-2 font-semibold">Location</div><div className="col-span-6 p-2">{locationText}</div></div>
             <div className="grid grid-cols-12 border border-slate-500"><div className="col-span-6 border-r border-slate-500 p-2 font-semibold">City / Site</div><div className="col-span-6 p-1"><input className="h-10 w-full border border-slate-500 px-3" value={citySite} onChange={(e) => setCitySite(e.target.value)} /></div></div>

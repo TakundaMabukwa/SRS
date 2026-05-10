@@ -1,6 +1,6 @@
 'use client'
 
-import { formatReportDateTime, getReportVehicleDisplayText, getReportVehicleRegistrationText, ReportAlertDetails, ReportDriverInfo } from './report-support'
+import { formatReportDateTime, getReportVehicleDisplayText, getReportVehicleRegistrationText, ReportAlertDetails, ReportDriverInfo, resolveAlertEventTimestamp } from './report-support'
 
 interface EvidenceAnnexureProps {
   title?: string
@@ -19,6 +19,8 @@ export default function EvidenceAnnexure({
   screenshots,
   videos,
 }: EvidenceAnnexureProps) {
+  const eventTimestamp = resolveAlertEventTimestamp(alertDetails, driverInfo.timestamp)
+
   const formatCameraLabel = (channel?: number, fallback?: string) => {
     if (channel && Number.isFinite(channel) && channel > 0) return `Camera CH${channel}`
     return fallback || 'Camera'
@@ -35,7 +37,7 @@ export default function EvidenceAnnexure({
         <div><span className="font-semibold">Fleet Number:</span> {driverInfo.fleetNumber || 'N/A'}</div>
         <div><span className="font-semibold">Registration:</span> {getReportVehicleRegistrationText(driverInfo.registration) || 'N/A'}</div>
         <div><span className="font-semibold">Severity:</span> {alertDetails?.severity || 'N/A'}</div>
-        <div><span className="font-semibold">Timestamp:</span> {formatReportDateTime(alertDetails?.timestamp || driverInfo.timestamp) || 'N/A'}</div>
+        <div><span className="font-semibold">Last Occurrence:</span> {formatReportDateTime(eventTimestamp) || 'N/A'}</div>
         <div className="col-span-2"><span className="font-semibold">Location:</span> {locationText}</div>
       </div>
       <div className="grid grid-cols-2 gap-2">

@@ -39,6 +39,26 @@ function copyHeaders(response: Response) {
   return headers;
 }
 
+function normalizeWaitMs(value: string | null) {
+  const parsed = Number(value || 0);
+  if (!Number.isFinite(parsed) || parsed <= 0) return 2500;
+  return Math.min(Math.max(Math.round(parsed), 500), 4000);
+}
+
+async function fetchWithTimeout(url: string, timeoutMs: number) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    return await fetch(url, {
+      cache: "no-store",
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ vehicleId: string }> }
@@ -48,6 +68,9 @@ export async function GET(
   const candidates = buildCandidateVehicleIds(vehicleId, fallbackIds);
   const forwardedQuery = new URLSearchParams(request.nextUrl.searchParams);
   forwardedQuery.delete("fallbackIds");
+  const waitMs = normalizeWaitMs(forwardedQuery.get("waitMs"));
+  forwardedQuery.set("waitMs", String(waitMs));
+  const timeoutMs = waitMs + 1500;
 
   const upstreamBase = getLivePreviewBaseUrl();
   let lastErrorResponse: Response | null = null;
@@ -58,9 +81,7 @@ export async function GET(
     }`;
 
     try {
-      const response = await fetch(upstreamUrl, {
-        cache: "no-store",
-      });
+      const response = await fetchWithTimeout(upstreamUrl, timeoutMs);
 
       if (response.ok) {
         return new NextResponse(response.body, {

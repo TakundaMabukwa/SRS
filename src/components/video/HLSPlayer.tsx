@@ -1,7 +1,7 @@
 /* eslint-disable @next/next/no-img-element */
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertCircle, Loader2 } from 'lucide-react';
 
 interface HLSPlayerProps {
@@ -13,6 +13,10 @@ interface HLSPlayerProps {
 }
 
 const LIVE_WARM_MAX_AGE_MS = 20000;
+const START_LIVE_TIMEOUT_MS = 7000;
+const START_LIVE_COOLDOWN_MS = 12000;
+const START_LIVE_REQUESTS = new Map<string, Promise<boolean>>();
+const START_LIVE_COOLDOWNS = new Map<string, number>();
 
 export default function HLSPlayer({
   vehicleId,
@@ -25,22 +29,72 @@ export default function HLSPlayer({
   const [error, setError] = useState(false);
   const [reloadToken, setReloadToken] = useState(0);
 
-  const fallbackKey = useMemo(
+  const candidateVehicleIds = useMemo(
     () =>
       Array.from(
         new Set(
-          fallbackVehicleIds
+          [vehicleId, ...fallbackVehicleIds]
             .map((value) => String(value || '').trim())
             .filter(Boolean)
         )
-      ).join(','),
-    [fallbackVehicleIds]
+      ),
+    [fallbackVehicleIds, vehicleId]
   );
+
+  const fallbackKey = useMemo(() => candidateVehicleIds.join(','), [candidateVehicleIds]);
+
+  const startLiveRequestKey = useMemo(
+    () => `${candidateVehicleIds.join('|')}::${channel}`,
+    [candidateVehicleIds, channel]
+  );
+
+  const requestStartLive = useCallback(async () => {
+    const now = Date.now();
+    const cooldownUntil = START_LIVE_COOLDOWNS.get(startLiveRequestKey) || 0;
+    if (now < cooldownUntil) {
+      return false;
+    }
+
+    const inflight = START_LIVE_REQUESTS.get(startLiveRequestKey);
+    if (inflight) {
+      return inflight;
+    }
+
+    const request = (async () => {
+      for (const candidateId of candidateVehicleIds) {
+        try {
+          const response = await fetch(
+            `/api/video-server/vehicles/${encodeURIComponent(candidateId)}/start-live`,
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ channel }),
+              signal: AbortSignal.timeout(START_LIVE_TIMEOUT_MS),
+            }
+          );
+
+          if (response.ok) {
+            return true;
+          }
+        } catch {
+          // Keep trying other candidate ids.
+        }
+      }
+
+      START_LIVE_COOLDOWNS.set(startLiveRequestKey, Date.now() + START_LIVE_COOLDOWN_MS);
+      return false;
+    })().finally(() => {
+      START_LIVE_REQUESTS.delete(startLiveRequestKey);
+    });
+
+    START_LIVE_REQUESTS.set(startLiveRequestKey, request);
+    return request;
+  }, [candidateVehicleIds, channel, startLiveRequestKey]);
 
   const streamUrl = useMemo(() => {
     const params = new URLSearchParams({
       channel: String(channel),
-      waitMs: '12000',
+      waitMs: '2500',
       maxAgeMs: String(LIVE_WARM_MAX_AGE_MS),
       _ts: String(reloadToken || Date.now()),
     });
@@ -56,18 +110,42 @@ export default function HLSPlayer({
   }, [vehicleId, channel, fallbackKey, reloadToken]);
 
   useEffect(() => {
+    let cancelled = false;
+
+    const bootStream = async () => {
+      setStatus('Starting stream...');
+      await requestStartLive();
+      if (cancelled) return;
+      setStatus('Connecting live preview...');
+      setReloadToken((value) => value + 1);
+    };
+
+    void bootStream();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [vehicleId, channel, fallbackKey, requestStartLive]);
+
+  useEffect(() => {
     if (!error) {
       return;
     }
 
-    const timer = setTimeout(() => {
+    let cancelled = false;
+    const timer = setTimeout(async () => {
       setStatus('Retrying live preview...');
+      await requestStartLive();
+      if (cancelled) return;
       setError(false);
       setReloadToken((value) => value + 1);
     }, 3000);
 
-    return () => clearTimeout(timer);
-  }, [error]);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [error, requestStartLive]);
 
   const isStreaming = !error && status === 'Streaming';
 

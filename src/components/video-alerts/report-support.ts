@@ -7,6 +7,7 @@ export interface ReportAlertDetails {
   type?: string
   severity?: string
   timestamp?: string
+  lastOccurrenceTimestamp?: string
   location?: { latitude?: number; longitude?: number; address?: string } | string
   screenshots?: Array<{ url?: string; timestamp?: string; storage_url?: string; signed_url?: string; image_url?: string; channel?: number }>
   videos?: Array<{ key?: string; label?: string; url?: string; src?: string; path?: string; channel?: number }>
@@ -19,6 +20,17 @@ export interface ReportDriverInfo {
   department?: string
   timestamp: string
   location?: string
+}
+
+export function resolveAlertEventTimestamp(
+  alertDetails?: ReportAlertDetails,
+  fallbackTimestamp?: string
+): string {
+  return (
+    String(alertDetails?.lastOccurrenceTimestamp || '').trim() ||
+    String(alertDetails?.timestamp || '').trim() ||
+    String(fallbackTimestamp || '').trim()
+  )
 }
 
 function cleanText(value?: string | null): string {
@@ -197,7 +209,7 @@ export function buildAlertEventSummary(
   const vehicle = getReportVehicleDisplayText(driverInfo)
   const type = cleanText(alertDetails?.type) || 'video alert'
   const severity = cleanText(alertDetails?.severity)
-  const timestamp = formatReportDateTime(alertDetails?.timestamp || driverInfo.timestamp)
+  const timestamp = formatReportDateTime(resolveAlertEventTimestamp(alertDetails, driverInfo.timestamp))
   const resolvedLocation = cleanText(locationText || resolveReportLocationText(alertDetails?.location, driverInfo.location))
   const location = looksLikeCoordinatePair(resolvedLocation) ? '' : resolvedLocation
   const subject = driverInfo.name && driverInfo.name !== 'Unknown Driver'
@@ -248,7 +260,8 @@ export function buildAlertEvidencePayload(
     alertId: alertDetails?.id || null,
     alertType: alertDetails?.type || null,
     severity: alertDetails?.severity || null,
-    timestamp: alertDetails?.timestamp || driverInfo.timestamp || null,
+    timestamp: resolveAlertEventTimestamp(alertDetails, driverInfo.timestamp) || null,
+    lastOccurrenceTimestamp: resolveAlertEventTimestamp(alertDetails, driverInfo.timestamp) || null,
     vehicle: getReportVehicleDisplayText(driverInfo),
     fleetNumber: driverInfo.fleetNumber || null,
     vehicleRegistration: driverInfo.registration || null,
