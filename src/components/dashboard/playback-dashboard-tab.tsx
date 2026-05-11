@@ -213,6 +213,18 @@ function formatDateTime(value?: string | null) {
   })} SAST`;
 }
 
+function formatVehicleRangeSummary(vehicle: PlaybackVehicle | null | undefined) {
+  if (!vehicle) return "No stored range yet";
+  const earliest = String(vehicle.earliestTime || "").trim();
+  const latest = String(vehicle.latestTime || "").trim();
+  if (earliest && latest) {
+    return `${formatDateTime(earliest)} - ${formatDateTime(latest)}`;
+  }
+  if (earliest) return `From ${formatDateTime(earliest)}`;
+  if (latest) return `Until ${formatDateTime(latest)}`;
+  return "No stored range yet";
+}
+
 function formatTimeInputValue(value?: string | null) {
   if (!value) return "";
   const date = new Date(value);
@@ -1481,6 +1493,9 @@ export default function PlaybackDashboardTab() {
                       <tr key={vehicle.vehicleId} className={`border-t border-slate-100 transition ${selected ? "bg-cyan-50" : "bg-white hover:bg-slate-50"}`}>
                         <td className="px-3 py-3 align-top">
                           <div className="font-medium text-slate-900">{vehicleDisplayLabel(vehicle)}</div>
+                          <p className="mt-1 text-xs text-slate-500">
+                            Stored range: {formatVehicleRangeSummary(vehicle)}
+                          </p>
                         </td>
                         <td className="px-3 py-3 align-top text-right">
                           <Button

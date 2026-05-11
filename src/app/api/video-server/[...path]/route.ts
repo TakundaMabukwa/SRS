@@ -1,9 +1,14 @@
 import { NextRequest } from 'next/server'
-import { resolveVideoServerProxyBase } from '@/lib/backend-hubs'
+import {
+  getLivePreviewBaseUrl,
+  getLiveVideoRuntimeBaseUrl,
+  resolveVideoServerProxyBase,
+} from '@/lib/backend-hubs'
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
 
 type AnyRecord = Record<string, any>
+type GenericRecord = Record<string, unknown>
 
 function normalizeProxiedMediaUrls(value: unknown, baseUrl: string): unknown {
   if (Array.isArray(value)) {
@@ -50,6 +55,453 @@ function normalizeProxiedMediaUrls(value: unknown, baseUrl: string): unknown {
     output[key] = normalizeProxiedMediaUrls(entry, baseUrl);
   }
   return output;
+}
+
+function readRecord(value: unknown): GenericRecord {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as GenericRecord)
+    : {}
+}
+
+function normalizeVehicleAlias(value: string): string {
+  const trimmed = String(value || '').trim()
+  if (!/^\d+$/.test(trimmed)) return trimmed
+  if (trimmed.startsWith('862') && trimmed.length > 12) {
+    return trimmed.slice(3)
+  }
+  return trimmed
+}
+
+function buildCandidateVehicleIds(vehicleId: string, fallbackIdsRaw: string | null): string[] {
+  const ordered = [vehicleId, ...(fallbackIdsRaw ? fallbackIdsRaw.split(',') : [])]
+    .map((value) => String(value || '').trim())
+    .filter(Boolean)
+
+  const out: string[] = []
+  const seen = new Set<string>()
+
+  for (const value of ordered) {
+    const alias = normalizeVehicleAlias(value)
+    if (!seen.has(value)) {
+      out.push(value)
+      seen.add(value)
+    }
+    if (alias && alias !== value && !seen.has(alias)) {
+      out.push(alias)
+      seen.add(alias)
+    }
+  }
+
+  return out
+}
+
+function copyProxyHeaders(response: Response): Headers {
+  const headers = new Headers()
+  for (const key of [
+    'content-type',
+    'content-length',
+    'cache-control',
+    'connection',
+    'pragma',
+    'expires',
+    'accept-ranges',
+    'content-range',
+    'etag',
+    'last-modified',
+    'x-live-channel',
+    'x-live-sim',
+    'x-live-source',
+    'x-live-updated-at',
+    'x-preview-updated-at',
+    'x-preview-sequence',
+  ]) {
+    const value = response.headers.get(key)
+    if (value) headers.set(key, value)
+  }
+  if (!headers.has('cache-control')) {
+    headers.set('cache-control', 'no-store, no-cache, must-revalidate, private')
+  }
+  return headers
+}
+
+async function fetchWithTimeout(url: string, timeoutMs: number): Promise<Response> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    return await fetch(url, {
+      cache: 'no-store',
+      signal: controller.signal,
+    })
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+function collectChannelNumbers(record: GenericRecord): number[] {
+  const channels = new Set<number>()
+  const readNumber = (value: unknown) => {
+    const n = Number(value)
+    if (Number.isFinite(n) && n > 0) channels.add(Math.round(n))
+  }
+
+  const activeStreams = Array.isArray(record.activeStreams) ? record.activeStreams : []
+  for (const entry of activeStreams) {
+    readNumber(entry)
+  }
+
+  const channelRows = Array.isArray(record.channels) ? record.channels : []
+  for (const entry of channelRows) {
+    if (typeof entry === 'number' || typeof entry === 'string') {
+      readNumber(entry)
+      continue
+    }
+    const channelRecord = readRecord(entry)
+    readNumber(channelRecord.logicalChannel ?? channelRecord.channel ?? channelRecord.channelId)
+  }
+
+  const streamRows = Array.isArray(record.streams) ? record.streams : []
+  for (const entry of streamRows) {
+    const streamRecord = readRecord(entry)
+    readNumber(streamRecord.channel ?? streamRecord.logicalChannel)
+  }
+
+  return Array.from(channels).sort((a, b) => a - b)
+}
+
+function matchesCandidateVehicle(record: GenericRecord, candidates: string[]): boolean {
+  const keys = [
+    String(record.id ?? '').trim(),
+    String(record.vehicleId ?? '').trim(),
+    String(record.deviceId ?? '').trim(),
+    String(record.phone ?? '').trim(),
+  ].filter(Boolean)
+  if (keys.length === 0) return false
+  const candidateSet = new Set(candidates.flatMap((value) => [value, normalizeVehicleAlias(value)]))
+  return keys.some((key) => candidateSet.has(key) || candidateSet.has(normalizeVehicleAlias(key)))
+}
+
+function parseVehicleRows(payload: unknown): GenericRecord[] {
+  const root = readRecord(payload)
+  const rootData = readRecord(root.data)
+
+  const rows = Array.isArray(payload)
+    ? payload
+    : Array.isArray(root.vehicles)
+      ? root.vehicles
+      : Array.isArray(root.data)
+        ? root.data
+        : Array.isArray(rootData.vehicles)
+          ? rootData.vehicles
+          : []
+
+  return rows.map((entry) => readRecord(entry))
+}
+
+function isChannelReadyInPayload(payload: unknown, candidates: string[], channel: number): boolean {
+  for (const row of parseVehicleRows(payload)) {
+    if (!matchesCandidateVehicle(row, candidates)) continue
+    const channels = collectChannelNumbers(row)
+    if (channels.includes(channel)) return true
+  }
+  return false
+}
+
+function isChannelReadyFromLatestScreenshots(payload: unknown, candidates: string[], channel: number): boolean {
+  const root = readRecord(payload)
+  const rows = Array.isArray(root.results) ? root.results : []
+  const candidateSet = new Set(candidates.flatMap((value) => [value, normalizeVehicleAlias(value)]))
+
+  return rows.some((entry) => {
+    const row = readRecord(entry)
+    const vehicle = String(row.vehicleId ?? '').trim()
+    const normalized = normalizeVehicleAlias(vehicle)
+    const ch = Number(row.channel ?? 0)
+    const ok = Boolean(row.ok)
+    const hasFile = String(row.fileUrl ?? '').trim().length > 0
+    return ok && hasFile && ch === channel && (candidateSet.has(vehicle) || candidateSet.has(normalized))
+  })
+}
+
+async function resolveGoHubScreenshotLatest(
+  livePreviewBase: string,
+  candidates: string[],
+  channel: number | null,
+): Promise<Response | null> {
+  const latestResponse = await fetchWithTimeout(`${livePreviewBase}/api/live/screenshots/latest`, 4500)
+  if (!latestResponse.ok) return null
+
+  const latestPayload = await latestResponse.json().catch(() => ({}))
+  const results = Array.isArray((latestPayload as { results?: unknown[] }).results)
+    ? ((latestPayload as { results?: unknown[] }).results as GenericRecord[])
+    : []
+  const candidateSet = new Set(candidates.flatMap((value) => [value, normalizeVehicleAlias(value)]))
+
+  const match = results.find((entry) => {
+    const row = readRecord(entry)
+    const vehicle = String(row.vehicleId ?? '').trim()
+    const normalized = normalizeVehicleAlias(vehicle)
+    const ch = Number(row.channel ?? 0)
+    if (!row.ok) return false
+    if (!row.fileUrl) return false
+    if (channel && ch !== channel) return false
+    return candidateSet.has(vehicle) || candidateSet.has(normalized)
+  })
+
+  if (!match) return null
+
+  const fileUrl = String(match.fileUrl || '').trim()
+  if (!fileUrl) return null
+  const absolute = /^https?:\/\//i.test(fileUrl)
+    ? fileUrl
+    : `${livePreviewBase}${fileUrl.startsWith('/') ? '' : '/'}${fileUrl}`
+
+  const screenshotResponse = await fetchWithTimeout(absolute, 4500)
+  return screenshotResponse.ok ? screenshotResponse : null
+}
+
+async function handleVehicleLiveMjpegProxy(request: NextRequest, pathArray: string[], primaryBase: string): Promise<Response> {
+  const vehicleId = String(pathArray[1] || '').trim()
+  if (!vehicleId) {
+    return Response.json({ success: false, message: 'vehicle id is required' }, { status: 400 })
+  }
+
+  const livePreviewBase = getLivePreviewBaseUrl()
+  const fallbackIds = request.nextUrl.searchParams.get('fallbackIds')
+  const candidates = buildCandidateVehicleIds(vehicleId, fallbackIds)
+  const forwardedQuery = new URLSearchParams(request.nextUrl.searchParams)
+  forwardedQuery.delete('fallbackIds')
+  if (!forwardedQuery.get('waitMs')) forwardedQuery.set('waitMs', '1200')
+  if (!forwardedQuery.get('maxAgeMs')) forwardedQuery.set('maxAgeMs', '12000')
+  if (!forwardedQuery.get('autoStart')) forwardedQuery.set('autoStart', 'true')
+  if (!forwardedQuery.get('videoOnly')) forwardedQuery.set('videoOnly', 'true')
+  if (!forwardedQuery.get('input')) forwardedQuery.set('input', 'auto')
+  if (!forwardedQuery.get('fps')) forwardedQuery.set('fps', '10')
+  const waitMs = Number(forwardedQuery.get('waitMs') || 0)
+  const timeoutMs = Number.isFinite(waitMs) && waitMs > 0
+    ? Math.max(3000, Math.min(9000, Math.round(waitMs) + 2500))
+    : 4500
+
+  const attempts: string[] = []
+  const seen = new Set<string>()
+  const pushAttempt = (url: string) => {
+    if (!url || seen.has(url)) return
+    seen.add(url)
+    attempts.push(url)
+  }
+
+  for (const candidateId of candidates) {
+    const liveQuery = new URLSearchParams(forwardedQuery)
+    liveQuery.set('sim', candidateId)
+    // Fast-path go-hub MJPEG first (best chance for quickest first frame).
+    pushAttempt(`${livePreviewBase}/api/live/mjpeg?${liveQuery.toString()}`)
+    pushAttempt(`${primaryBase}/api/live/mjpeg?${liveQuery.toString()}`)
+
+    // Legacy listener paths as fallback.
+    const legacyQuery = new URLSearchParams(forwardedQuery)
+    pushAttempt(`${livePreviewBase}/api/vehicles/${encodeURIComponent(candidateId)}/live.mjpeg${legacyQuery.toString() ? `?${legacyQuery.toString()}` : ''}`)
+    pushAttempt(`${primaryBase}/api/vehicles/${encodeURIComponent(candidateId)}/live.mjpeg${legacyQuery.toString() ? `?${legacyQuery.toString()}` : ''}`)
+  }
+
+  let lastError: Response | null = null
+  for (const url of attempts) {
+    try {
+      const response = await fetchWithTimeout(url, timeoutMs)
+      if (response.ok) {
+        return new Response(response.body, {
+          status: response.status,
+          headers: copyProxyHeaders(response),
+        })
+      }
+      lastError = response
+    } catch (error) {
+      console.error('[video-server/live.mjpeg] Proxy failed:', url, error)
+    }
+  }
+
+  if (lastError) {
+    const text = await lastError.text().catch(() => '')
+    return new Response(text || 'Live MJPEG unavailable', {
+      status: lastError.status,
+      headers: {
+        'content-type': lastError.headers.get('content-type') || 'text/plain; charset=utf-8',
+        'cache-control': 'no-store',
+      },
+    })
+  }
+
+  return Response.json(
+    { success: false, message: 'No live MJPEG stream available for requested vehicle/channel' },
+    { status: 404 },
+  )
+}
+
+async function handleVehicleScreenshotProxy(request: NextRequest, pathArray: string[], primaryBase: string): Promise<Response> {
+  const vehicleId = String(pathArray[1] || '').trim()
+  if (!vehicleId) {
+    return Response.json({ success: false, message: 'vehicle id is required' }, { status: 400 })
+  }
+
+  const livePreviewBase = getLivePreviewBaseUrl()
+  const fallbackIds = request.nextUrl.searchParams.get('fallbackIds')
+  const candidates = buildCandidateVehicleIds(vehicleId, fallbackIds)
+  const forwardedQuery = new URLSearchParams(request.nextUrl.searchParams)
+  forwardedQuery.delete('fallbackIds')
+  const requestedChannel = Number(forwardedQuery.get('channel') || 0)
+  const channel = Number.isFinite(requestedChannel) && requestedChannel > 0 ? Math.round(requestedChannel) : null
+
+  const attempts: string[] = []
+  const seen = new Set<string>()
+  const pushAttempt = (url: string) => {
+    if (!url || seen.has(url)) return
+    seen.add(url)
+    attempts.push(url)
+  }
+
+  for (const candidateId of candidates) {
+    const query = new URLSearchParams(forwardedQuery)
+    pushAttempt(`${primaryBase}/api/vehicles/${encodeURIComponent(candidateId)}/screenshot${query.toString() ? `?${query.toString()}` : ''}`)
+    pushAttempt(`${livePreviewBase}/api/vehicles/${encodeURIComponent(candidateId)}/screenshot${query.toString() ? `?${query.toString()}` : ''}`)
+  }
+
+  let lastError: Response | null = null
+  for (const url of attempts) {
+    try {
+      const response = await fetchWithTimeout(url, 4500)
+      if (response.ok) {
+        return new Response(response.body, {
+          status: response.status,
+          headers: copyProxyHeaders(response),
+        })
+      }
+      lastError = response
+    } catch (error) {
+      console.error('[video-server/screenshot] Proxy failed:', url, error)
+    }
+  }
+
+  try {
+    const fallback = await resolveGoHubScreenshotLatest(livePreviewBase, candidates, channel)
+    if (fallback) {
+      return new Response(fallback.body, {
+        status: fallback.status,
+        headers: copyProxyHeaders(fallback),
+      })
+    }
+  } catch (error) {
+    console.error('[video-server/screenshot] latest fallback failed:', error)
+  }
+
+  if (lastError) {
+    const contentType = lastError.headers.get('content-type') || 'text/plain; charset=utf-8'
+    const text = await lastError.text().catch(() => '')
+    return new Response(text || 'Screenshot unavailable', {
+      status: lastError.status,
+      headers: {
+        'content-type': contentType,
+        'cache-control': 'no-store',
+      },
+    })
+  }
+
+  return Response.json(
+    { success: false, message: 'No screenshot available for requested vehicle/channel' },
+    { status: 404 },
+  )
+}
+
+async function handleLiveReady(request: NextRequest): Promise<Response> {
+  const sim = String(request.nextUrl.searchParams.get('sim') || '').trim()
+  if (!sim) {
+    return Response.json({ success: false, message: 'sim is required' }, { status: 400 })
+  }
+  const fallbackIds = request.nextUrl.searchParams.get('fallbackIds')
+  const candidates = buildCandidateVehicleIds(sim, fallbackIds)
+  const channelParsed = Number(request.nextUrl.searchParams.get('channel') || 1)
+  const channel = Number.isFinite(channelParsed) && channelParsed > 0 ? Math.round(channelParsed) : 1
+  const maxAgeMsParsed = Number(request.nextUrl.searchParams.get('maxAgeMs') || 20000)
+  const maxAgeMs = Number.isFinite(maxAgeMsParsed) && maxAgeMsParsed > 0 ? Math.round(maxAgeMsParsed) : 20000
+
+  const runtimeBase = getLiveVideoRuntimeBaseUrl()
+  const livePreviewBase = getLivePreviewBaseUrl()
+  const readyProbeTimeoutMs = 1200
+  const checks: Array<{ source: string; url: string }> = [
+    { source: 'live.streams', url: `${livePreviewBase}/api/live/streams?maxAgeMs=${encodeURIComponent(String(maxAgeMs))}` },
+    { source: 'live.screenshots.latest', url: `${livePreviewBase}/api/live/screenshots/latest` },
+    { source: 'live.vehicles', url: `${livePreviewBase}/api/live/vehicles` },
+    { source: 'runtime.connected', url: `${runtimeBase}/api/vehicles/connected` },
+  ]
+
+  for (const check of checks) {
+    try {
+      const response = await fetchWithTimeout(check.url, readyProbeTimeoutMs)
+      if (!response.ok) continue
+      const payload = await response.json().catch(() => ({}))
+
+      if (check.source === 'live.streams') {
+        const root = readRecord(payload)
+        const rows = Array.isArray(root.rows) ? root.rows : []
+        const candidateSet = new Set(candidates.flatMap((value) => [value, normalizeVehicleAlias(value)]))
+        const found = rows.some((entry) => {
+          const row = readRecord(entry)
+          const vehicleId = String(row.vehicleId ?? row.id ?? '').trim()
+          const normalized = normalizeVehicleAlias(vehicleId)
+          const rowChannel = Number(row.channel ?? 0)
+          return (candidateSet.has(vehicleId) || candidateSet.has(normalized)) && rowChannel === channel
+        })
+        if (found) {
+          return Response.json({
+            success: true,
+            ready: true,
+            source: check.source,
+            channel,
+            sim,
+            matchedVehicleIds: candidates,
+            checkedAt: new Date().toISOString(),
+          })
+        }
+        continue
+      }
+
+      if (check.source === 'live.screenshots.latest') {
+        if (isChannelReadyFromLatestScreenshots(payload, candidates, channel)) {
+          return Response.json({
+            success: true,
+            ready: true,
+            source: check.source,
+            channel,
+            sim,
+            matchedVehicleIds: candidates,
+            checkedAt: new Date().toISOString(),
+          })
+        }
+        continue
+      }
+
+      if (isChannelReadyInPayload(payload, candidates, channel)) {
+        return Response.json({
+          success: true,
+          ready: true,
+          source: check.source,
+          channel,
+          sim,
+          matchedVehicleIds: candidates,
+          checkedAt: new Date().toISOString(),
+        })
+      }
+    } catch {
+      // Continue to next check source.
+    }
+  }
+
+  return Response.json({
+    success: true,
+    ready: false,
+    source: 'none',
+    channel,
+    sim,
+    matchedVehicleIds: candidates,
+    checkedAt: new Date().toISOString(),
+  })
 }
 
 function toInt(value: string | null, fallback: number, min: number, max: number): number {
@@ -331,6 +783,34 @@ async function handleAlertHubCompatGet(request: NextRequest, pathArray: string[]
     });
   }
 
+  if (second === 'history') {
+    const days = toInt(search.get('days'), 30, 1, 365)
+    const limit = toInt(search.get('limit'), 200, 1, 2000)
+    const deviceId = String(search.get('device_id') || search.get('vehicleId') || '').trim()
+    const cutoffMs = Date.now() - days * 24 * 60 * 60 * 1000
+
+    let alerts = await fetchRecentAlertsFromGoHub(baseUrl, Math.max(limit, 600))
+    alerts = alerts.filter((row) => {
+      const ts = new Date(row?.last_occurrence || row?.timestamp || row?.created_at || 0).getTime()
+      if (!Number.isFinite(ts) || ts <= 0 || ts < cutoffMs) return false
+      if (!deviceId) return true
+      const rowVehicle = String(row?.vehicleId || row?.device_id || row?.vehicle_id || '').trim()
+      return rowVehicle === deviceId
+    })
+    alerts.sort(sortByLatest)
+    const history = alerts.slice(0, limit)
+
+    return okJson({
+      success: true,
+      alerts: history,
+      history,
+      count: history.length,
+      days,
+      source: 'go-vid-hub',
+      target: baseUrl,
+    })
+  }
+
   const alertId = second;
   const alert = await findAlertById(baseUrl, alertId);
   if (!alert) {
@@ -529,9 +1009,25 @@ export async function GET(
 ) {
   const { path: pathArray } = await params
   const path = pathArray.join('/')
+  const firstSegment = String(pathArray[0] || '').toLowerCase()
+  const secondSegment = String(pathArray[1] || '').toLowerCase()
+  const thirdSegment = String(pathArray[2] || '').toLowerCase()
+
+  if (firstSegment === 'live' && secondSegment === 'ready') {
+    return handleLiveReady(request)
+  }
+
   const searchParams = request.nextUrl.searchParams.toString()
   const target = resolveVideoServerProxyBase(pathArray)
-  const firstSegment = String(pathArray[0] || '').toLowerCase()
+
+  if (firstSegment === 'vehicles' && thirdSegment === 'live.mjpeg') {
+    return handleVehicleLiveMjpegProxy(request, pathArray, target.baseUrl)
+  }
+
+  if (firstSegment === 'vehicles' && thirdSegment === 'screenshot') {
+    return handleVehicleScreenshotProxy(request, pathArray, target.baseUrl)
+  }
+
   const upstreamPath = (firstSegment === 'media' || firstSegment === 'captures') ? `/${path}` : `/api/${path}`
   const url = `${target.baseUrl}${upstreamPath}${searchParams ? `?${searchParams}` : ''}`
   const lowerPath = `/${path}`.toLowerCase()

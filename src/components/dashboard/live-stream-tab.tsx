@@ -69,14 +69,59 @@ type StreamEntry = {
   vehicleName: string;
 };
 
-const LIVE_WARM_MAX_AGE_MS = 15000;
 const LIVE_REFRESH_INTERVAL_MS = 10000;
+const RUNTIME_HEARTBEAT_GRACE_MS = 3 * 60 * 1000;
+const RUNTIME_SNAPSHOT_GRACE_MS = 2 * 60 * 1000;
 
-function getChannelNumber(channel: VehicleChannel): number {
+function normalizeVehicleIdentifier(value: string): string {
+  const trimmed = String(value || "").trim();
+  if (!trimmed) return "";
+  if (!/^\d+$/.test(trimmed)) return trimmed;
+
+  let normalized = trimmed.replace(/^0+/, "");
+  if (!normalized) normalized = "0";
+  if (normalized.startsWith("862") && normalized.length > 12) {
+    normalized = normalized.slice(3);
+  }
+  return normalized;
+}
+
+function vehicleKeyCandidates(...values: Array<string | undefined>): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const value of values) {
+    const raw = String(value || "").trim();
+    if (raw && !seen.has(raw)) {
+      out.push(raw);
+      seen.add(raw);
+    }
+    const normalized = normalizeVehicleIdentifier(raw);
+    if (normalized && !seen.has(normalized)) {
+      out.push(normalized);
+      seen.add(normalized);
+    }
+  }
+  return out;
+}
+
+function isRecentTimestamp(value: unknown, thresholdMs = RUNTIME_HEARTBEAT_GRACE_MS): boolean {
+  const raw = String(value || "").trim();
+  if (!raw) return false;
+  const ts = new Date(raw).getTime();
+  if (!Number.isFinite(ts) || ts <= 0) return false;
+  return Date.now() - ts <= thresholdMs;
+}
+
+function getChannelNumber(channel: VehicleChannel | number | string): number {
+  if (typeof channel === "number") return channel;
+  if (typeof channel === "string") {
+    const parsed = Number(channel);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
   return channel.logicalChannel ?? channel.channel ?? 1;
 }
 
-function getWarmChannelsFromList(channels: VehicleChannel[] | undefined): number[] {
+function getWarmChannelsFromList(channels: Array<VehicleChannel | number | string> | undefined): number[] {
   return Array.isArray(channels)
     ? channels
         .map(getChannelNumber)
@@ -97,7 +142,11 @@ function getWarmChannelNumbers(vehicle: Pick<ConnectedVehicle, "channels" | "act
 }
 
 function toVehicleKey(vehicle: ConnectedVehicle): string {
-  return String(vehicle.id || vehicle.phone || "").trim();
+  return (
+    normalizeVehicleIdentifier(String(vehicle.id || "").trim()) ||
+    normalizeVehicleIdentifier(String(vehicle.phone || "").trim()) ||
+    String(vehicle.id || vehicle.phone || "").trim()
+  );
 }
 
 function readRuntimeRecord(value: unknown): RuntimeRecord {
@@ -159,10 +208,17 @@ function parseRuntimeVehicles(payload: unknown): ConnectedVehicle[] {
       if (!id) return null;
 
       const phone = String(record.phone ?? "").trim();
-      const connected = record.connected !== false;
       const channelsRaw = Array.isArray(record.channels) ? record.channels : [];
       const channels = channelsRaw
         .map((channelEntry) => {
+          if (typeof channelEntry === "number" || typeof channelEntry === "string") {
+            const primitive = Number(channelEntry);
+            if (!Number.isFinite(primitive) || primitive <= 0) return null;
+            return {
+              logicalChannel: primitive,
+              channel: primitive,
+            } satisfies VehicleChannel;
+          }
           const channelRecord = readRuntimeRecord(channelEntry);
           const channel = Number(
             channelRecord.logicalChannel ??
@@ -184,6 +240,12 @@ function parseRuntimeVehicles(payload: unknown): ConnectedVehicle[] {
             .filter((value, index, values) => Number.isFinite(value) && value > 0 && values.indexOf(value) === index)
             .sort((a, b) => a - b)
         : [];
+      const connectedFlag = record.connected !== false;
+      const hasActiveChannels = activeStreams.length > 0 || channels.length > 0;
+      const hasRecentHeartbeat = isRecentTimestamp(
+        record.lastHeartbeat ?? record.lastSeenAt ?? record.last_seen ?? record.updatedAt
+      );
+      const connected = connectedFlag || hasActiveChannels || hasRecentHeartbeat;
 
       return {
         id,
@@ -239,7 +301,7 @@ function parseConnectedVehicles(payload: unknown): ConnectedVehicle[] {
       if (!vehicleId) return null;
 
       const channelsRaw = Array.isArray(record.channels) ? record.channels : [];
-      const channels = getWarmChannelsFromList(channelsRaw as VehicleChannel[]);
+      const channels = getWarmChannelsFromList(channelsRaw as Array<VehicleChannel | number | string>);
       const activeStreams = Array.isArray(record.activeStreams)
         ? record.activeStreams
             .map((value) => Number(value))
@@ -248,16 +310,40 @@ function parseConnectedVehicles(payload: unknown): ConnectedVehicle[] {
         : channels;
 
       const warm = activeStreams.length ? activeStreams : channels;
+      const connectedFlag = record.connected === true;
+      const hasRecentHeartbeat = isRecentTimestamp(
+        record.lastHeartbeat ?? record.lastSeenAt ?? record.last_seen ?? record.updatedAt
+      );
       return {
         id: vehicleId,
         name: vehicleId,
         phone: String(record.phone ?? "").trim(),
         channels: warm.map((channel) => ({ logicalChannel: channel, channel })),
-        connected: warm.length > 0,
+        connected: connectedFlag || warm.length > 0 || hasRecentHeartbeat,
         activeStreams: warm,
       } satisfies ConnectedVehicle;
     })
     .filter((row): row is ConnectedVehicle => !!row);
+}
+
+function mergeRuntimeVehicleRecords(left: ConnectedVehicle, right: ConnectedVehicle): ConnectedVehicle {
+  const leftChannels = getWarmChannelNumbers(left);
+  const rightChannels = getWarmChannelNumbers(right);
+  const channels = Array.from(new Set([...leftChannels, ...rightChannels]))
+    .filter((value) => Number.isFinite(value) && value > 0)
+    .sort((a, b) => a - b);
+
+  return {
+    ...left,
+    ...right,
+    id: String(left.id || right.id || "").trim(),
+    phone: String(left.phone || right.phone || "").trim(),
+    displayLabel: String(right.displayLabel || left.displayLabel || right.name || left.name || left.id).trim(),
+    name: String(right.name || left.name || right.displayLabel || left.displayLabel || left.id).trim(),
+    connected: left.connected === true || right.connected === true || channels.length > 0,
+    channels: channels.map((channel) => ({ logicalChannel: channel, channel })),
+    activeStreams: channels,
+  };
 }
 
 function mergeRuntimeIntoCatalog(
@@ -267,21 +353,17 @@ function mergeRuntimeIntoCatalog(
   const runtimeByKey = new Map<string, ConnectedVehicle>();
 
   for (const vehicle of runtimeVehicles) {
-    const keys = [vehicle.id, vehicle.phone]
-      .map((value) => String(value || "").trim())
-      .filter(Boolean);
+    const keys = vehicleKeyCandidates(vehicle.id, vehicle.phone);
     for (const key of keys) {
-      if (!runtimeByKey.has(key)) {
-        runtimeByKey.set(key, vehicle);
-      }
+      const existing = runtimeByKey.get(key);
+      runtimeByKey.set(key, existing ? mergeRuntimeVehicleRecords(existing, vehicle) : vehicle);
     }
   }
 
-  return catalogVehicles
+  const mapped = catalogVehicles
     .map((vehicle) => {
       const runtimeMatch =
-        [vehicle.id, vehicle.phone]
-          .map((value) => String(value || "").trim())
+        vehicleKeyCandidates(vehicle.id, vehicle.phone)
           .filter(Boolean)
           .map((key) => runtimeByKey.get(key))
           .find(Boolean) || null;
@@ -300,6 +382,7 @@ function mergeRuntimeIntoCatalog(
       return {
         ...vehicle,
         phone: vehicle.phone || runtimeMatch.phone || "",
+        name: vehicle.displayLabel || runtimeMatch.name || runtimeMatch.id,
         channels: warmChannels.map((channel) => ({
           logicalChannel: channel,
           channel,
@@ -307,12 +390,30 @@ function mergeRuntimeIntoCatalog(
         connected: runtimeMatch.connected === true || warmChannels.length > 0,
         activeStreams: warmChannels,
       };
-    })
-    .sort((a, b) => {
-      const statusDiff = getVehicleStatusRank(a) - getVehicleStatusRank(b);
-      if (statusDiff !== 0) return statusDiff;
-      return String(a.displayLabel || "").localeCompare(String(b.displayLabel || ""));
     });
+
+  const mappedKeys = new Set(
+    mapped.flatMap((vehicle) => vehicleKeyCandidates(vehicle.id, vehicle.phone))
+  );
+  const runtimeOnly = runtimeVehicles
+    .filter((vehicle) => {
+      const keys = vehicleKeyCandidates(vehicle.id, vehicle.phone);
+      return !keys.some((key) => mappedKeys.has(key));
+    })
+    .map((vehicle) => {
+      const displayLabel = String(vehicle.displayLabel || vehicle.name || vehicle.id || "").trim();
+      return {
+        ...vehicle,
+        displayLabel,
+        name: displayLabel || vehicle.id,
+      };
+    });
+
+  return [...mapped, ...runtimeOnly].sort((a, b) => {
+    const statusDiff = getVehicleStatusRank(a) - getVehicleStatusRank(b);
+    if (statusDiff !== 0) return statusDiff;
+    return String(a.displayLabel || a.name || "").localeCompare(String(b.displayLabel || b.name || ""));
+  });
 }
 
 function getActiveStreamCount(vehicle: ConnectedVehicle): number {
@@ -340,6 +441,8 @@ export default function LiveStreamTab() {
   const [isDraggingPip, setIsDraggingPip] = useState(false);
   const pipDragOffsetRef = useRef({ x: 0, y: 0 });
   const catalogVehiclesRef = useRef<ConnectedVehicle[]>([]);
+  const runtimeSnapshotRef = useRef<ConnectedVehicle[]>([]);
+  const runtimeSnapshotAtRef = useRef(0);
   const supabase = createClient();
 
   const fetchCatalogVehicles = useCallback(async () => {
@@ -406,8 +509,10 @@ export default function LiveStreamTab() {
     const runtimeEndpoints = [
       `/api/video-server/vehicles/connected`,
       `/api/video-server/vehicles`,
-      `/api/live-preview/streams?maxAgeMs=${LIVE_WARM_MAX_AGE_MS}`,
+      `/api/video-server/live/vehicles`,
+      `/api/video-server/live/streams?maxAgeMs=15000`,
     ];
+    const merged = new Map<string, ConnectedVehicle>();
 
     for (const endpoint of runtimeEndpoints) {
       try {
@@ -417,13 +522,22 @@ export default function LiveStreamTab() {
         });
         if (!response.ok) continue;
         const data = await response.json();
-        const parsed = parseRuntimeVehicles(data);
-        if (parsed.length > 0) {
-          return parsed;
+        const parsed = endpoint.includes("/vehicles/connected")
+          ? parseConnectedVehicles(data)
+          : parseRuntimeVehicles(data);
+        for (const vehicle of parsed) {
+          const keys = vehicleKeyCandidates(vehicle.id, vehicle.phone);
+          if (keys.length === 0) continue;
+          const key = keys[0];
+          const existing = merged.get(key);
+          merged.set(key, existing ? mergeRuntimeVehicleRecords(existing, vehicle) : vehicle);
         }
       } catch {
         // Try next runtime endpoint.
       }
+    }
+    if (merged.size > 0) {
+      return Array.from(merged.values());
     }
 
     try {
@@ -494,10 +608,32 @@ export default function LiveStreamTab() {
       }
 
       const runtimeVehicles = await fetchRuntimeVehicles();
-      setVehicles(mergeRuntimeIntoCatalog(catalogVehicles, runtimeVehicles));
+      if (runtimeVehicles.length > 0) {
+        runtimeSnapshotRef.current = runtimeVehicles;
+        runtimeSnapshotAtRef.current = Date.now();
+        setVehicles(mergeRuntimeIntoCatalog(catalogVehicles, runtimeVehicles));
+      } else {
+        const hasRecentRuntimeSnapshot =
+          runtimeSnapshotRef.current.length > 0 &&
+          Date.now() - runtimeSnapshotAtRef.current <= RUNTIME_SNAPSHOT_GRACE_MS;
+
+        if (hasRecentRuntimeSnapshot) {
+          setVehicles(mergeRuntimeIntoCatalog(catalogVehicles, runtimeSnapshotRef.current));
+        } else {
+          setVehicles(mergeRuntimeIntoCatalog(catalogVehicles, runtimeVehicles));
+        }
+      }
     } catch (error) {
       console.error("Failed to fetch vehicles:", error);
-      setVehicles([]);
+      const hasRecentRuntimeSnapshot =
+        runtimeSnapshotRef.current.length > 0 &&
+        Date.now() - runtimeSnapshotAtRef.current <= RUNTIME_SNAPSHOT_GRACE_MS;
+
+      if (hasRecentRuntimeSnapshot) {
+        setVehicles(mergeRuntimeIntoCatalog(catalogVehiclesRef.current, runtimeSnapshotRef.current));
+      } else if (catalogVehiclesRef.current.length > 0) {
+        setVehicles((prev) => (prev.length > 0 ? prev : catalogVehiclesRef.current));
+      }
     } finally {
       setLoading(false);
       setRefreshing(false);
