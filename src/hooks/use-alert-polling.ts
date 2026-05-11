@@ -9,6 +9,11 @@ interface AlertStats {
   unattendedCount: number;
 }
 
+type PolledAlert = {
+  status?: string;
+  priority?: string;
+};
+
 async function readJsonSafely(res: Response) {
   const contentType = res.headers.get('content-type') || '';
   const text = await res.text();
@@ -33,8 +38,9 @@ export function useAlertPolling() {
       if (res.ok) {
         const data = await readJsonSafely(res);
         if (data.success && data.alerts) {
-          const newCount = data.alerts.filter((a: any) => a.status === 'new').length;
-          const criticalCount = data.alerts.filter((a: any) => a.priority === 'critical').length;
+          const activeAlerts = Array.isArray(data.alerts) ? data.alerts : [];
+          const newCount = activeAlerts.filter((a: PolledAlert) => a.status === 'new').length;
+          const criticalCount = activeAlerts.filter((a: PolledAlert) => a.priority === 'critical').length;
           
           if (newCount > lastAlertCount) {
             toast({

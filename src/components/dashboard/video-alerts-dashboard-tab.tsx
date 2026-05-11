@@ -36,7 +36,15 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { format, differenceInHours } from "date-fns";
-import { formatRawAlertTimestamp, getAlertDisplayTimestamp, getAlertFirstOccurrenceTimestamp, getAlertLastOccurrenceTimestamp } from "@/lib/video-alert-playback";
+import {
+  ALERT_READY_WINDOW_OPTIONS,
+  clearAlertPlaybackReadyCache,
+  formatRawAlertTimestamp,
+  getAlertDisplayTimestamp,
+  getAlertFirstOccurrenceTimestamp,
+  getAlertLastOccurrenceTimestamp,
+  resolveAlertPlaybackReadyMap,
+} from "@/lib/video-alert-playback";
 
 type VideoAlertsDashboardTabProps = {
   onOpenAlertDetail?: (alert: any, trip?: any) => Promise<any> | any;
@@ -172,6 +180,28 @@ const OFFICIAL_ALERT_ALIAS_MAP: Record<string, AlertNameMapping> = {
 const MIN_READY_VIDEO_BYTES = 500 * 1024;
 const MAX_EXACT_READY_CHECKS = 12;
 
+const SILENCED_ALERT_LABELS = [
+  "storage failure",
+  "storage unit failure",
+  "dms: forward camera invisible too long",
+  "forward camera invisible too long",
+  "other video equipment failure",
+  "special alarm recording threshold",
+];
+const SILENCED_ALERT_SIGNALS = new Set([
+  "jtt1078_storage_failure",
+  "platform_video_alarm_0103",
+  "platform_video_alarm_0104",
+  "platform_video_alarm_0107",
+  "custom_keyword_storage_failure",
+  "dms_10104_forward_invisible_too_long",
+]);
+
+function shouldSilenceAlertValue(value: unknown) {
+  const normalized = String(value || "").trim().toLowerCase();
+  return !!normalized && SILENCED_ALERT_LABELS.some((matcher) => normalized.includes(matcher));
+}
+
 export default function VideoAlertsDashboardTab({
   onOpenAlertDetail,
   standaloneSeverity = null,
@@ -184,7 +214,7 @@ export default function VideoAlertsDashboardTab({
   const [searchTerm, setSearchTerm] = useState("");
   const [activeTab, setActiveTab] = useState("all"); 
   const [showVideoOnly, setShowVideoOnly] = useState(false);
-  const [showRawAlerts, setShowRawAlerts] = useState(false);
+  const [showRawAlerts, setShowRawAlerts] = useState(true);
   const [pinnedVehicleIds, setPinnedVehicleIds] = useState<string[]>([]);
   const [levelFilter, setLevelFilter] = useState<"all" | "critical" | "high" | "medium" | "low">(
     standaloneSeverity && standaloneSeverity !== "all" ? standaloneSeverity : "all"
@@ -204,7 +234,6 @@ export default function VideoAlertsDashboardTab({
   const availabilityCacheRef = useRef<Map<string, any[]>>(new Map());
   const pendingAvailabilityKeysRef = useRef<Set<string>>(new Set());
   const exactReadyCacheRef = useRef<Map<string, boolean>>(new Map());
-  const pendingExactReadyIdsRef = useRef<Set<string>>(new Set());
 
   const removeClosedAlertFromBoard = useCallback((detail: any) => {
     const idsToRemove = new Set(
@@ -281,6 +310,18 @@ export default function VideoAlertsDashboardTab({
       .map((value) => String(value || "").trim())
       .filter(Boolean);
 
+    const candidateSignals = [
+      ...(Array.isArray(metadata?.alertSignals) ? metadata.alertSignals : []),
+      ...(Array.isArray(metadata?.rawAlertSignals) ? metadata.rawAlertSignals : []),
+      ...(Array.isArray(metadata?.activeSignalsSnapshot) ? metadata.activeSignalsSnapshot : []),
+    ]
+      .map((value) => String(value || "").trim().toLowerCase())
+      .filter(Boolean);
+
+    const silenced =
+      candidateValues.some((value) => shouldSilenceAlertValue(value)) ||
+      candidateSignals.some((signal) => SILENCED_ALERT_SIGNALS.has(signal));
+
     for (const value of candidateValues) {
       const structured = getStructuredAlertMapping(value);
       if (!structured) continue;
@@ -293,6 +334,7 @@ export default function VideoAlertsDashboardTab({
         title: structured.title,
         typeLabel: structured.title,
         codeLabel,
+        silent: silenced,
       };
     }
 
@@ -301,6 +343,7 @@ export default function VideoAlertsDashboardTab({
       title: fallback,
       typeLabel: fallback,
       codeLabel: "",
+      silent: silenced,
     };
   }, [getStructuredAlertMapping]);
 
@@ -344,7 +387,9 @@ export default function VideoAlertsDashboardTab({
 
     const vehicleMeta = incoming?.metadata?.vehicle || incoming?.vehicle || {};
     const presentation = getAlertPresentation(incoming);
-    const firstOccurrenceTimestamp = getAlertFirstOccurrenceTimestamp(incoming) || incoming.timestamp || incoming.created_at || incoming.alert_timestamp || new Date().toISOString();
+    if (presentation.silent) return null;
+    const sourceTimestamp = incoming.timestamp || incoming.created_at || incoming.alert_timestamp || new Date().toISOString();
+    const firstOccurrenceTimestamp = getAlertFirstOccurrenceTimestamp(incoming) || sourceTimestamp;
     const lastOccurrenceTimestamp = getAlertLastOccurrenceTimestamp(incoming) || firstOccurrenceTimestamp;
     const displayTimestamp = getAlertDisplayTimestamp(incoming) || lastOccurrenceTimestamp || firstOccurrenceTimestamp;
     const id = String(incoming.id || incoming.alert_id || incoming.alertId || "").trim();
@@ -370,9 +415,11 @@ export default function VideoAlertsDashboardTab({
       vehicleId: String(incoming.vehicleId || incoming.device_id || incoming.vehicle_id || vehicleMeta.vehicleId || fallbackVehicleId || "").trim(),
       device_id: String(incoming.device_id || incoming.vehicleId || incoming.vehicle_id || vehicleMeta.vehicleId || fallbackVehicleId || "").trim(),
       driver_name: incoming.driver_name || incoming.driver || incoming?.metadata?.driverName || "Unknown",
-      timestamp: firstOccurrenceTimestamp,
+      timestamp: displayTimestamp || sourceTimestamp,
       lastOccurrenceTimestamp,
       firstOccurrenceTimestamp,
+      displayTimestamp,
+      playbackTimestamp: displayTimestamp || lastOccurrenceTimestamp || firstOccurrenceTimestamp,
       repeated_count: Number(incoming.repeated_count || incoming.repeatedCount || 1) || 1,
     };
   }, [getAlertPresentation, resolveVehicleIdentity]);
@@ -649,33 +696,69 @@ export default function VideoAlertsDashboardTab({
         const aTs = new Date(getGroupedAlertTimestamp(a) || a.timestamp || 0).getTime();
         const bTs = new Date(getGroupedAlertTimestamp(b) || b.timestamp || 0).getTime();
         return bTs - aTs;
-      })
-      .slice(0, MAX_EXACT_READY_CHECKS);
+      });
 
     const immediateMap: Record<string, boolean> = {};
+    const alertsToCheck: any[] = [];
 
     for (const alert of normalizedAlerts) {
       const alertId = String(alert.id || "").trim();
       if (!alertId) continue;
 
-      if (exactReadyCacheRef.current.has(alertId)) {
-        immediateMap[alertId] = !!exactReadyCacheRef.current.get(alertId);
+      const status = String(alert?.status || "").trim().toLowerCase();
+      if (status === "closed" || status === "resolved") {
+        exactReadyCacheRef.current.set(alertId, true);
+        immediateMap[alertId] = true;
         continue;
       }
-      const ready = !!videoAvailability[alertId];
-      exactReadyCacheRef.current.set(alertId, ready);
-      immediateMap[alertId] = ready;
+
+      if (!videoAvailability[alertId]) {
+        immediateMap[alertId] = false;
+        continue;
+      }
+
+      if (exactReadyCacheRef.current.get(alertId) === true) {
+        immediateMap[alertId] = true;
+        continue;
+      }
+
+      alertsToCheck.push(alert);
     }
 
     if (Object.keys(immediateMap).length > 0) {
       setExactVideoReady((prev) => ({ ...prev, ...immediateMap }));
     }
-  }, [getGroupedAlertTimestamp, isPinnedVehicle, normalizeAlert, videoAvailability]);
+
+    if (alertsToCheck.length === 0) return;
+
+    const readyMap = await resolveAlertPlaybackReadyMap(
+      alertsToCheck,
+      videoProxyBase,
+      ALERT_READY_WINDOW_OPTIONS,
+      {
+        falseTtlMs: 30000,
+        maxConcurrency: 3,
+      }
+    );
+
+    for (const [alertId, ready] of Object.entries(readyMap)) {
+      if (ready) {
+        exactReadyCacheRef.current.set(alertId, true);
+      } else {
+        exactReadyCacheRef.current.delete(alertId);
+      }
+    }
+
+    if (Object.keys(readyMap).length > 0) {
+      setExactVideoReady((prev) => ({ ...prev, ...readyMap }));
+    }
+  }, [getGroupedAlertTimestamp, isPinnedVehicle, normalizeAlert, videoAvailability, videoProxyBase]);
 
   const fetchTripRoutingStyleAlerts = useCallback(async () => {
     if (suspendBackgroundWork) return;
     try {
-      const res = await fetch(`${videoProxyBase}/alerts/active`, { cache: "no-store" });
+      const activeLimit = 2000;
+      const res = await fetch(`${videoProxyBase}/alerts/active?limit=${activeLimit}`, { cache: "no-store" });
       if (!res.ok) return;
 
       const json = await readJsonSafely(res);
@@ -909,6 +992,9 @@ export default function VideoAlertsDashboardTab({
       return;
     }
 
+    clearAlertPlaybackReadyCache(payloadAlert, ALERT_READY_WINDOW_OPTIONS);
+    exactReadyCacheRef.current.delete(String(payloadAlert?.id || "").trim());
+
     setRealtimeAlerts((prev) => dedupeByIdAndSort([payloadAlert, ...prev]));
 
     if (
@@ -1006,6 +1092,13 @@ export default function VideoAlertsDashboardTab({
     void refreshExactVideoReady(alertCollection);
   }, [alertCollection, refreshExactVideoReady, suspendBackgroundWork]);
 
+  const passesVideoReadyGate = useCallback((alert: any) => {
+    const status = String(alert?.status || "").toLowerCase();
+    if (["closed", "resolved"].includes(status)) return true;
+    if (!showVideoOnly) return true;
+    return !!exactVideoReady[String(alert?.id || "")];
+  }, [exactVideoReady, showVideoOnly]);
+
   const formatAverageHandlingTime = useCallback((minutes: number | null) => {
     if (minutes === null || !Number.isFinite(minutes) || minutes < 0) return "n/a";
     if (minutes < 1) return "<1m";
@@ -1046,11 +1139,11 @@ export default function VideoAlertsDashboardTab({
 
   // Calculate statistics from alerts
   const calculatedStats = {
-    critical_alerts: alertCollection.filter(a => getAlertLevel(a) === 'critical' && !['closed', 'resolved'].includes(a.status)).length,
-    high_alerts: alertCollection.filter(a => getAlertLevel(a) === 'high' && !['closed', 'resolved'].includes(a.status)).length,
-    medium_alerts: alertCollection.filter(a => getAlertLevel(a) === 'medium' && !['closed', 'resolved'].includes(a.status)).length,
-    low_alerts: alertCollection.filter(a => getAlertLevel(a) === 'low' && !['closed', 'resolved'].includes(a.status)).length,
-    total_alerts: alertCollection.filter(a => !['closed', 'resolved'].includes(a.status)).length,
+    critical_alerts: alertCollection.filter(a => getAlertLevel(a) === 'critical' && !['closed', 'resolved'].includes(a.status) && passesVideoReadyGate(a)).length,
+    high_alerts: alertCollection.filter(a => getAlertLevel(a) === 'high' && !['closed', 'resolved'].includes(a.status) && passesVideoReadyGate(a)).length,
+    medium_alerts: alertCollection.filter(a => getAlertLevel(a) === 'medium' && !['closed', 'resolved'].includes(a.status) && passesVideoReadyGate(a)).length,
+    low_alerts: alertCollection.filter(a => getAlertLevel(a) === 'low' && !['closed', 'resolved'].includes(a.status) && passesVideoReadyGate(a)).length,
+    total_alerts: alertCollection.filter(a => !['closed', 'resolved'].includes(a.status) && passesVideoReadyGate(a)).length,
     resolved_today: alertCollection.filter(a => {
       if (!['closed', 'resolved'].includes(a.status)) return false;
       const today = new Date().toDateString();
@@ -1083,45 +1176,55 @@ export default function VideoAlertsDashboardTab({
     return diff >= 24;
   };
 
+  const matchesAlertSearch = (alert: any, query: string) => {
+    const normalizedQuery = query.toLowerCase();
+    return [
+      alert?.title,
+      alert?.fleet_number,
+      alert?.vehicle_registration,
+      alert?.driver_name,
+      alert?.vehicleId,
+      alert?.device_id,
+      alert?.id,
+    ].some((value) => String(value || "").toLowerCase().includes(normalizedQuery));
+  };
+
   // Filtering
-  const filteredAlerts = alertCollection.filter((alert: any) => {
-    const status = String(alert?.status || "").toLowerCase();
-    const isClosedAlert = ["closed", "resolved"].includes(status);
+  const filteredAlerts = (() => {
+    const baseFilteredAlerts = alertCollection.filter((alert: any) => {
+      const status = String(alert?.status || "").toLowerCase();
+      const isClosedAlert = ["closed", "resolved"].includes(status);
 
-    // 1. Tab Filter
-    if (activeTab === 'unattended') {
-      if (!isUnattended(alert)) return false;
-    } else if (activeTab === 'history') {
-      if (!isClosedAlert) return false;
-    } else if (activeTab !== 'all') {
-      if (status !== activeTab) return false;
-    }
+      // 1. Tab Filter
+      if (activeTab === "unattended") {
+        if (!isUnattended(alert)) return false;
+      } else if (activeTab === "history") {
+        if (!isClosedAlert) return false;
+      } else if (activeTab !== "all") {
+        if (status !== activeTab) return false;
+      }
 
-    if (activeTab !== "history" && isClosedAlert) {
-      return false;
-    }
+      if (activeTab !== "history" && isClosedAlert) {
+        return false;
+      }
 
-    // 2. Search
-    if (searchTerm) {
-      const s = searchTerm.toLowerCase();
-      const matchesSearch = (
-        alert.title?.toLowerCase().includes(s) ||
-        alert.fleet_number?.toLowerCase().includes(s) ||
-        alert.vehicle_registration?.toLowerCase().includes(s) ||
-        alert.driver_name?.toLowerCase().includes(s) ||
-        alert.vehicleId?.toLowerCase().includes(s) ||
-        alert.device_id?.toLowerCase().includes(s) ||
-        alert.id?.toLowerCase().includes(s)
-      );
-      if (!matchesSearch) return false;
-    }
+      if (activeTab !== "history" && !passesVideoReadyGate(alert)) {
+        return false;
+      }
 
-    if (levelFilter !== 'all' && getAlertLevel(alert) !== levelFilter) {
-      return false;
-    }
+      if (levelFilter !== "all" && getAlertLevel(alert) !== levelFilter) {
+        return false;
+      }
 
-    return true;
-  }).sort((a: any, b: any) => {
+      return true;
+    });
+
+    const trimmedSearchTerm = searchTerm.trim();
+    if (!trimmedSearchTerm) return baseFilteredAlerts;
+
+    const searchMatches = baseFilteredAlerts.filter((alert: any) => matchesAlertSearch(alert, trimmedSearchTerm));
+    return searchMatches.length > 0 ? searchMatches : baseFilteredAlerts;
+  })().sort((a: any, b: any) => {
     const aPinned = isPinnedVehicle(a) ? 1 : 0;
     const bPinned = isPinnedVehicle(b) ? 1 : 0;
     if (aPinned !== bPinned) return bPinned - aPinned;
@@ -1149,7 +1252,16 @@ export default function VideoAlertsDashboardTab({
   const lowCount = calculatedStats.low_alerts || 0;
   const allOpenCount = displayStats?.total_alerts || 0;
   const closedAlertsCount = alertCollection.filter((alert: any) => ["closed", "resolved"].includes(String(alert?.status || "").toLowerCase())).length;
-  const videoReadyCount = alertCollection.filter((alert: any) => exactVideoReady[String(alert.id)]).length;
+  const videoReadyCount = alertCollection.filter((alert: any) => {
+    const status = String(alert?.status || "").toLowerCase();
+    if (["closed", "resolved"].includes(status)) return false;
+    return exactVideoReady[String(alert.id)];
+  }).length;
+  const pendingVideoCount = alertCollection.filter((alert: any) => {
+    const status = String(alert?.status || "").toLowerCase();
+    if (["closed", "resolved"].includes(status)) return false;
+    return !exactVideoReady[String(alert.id)];
+  }).length;
   const normalizedSearchVehicle = searchTerm.trim();
   const searchCanPin = /^\d{6,}$/.test(normalizedSearchVehicle);
   const searchPinned = searchCanPin && pinnedVehicleIds.includes(normalizedSearchVehicle);
@@ -1746,10 +1858,10 @@ export default function VideoAlertsDashboardTab({
             variant={showVideoOnly ? "default" : "outline"}
             size="sm"
             onClick={() => setShowVideoOnly((prev) => !prev)}
-            title="Highlight alerts with video on the hub without hiding other alerts"
+            title="Only show active alerts once alert-time video is actually playable"
           >
             <Video className="mr-1 h-4 w-4" />
-            {showVideoOnly ? `Highlight video (${videoReadyCount})` : `Show video badges (${videoReadyCount})`}
+            {showVideoOnly ? `Video-ready only (${videoReadyCount})` : `Show all alerts`}
           </Button>
 
           <Button
@@ -1792,8 +1904,14 @@ export default function VideoAlertsDashboardTab({
           <div className="mx-auto bg-white p-4 rounded-full w-20 h-20 flex items-center justify-center shadow-sm mb-4">
             <Search className="h-8 w-8 text-slate-300" />
           </div>
-          <h3 className="text-lg font-medium text-slate-900">No alerts found</h3>
-          <p className="text-slate-500">Try adjusting your filters or search terms.</p>
+          <h3 className="text-lg font-medium text-slate-900">
+            {showVideoOnly && pendingVideoCount > 0 ? "Alerts are waiting for video" : "No alerts found"}
+          </h3>
+          <p className="text-slate-500">
+            {showVideoOnly && pendingVideoCount > 0
+              ? `${pendingVideoCount} active alert${pendingVideoCount === 1 ? "" : "s"} exist, but alert-time playback is not ready yet. They will appear here once video becomes playable.`
+              : "Try adjusting your filters or search terms."}
+          </p>
           <Button variant="link" onClick={() => { setActiveTab('all'); setLevelFilter('all'); setBoardLevelFilter(null); setSearchTerm(''); }} className="mt-2">
             Clear all filters
           </Button>

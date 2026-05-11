@@ -33,6 +33,7 @@ type LivePreviewRow = {
 type VehicleChannelCard = {
   channel: number;
   active: boolean;
+  isLive: boolean;
   imageUrl: string;
   timestamp?: string;
 };
@@ -301,7 +302,8 @@ export default function ScreenshotsDashboardTab({ detachable = true }: Screensho
 
             return {
               channel,
-              active: !!liveRow,
+              active: vehicle.connected === true || !!liveRow,
+              isLive: !!liveRow,
               imageUrl: buildScreenshotUrl(vehicle, channel, refreshToken),
               timestamp,
             } satisfies VehicleChannelCard;
@@ -443,7 +445,7 @@ export default function ScreenshotsDashboardTab({ detachable = true }: Screensho
           <div className={gridClassName}>
             {cards.map((card) => {
               const latestTimestamp = Math.max(...card.channels.map((channelCard) => parseDate(channelCard.timestamp)), 0);
-              const hasScreenshot = card.channels.some((channelCard) => channelCard.active);
+              const hasScreenshot = card.channels.some((channelCard) => channelCard.active || channelCard.isLive);
               return (
                 <Card
                   key={card.vehicleId}
@@ -499,7 +501,7 @@ export default function ScreenshotsDashboardTab({ detachable = true }: Screensho
                             <p className="text-[11px] text-slate-400">
                               {channelCard.timestamp
                                 ? `Refreshed ${new Date(channelCard.timestamp).toLocaleTimeString()}`
-                                : (channelCard.active ? "Waiting for image" : "Channel idle")}
+                                : (channelCard.active ? "Awaiting screenshot" : "Channel idle")}
                             </p>
                           </div>
                           {channelCard.active && (

@@ -31,8 +31,18 @@ export const fetchAlertsAPI = async (filters = {}) => {
       queryParams.append(key, String(value));
     }
   });
-  const queryString = queryParams.toString();
-  const response = await apiCall(`/alerts${queryString ? `?${queryString}` : ""}`);
+
+  const hasExplicitStatusFilter =
+    queryParams.has("status") ||
+    queryParams.has("statuses") ||
+    queryParams.has("resolved") ||
+    queryParams.has("includeResolved");
+
+  const endpoint = hasExplicitStatusFilter
+    ? `/alerts${queryParams.toString() ? `?${queryParams.toString()}` : ""}`
+    : `/alerts/active${queryParams.toString() ? `?${queryParams.toString()}` : ""}`;
+
+  const response = await apiCall(endpoint);
   return {
     data: response.alerts || [],
     statistics: response.statistics || null

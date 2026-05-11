@@ -45,6 +45,29 @@ function normalizeWaitMs(value: string | null) {
   return Math.min(Math.max(Math.round(parsed), 500), 4000);
 }
 
+function buildMjpegAttemptUrls(
+  upstreamBase: string,
+  candidateId: string,
+  forwardedQuery: URLSearchParams
+) {
+  const attempts: string[] = [];
+  const legacyQuery = new URLSearchParams(forwardedQuery);
+  attempts.push(
+    `${upstreamBase}/api/vehicles/${encodeURIComponent(candidateId)}/live.mjpeg${
+      legacyQuery.toString() ? `?${legacyQuery.toString()}` : ""
+    }`
+  );
+
+  const goHubQuery = new URLSearchParams(forwardedQuery);
+  goHubQuery.set("sim", candidateId);
+  if (!goHubQuery.get("autoStart")) goHubQuery.set("autoStart", "true");
+  if (!goHubQuery.get("videoOnly")) goHubQuery.set("videoOnly", "true");
+  if (!goHubQuery.get("input")) goHubQuery.set("input", "auto");
+  attempts.push(`${upstreamBase}/api/live/mjpeg?${goHubQuery.toString()}`);
+
+  return attempts;
+}
+
 async function fetchWithTimeout(url: string, timeoutMs: number) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -70,32 +93,31 @@ export async function GET(
   forwardedQuery.delete("fallbackIds");
   const waitMs = normalizeWaitMs(forwardedQuery.get("waitMs"));
   forwardedQuery.set("waitMs", String(waitMs));
-  const timeoutMs = waitMs + 1500;
+  const timeoutMs = Math.max(waitMs + 1500, 12000);
 
   const upstreamBase = getLivePreviewBaseUrl();
   let lastErrorResponse: Response | null = null;
 
   for (const candidateId of candidates) {
-    const upstreamUrl = `${upstreamBase}/api/vehicles/${encodeURIComponent(candidateId)}/live.mjpeg${
-      forwardedQuery.toString() ? `?${forwardedQuery.toString()}` : ""
-    }`;
+    const attemptUrls = buildMjpegAttemptUrls(upstreamBase, candidateId, forwardedQuery);
+    for (const upstreamUrl of attemptUrls) {
+      try {
+        const response = await fetchWithTimeout(upstreamUrl, timeoutMs);
 
-    try {
-      const response = await fetchWithTimeout(upstreamUrl, timeoutMs);
+        if (response.ok) {
+          return new NextResponse(response.body, {
+            status: response.status,
+            headers: copyHeaders(response),
+          });
+        }
 
-      if (response.ok) {
-        return new NextResponse(response.body, {
-          status: response.status,
-          headers: copyHeaders(response),
-        });
+        lastErrorResponse = response;
+        if (response.status !== 404) {
+          break;
+        }
+      } catch (error) {
+        console.error("[live-preview/mjpeg] Proxy failed for candidate", candidateId, error);
       }
-
-      lastErrorResponse = response;
-      if (response.status !== 404) {
-        break;
-      }
-    } catch (error) {
-      console.error("[live-preview/mjpeg] Proxy failed for candidate", candidateId, error);
     }
   }
 

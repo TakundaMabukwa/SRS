@@ -98,26 +98,51 @@ export const VideoAlertsProvider = ({ children }) => {
   }, [state.alerts]);
 
   const acknowledgeAlert = useCallback(async (alertId, userId) => {
-    const acknowledgedData = {
-      acknowledged_at: new Date().toISOString(),
-      acknowledged_by: userId,
-      acknowledged_by_name: currentUser.name
-    };
-    dispatch(actions.acknowledgeAlert(alertId, acknowledgedData));
-    toast({ title: "Success", description: "Alert acknowledged" });
-    return acknowledgedData;
-  }, [toast]);
+    try {
+      const response = await api.acknowledgeAlertAPI(alertId, userId);
+      const remoteAlert = response?.alert || response?.data || {};
+      const acknowledgedData = {
+        acknowledged_at: remoteAlert?.acknowledged_at || new Date().toISOString(),
+        acknowledged_by: remoteAlert?.acknowledged_by || userId,
+        acknowledged_by_name: remoteAlert?.acknowledged_by_name || currentUser.name
+      };
+      dispatch(actions.acknowledgeAlert(alertId, acknowledgedData));
+      await fetchAlert(alertId);
+      toast({ title: "Success", description: "Alert acknowledged" });
+      return acknowledgedData;
+    } catch (error) {
+      toast({ title: "Error", description: "Failed to acknowledge alert", variant: "destructive" });
+      return null;
+    }
+  }, [toast, fetchAlert]);
 
   const updateAlertStatus = useCallback(async (alertId, newStatus, userId, details = {}) => {
-    const updatedData = {
-      status: newStatus,
-      updated_at: new Date().toISOString(),
-      ...(newStatus === 'resolved' && { resolved_at: new Date().toISOString(), resolved_by: userId })
-    };
-    dispatch(actions.updateAlertStatus(alertId, newStatus, updatedData));
-    toast({ title: "Success", description: `Alert status updated to ${newStatus}` });
-    return updatedData;
-  }, [toast]);
+    try {
+      const response = await api.updateAlertStatusAPI(alertId, newStatus, userId, details);
+      const remoteAlert = response?.alert || response?.data || {};
+      const statusFromServer = String(remoteAlert?.status || newStatus || "").trim() || newStatus;
+      const updatedData = {
+        ...remoteAlert,
+        status: statusFromServer,
+        updated_at: remoteAlert?.updated_at || new Date().toISOString(),
+        ...(statusFromServer === 'resolved' && {
+          resolved_at: remoteAlert?.resolved_at || new Date().toISOString(),
+          resolved_by: remoteAlert?.resolved_by || userId
+        }),
+        ...(statusFromServer === 'closed' && {
+          closed_at: remoteAlert?.closed_at || new Date().toISOString(),
+          closed_by: remoteAlert?.closed_by || userId
+        }),
+      };
+      dispatch(actions.updateAlertStatus(alertId, statusFromServer, updatedData));
+      await fetchAlert(alertId);
+      toast({ title: "Success", description: `Alert status updated to ${statusFromServer}` });
+      return updatedData;
+    } catch (error) {
+      toast({ title: "Error", description: `Failed to update alert status to ${newStatus}`, variant: "destructive" });
+      return null;
+    }
+  }, [toast, fetchAlert]);
 
   const addNote = useCallback(async (alertId, noteData) => {
     const note = {
@@ -136,27 +161,43 @@ export const VideoAlertsProvider = ({ children }) => {
   }, [toast]);
 
   const escalateAlert = useCallback(async (alertId, escalationData) => {
-    const escalation = {
-      escalated_at: new Date().toISOString(),
-      escalated_to: escalationData.escalate_to,
-      escalated_to_name: escalationData.escalate_to_name,
-      reason: escalationData.reason
-    };
-    dispatch(actions.escalateAlert(alertId, escalation));
-    toast({ title: "Alert Escalated", description: "Alert escalated to management" });
-    return escalation;
-  }, [toast]);
+    try {
+      const response = await api.escalateAlertAPI(alertId, escalationData);
+      const remoteAlert = response?.alert || response?.data || {};
+      const escalation = {
+        escalated_at: remoteAlert?.escalated_at || new Date().toISOString(),
+        escalated_to: remoteAlert?.escalated_to || escalationData.escalate_to,
+        escalated_to_name: remoteAlert?.escalated_to_name || escalationData.escalate_to_name,
+        reason: remoteAlert?.escalation_reason || escalationData.reason
+      };
+      dispatch(actions.escalateAlert(alertId, escalation));
+      await fetchAlert(alertId);
+      toast({ title: "Alert Escalated", description: "Alert escalated to management" });
+      return escalation;
+    } catch (error) {
+      toast({ title: "Error", description: "Failed to escalate alert", variant: "destructive" });
+      return null;
+    }
+  }, [toast, fetchAlert]);
 
   const closeAlert = useCallback(async (alertId, closingData) => {
-    const closed = {
-      closed_at: new Date().toISOString(),
-      closed_by: closingData.userId,
-      closed_by_name: closingData.userName || 'User'
-    };
-    dispatch(actions.closeAlert(alertId, closed));
-    toast({ title: "Alert Closed", description: "Alert has been successfully closed" });
-    return closed;
-  }, [toast]);
+    try {
+      const response = await api.closeAlertAPI(alertId, closingData);
+      const remoteAlert = response?.alert || response?.data || {};
+      const closed = {
+        closed_at: remoteAlert?.closed_at || remoteAlert?.resolved_at || new Date().toISOString(),
+        closed_by: remoteAlert?.closed_by || remoteAlert?.resolved_by || closingData.userId,
+        closed_by_name: remoteAlert?.closed_by_name || remoteAlert?.resolved_by_name || closingData.userName || 'User'
+      };
+      dispatch(actions.closeAlert(alertId, closed));
+      await fetchAlert(alertId);
+      toast({ title: "Alert Closed", description: "Alert has been successfully closed" });
+      return closed;
+    } catch (error) {
+      toast({ title: "Error", description: "Failed to close alert", variant: "destructive" });
+      return null;
+    }
+  }, [toast, fetchAlert]);
 
   const refreshScreenshots = useCallback(async (alertId) => {
     try {

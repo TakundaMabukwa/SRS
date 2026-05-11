@@ -33,7 +33,7 @@ import {
 import { cn } from "@/lib/utils";
 import { format } from "date-fns";
 import CloseAlertModal from "@/components/modals/close-alert-modal";
-import { getAlertDisplayTimestamp, getAlertFirstOccurrenceTimestamp, getAlertLastOccurrenceTimestamp, getAlertPlaybackSignature, resolveAlertPlaybackVideos, resolveMediaUrlForCurrentOrigin } from "@/lib/video-alert-playback";
+import { getAlertDisplayTimestamp, getAlertFirstOccurrenceTimestamp, getAlertLastOccurrenceTimestamp, getAlertPlaybackSignature, normalizeBackendMediaUrl, resolveAlertPlaybackVideos, resolveMediaUrlForCurrentOrigin } from "@/lib/video-alert-playback";
 
 function AlertVideoPlayer({
   url,
@@ -191,6 +191,7 @@ export default function AlertDetailPage({ params }) {
   const [screenshotsLoading, setScreenshotsLoading] = useState(false);
   const [derivedScreenshotUrl, setDerivedScreenshotUrl] = useState("");
   const [derivedScreenshotLoading, setDerivedScreenshotLoading] = useState(false);
+  const [vehicleRegistration, setVehicleRegistration] = useState<string>("");
   const alertPlaybackSignature = useMemo(
     () => getAlertPlaybackSignature(selectedAlert),
     [selectedAlert]
@@ -204,9 +205,7 @@ export default function AlertDetailPage({ params }) {
   const normalizeScreenshotUrl = (url) => {
     const clean = String(url || "").trim();
     if (!clean) return "";
-    if (/^https?:\/\//i.test(clean)) return clean;
-    if (clean.startsWith("/")) return clean;
-    return `/${clean.replace(/^\/+/, "")}`;
+    return resolveMediaUrlForCurrentOrigin(normalizeBackendMediaUrl(clean, "/api/video-server"), "/api/video-server");
   };
 
   const normalizeScreenshots = (rows = []) =>
@@ -227,6 +226,98 @@ export default function AlertDetailPage({ params }) {
         };
       })
       .filter(Boolean);
+
+  const extractStoredAlertVideos = (payload) => {
+    const out = [];
+    const seen = new Set<string>();
+    const add = (label, rawUrl, keyHint) => {
+      const clean = String(rawUrl || "").trim();
+      if (!clean) return;
+      const normalized = String(normalizeBackendMediaUrl(clean, "/api/video-server") || "").trim();
+      if (!normalized) return;
+      if (!normalized.startsWith("/api/video-server/") && !/^https?:\/\//i.test(normalized)) return;
+      if (seen.has(normalized)) return;
+      seen.add(normalized);
+      out.push({
+        key: String(keyHint || `stored-${out.length + 1}`),
+        label: label || "Stored Alert Video",
+        url: normalized,
+      });
+    };
+
+    const root = payload && typeof payload === "object" ? payload : {};
+    const data = root?.data && typeof root.data === "object" ? root.data : {};
+    const alert = root?.alert && typeof root.alert === "object" ? root.alert : {};
+    const metadata = alert?.metadata && typeof alert.metadata === "object" ? alert.metadata : {};
+    const clipUrls = root?.clipUrls || data?.clipUrls || metadata?.clipUrls || metadata?.videoClips || {};
+
+    [
+      root?.fileUrl,
+      root?.file_url,
+      data?.fileUrl,
+      data?.file_url,
+      alert?.fileUrl,
+      alert?.file_url,
+      root?.videoUrl,
+      root?.video_url,
+      data?.videoUrl,
+      data?.video_url,
+      alert?.videoUrl,
+      alert?.video_url,
+      clipUrls?.camera,
+      clipUrls?.cameraRaw,
+      clipUrls?.pre,
+      clipUrls?.preRaw,
+      clipUrls?.post,
+      clipUrls?.postRaw,
+      alert?.preIncidentRawUrl,
+      alert?.postIncidentRawUrl,
+    ].forEach((value, idx) => add(`Stored Alert Video ${idx + 1}`, value, `stored-link-${idx}`));
+
+    const listSources = [
+      ...(Array.isArray(root?.videos) ? root.videos : []),
+      ...(Array.isArray(data?.videos) ? data.videos : []),
+      ...(Array.isArray(root?.clips) ? root.clips : []),
+      ...(Array.isArray(data?.clips) ? data.clips : []),
+      ...(Array.isArray(root?.captures) ? root.captures : []),
+      ...(Array.isArray(data?.captures) ? data.captures : []),
+      ...(Array.isArray(root?.alertCaptures) ? root.alertCaptures : []),
+      ...(Array.isArray(data?.alertCaptures) ? data.alertCaptures : []),
+      ...(Array.isArray(metadata?.captures) ? metadata.captures : []),
+      ...(Array.isArray(metadata?.evidence?.videos) ? metadata.evidence.videos : []),
+    ];
+    listSources.forEach((entry, idx) => {
+      add(
+        entry?.video_type
+          ? String(entry.video_type).replace(/_/g, " ").toUpperCase()
+          : `Stored Video ${idx + 1}`,
+        entry?.storage_url || entry?.storageUrl || entry?.url || entry?.fileUrl || entry?.file_url || entry?.videoUrl || entry?.video_url,
+        entry?.id || entry?.videoId || `stored-list-${idx}`
+      );
+    });
+
+    return out;
+  };
+
+  const fetchStoredEventVideos = useCallback(async () => {
+    if (!alertId) return [];
+
+    const fetchJson = async (endpoint) => {
+      const res = await fetch(endpoint, { cache: "no-store" });
+      if (!res.ok) return null;
+      return res.json().catch(() => null);
+    };
+
+    const [detailPayload, mediaPayload] = await Promise.all([
+      fetchJson(`/api/video-server/alerts/${encodeURIComponent(alertId)}?ensureMedia=true`),
+      fetchJson(`/api/video-server/alerts/${encodeURIComponent(alertId)}/media?ensureMedia=true`),
+    ]);
+
+    return [
+      ...extractStoredAlertVideos(detailPayload),
+      ...extractStoredAlertVideos(mediaPayload),
+    ].filter((video, index, arr) => arr.findIndex((x) => x.url === video.url) === index);
+  }, [alertId]);
 
   const fetchAlertScreenshots = useCallback(async (forceRequest = false) => {
     if (!alertId) return [];
@@ -281,6 +372,76 @@ export default function AlertDetailPage({ params }) {
     }
   }, [alertId, alerts]);
 
+  // Fetch vehicle registration using vehicle lookup API
+  useEffect(() => {
+    let cancelled = false;
+
+    const fetchVehicleRegistration = async () => {
+      if (!selectedAlert) {
+        setVehicleRegistration("");
+        return;
+      }
+
+      // Extract vehicle identifiers from alert
+      const vehicleMeta = selectedAlert?.metadata?.vehicle || selectedAlert?.vehicle || {};
+      const identifiers = Array.from(
+        new Set(
+          [
+            selectedAlert?.vehicleId,
+            selectedAlert?.device_id,
+            selectedAlert?.vehicle_id,
+            vehicleMeta?.vehicleId,
+            vehicleMeta?.terminalId,
+          ]
+            .map((value) => String(value || "").trim())
+            .filter(Boolean)
+        )
+      );
+
+      if (identifiers.length === 0) {
+        setVehicleRegistration("");
+        return;
+      }
+
+      try {
+        const res = await fetch(
+          `/api/vehicle-lookup?deviceIds=${encodeURIComponent(identifiers.join(","))}`,
+          {
+            cache: "no-store",
+            signal: AbortSignal.timeout(10000),
+          }
+        );
+
+        if (!res.ok) {
+          setVehicleRegistration("");
+          return;
+        }
+
+        const json = await res.json();
+        const vehicles = Array.isArray(json?.vehicles) ? json.vehicles : [];
+
+        if (!cancelled && vehicles.length > 0) {
+          // Use the first matching vehicle's plate
+          const plate = String(vehicles[0]?.plate || "").trim();
+          setVehicleRegistration(plate);
+        } else if (!cancelled) {
+          setVehicleRegistration("");
+        }
+      } catch (error) {
+        console.warn("Vehicle registration lookup failed:", error);
+        if (!cancelled) {
+          setVehicleRegistration("");
+        }
+      }
+    };
+
+    void fetchVehicleRegistration();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedAlert]);
+
   // Auto-refresh screenshots every 30 seconds
   useEffect(() => {
     if (!selectedAlert || selectedAlert.status === "closed") return;
@@ -313,26 +474,49 @@ export default function AlertDetailPage({ params }) {
       setLoadingEventVideos(true);
       setEventVideoError("");
       try {
-        const videos = await resolveAlertPlaybackVideos(
-          selectedAlert,
-          '/api/video-server',
-          { beforeMs: 30 * 1000, afterMs: 30 * 1000 }
-        );
+        let videos = await fetchStoredEventVideos();
+        if (!Array.isArray(videos) || videos.length === 0) {
+          videos = await resolveAlertPlaybackVideos(
+            selectedAlert,
+            '/api/video-server',
+            {
+              beforeMs: 30 * 1000,
+              afterMs: 30 * 1000,
+              preferLatestAvailable: true,
+              latestAvailableDurationMs: 339 * 1000,
+            }
+          );
+        }
         console.info("[AlertDetail] Resolved event videos", {
           alertId: selectedAlert?.id,
           videos,
         });
         if (!cancelled) {
           setEventVideos(videos);
+          if (!Array.isArray(videos) || videos.length === 0) {
+            setEventVideoError("No stored or playback video was available for this alert.");
+          }
         }
       } catch (error: any) {
         console.error("[AlertDetail] Failed to resolve event videos", {
           alertId: selectedAlert?.id,
           message: error?.message || String(error),
         });
-        if (!cancelled) {
-          setEventVideos([]);
-          setEventVideoError(error?.message || "Failed to load alert-time playback.");
+        try {
+          const storedVideos = await fetchStoredEventVideos();
+          if (!cancelled) {
+            setEventVideos(storedVideos);
+            setEventVideoError(
+              storedVideos.length > 0
+                ? ""
+                : (error?.message || "Failed to load alert-time playback.")
+            );
+          }
+        } catch {
+          if (!cancelled) {
+            setEventVideos([]);
+            setEventVideoError(error?.message || "Failed to load alert-time playback.");
+          }
         }
       } finally {
         if (!cancelled) {
@@ -346,7 +530,7 @@ export default function AlertDetailPage({ params }) {
     return () => {
       cancelled = true;
     };
-  }, [alertPlaybackSignature]);
+  }, [alertPlaybackSignature, fetchStoredEventVideos]);
 
   useEffect(() => {
     let cancelled = false;
@@ -682,34 +866,15 @@ export default function AlertDetailPage({ params }) {
                     {loadingEventVideos ? (
                       <div className="text-center py-12 text-slate-500">
                         <RefreshCw className="w-12 h-12 mx-auto mb-3 opacity-50 animate-spin" />
-                        <p>Loading alert-time playback...</p>
-                        <p className="text-sm mt-2">Using the same timestamp-window playback flow as the playback tab.</p>
+                        <p>Loading event video...</p>
                       </div>
                     ) : eventVideos.length > 0 ? (
                       eventVideos.map((video, index) => (
-                        <Card key={video.key || index} className="p-4">
-                          <AlertVideoPlayer url={video.url} />
-                          <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-3">
-                              <Video className="w-5 h-5 text-slate-600" />
-                              <div>
-                                <p className="font-medium text-slate-900">{video.label || `Event Video ${index + 1}`}</p>
-                                <p className="text-sm text-slate-600">
-                                  {String(video.label || "").toLowerCase().includes("nearest available")
-                                    ? "Nearest available playback for this vehicle when exact alert-time footage is unavailable"
-                                    : "Timestamp-matched playback for this alert"}
-                                </p>
-                              </div>
-                            </div>
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => window.open(video.url, "_blank")}
-                            >
-                              <Download className="w-4 h-4 mr-2" />
-                              Open
-                            </Button>
-                          </div>
+                        <Card key={video.key || index} className="p-0 overflow-hidden">
+                          <AlertVideoPlayer
+                            url={video.url}
+                            className="w-full h-[48vh] min-h-[320px] max-h-[620px] rounded-none bg-black object-contain"
+                          />
                         </Card>
                       ))
                     ) : eventVideoError ? (
@@ -784,7 +949,7 @@ export default function AlertDetailPage({ params }) {
                   <div>
                     <p className="text-slate-600">Vehicle</p>
                     <p className="font-medium text-slate-900">
-                      {selectedAlert.vehicle_registration || "N/A"}
+                      {vehicleRegistration || selectedAlert.vehicle_registration || "N/A"}
                     </p>
                   </div>
                 </div>

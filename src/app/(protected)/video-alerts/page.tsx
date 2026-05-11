@@ -24,7 +24,15 @@ import {
   ExternalLink
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { formatRawAlertTimestamp, getAlertDisplayTimestamp, normalizeBackendMediaUrl, resolveAlertPlaybackVideos } from '@/lib/video-alert-playback'
+import {
+  ALERT_READY_WINDOW_OPTIONS,
+  formatRawAlertTimestamp,
+  getAlertDisplayTimestamp,
+  getAlertFirstOccurrenceTimestamp,
+  getAlertLastOccurrenceTimestamp,
+  normalizeBackendMediaUrl,
+  resolveAlertPlaybackVideos,
+} from '@/lib/video-alert-playback'
 
 export default function VideoAlertsPage() {
   const router = useRouter()
@@ -79,7 +87,11 @@ export default function VideoAlertsPage() {
     const videos = await resolveAlertPlaybackVideos(
       alert,
       '/api/video-server',
-      { beforeMs: 30 * 1000, afterMs: 30 * 1000 }
+      {
+        ...ALERT_READY_WINDOW_OPTIONS,
+        preferLatestAvailable: true,
+        latestAvailableDurationMs: 339 * 1000,
+      }
     )
     return videos[0] || null
   }
@@ -117,7 +129,7 @@ export default function VideoAlertsPage() {
       const clean = String(url || '').trim()
       if (!clean) return
       const normalized = String(normalizeBackendMediaUrl(clean, '/api/video-server') || '').trim()
-      if (!normalized.startsWith('/api/video-server/')) return
+      if (!normalized.startsWith('/api/video-server/') && !/^https?:\/\//i.test(normalized)) return
       if (out.some((x) => x.url === normalized)) return
       out.push({
         key: key || `video-${out.length + 1}`,
@@ -126,22 +138,62 @@ export default function VideoAlertsPage() {
       })
     }
 
+    const mediaRoot = mediaPayload || {}
+    const mediaData = mediaRoot?.data || {}
     const clips = alert?.metadata?.videoClips || {}
+    const mediaClipUrls = mediaRoot?.clipUrls || mediaData?.clipUrls || {}
     add('Camera Video', clips.cameraVideo || clips.cameraVideoStorageUrl, 'camera')
     add('Pre-Incident Video', clips.preStorageUrl || clips.pre, 'pre')
     add('Post-Incident Video', clips.postStorageUrl || clips.post, 'post')
     add('Camera Pre Video', clips.cameraPreVideo, 'camera_pre')
     add('Camera Post Video', clips.cameraPostVideo, 'camera_post')
-    add('Raw Pre Video', alert?.preIncidentRawUrl || mediaPayload?.clipUrls?.preRaw, 'pre_raw')
-    add('Raw Post Video', alert?.postIncidentRawUrl || mediaPayload?.clipUrls?.postRaw, 'post_raw')
+    add('Raw Pre Video', alert?.preIncidentRawUrl || mediaClipUrls?.preRaw, 'pre_raw')
+    add('Raw Post Video', alert?.postIncidentRawUrl || mediaClipUrls?.postRaw, 'post_raw')
 
-    const fromMedia = Array.isArray(mediaPayload?.videos) ? mediaPayload.videos : []
+    const linkedCandidates = [
+      mediaRoot?.fileUrl,
+      mediaRoot?.file_url,
+      mediaData?.fileUrl,
+      mediaData?.file_url,
+      mediaRoot?.videoUrl,
+      mediaRoot?.video_url,
+      mediaData?.videoUrl,
+      mediaData?.video_url,
+      mediaClipUrls?.camera,
+      mediaClipUrls?.cameraRaw,
+      mediaClipUrls?.pre,
+      mediaClipUrls?.post,
+      mediaClipUrls?.stored,
+      mediaClipUrls?.storedBinary,
+      mediaClipUrls?.binary,
+    ]
+    linkedCandidates.forEach((value, idx) => add(`Stored Alert Video ${idx + 1}`, value, `stored-link-${idx}`))
+
+    const fromMedia = [
+      ...(Array.isArray(mediaRoot?.videos) ? mediaRoot.videos : []),
+      ...(Array.isArray(mediaData?.videos) ? mediaData.videos : []),
+      ...(Array.isArray(mediaRoot?.clips) ? mediaRoot.clips : []),
+      ...(Array.isArray(mediaData?.clips) ? mediaData.clips : []),
+      ...(Array.isArray(mediaRoot?.captureVideos) ? mediaRoot.captureVideos : []),
+      ...(Array.isArray(mediaData?.captureVideos) ? mediaData.captureVideos : []),
+    ]
     fromMedia.forEach((v, idx) => {
       add(
         v?.video_type ? String(v.video_type).replace(/_/g, ' ').toUpperCase() : `Video ${idx + 1}`,
-        v?.storage_url || v?.url,
+        v?.storage_url || v?.storageUrl || v?.url || v?.fileUrl || v?.file_url || v?.videoUrl || v?.video_url,
         v?.id || `media-video-${idx}`
       )
+    })
+
+    const captureRows = [
+      ...(Array.isArray(alert?.metadata?.captures) ? alert.metadata.captures : []),
+      ...(Array.isArray(mediaRoot?.captures) ? mediaRoot.captures : []),
+      ...(Array.isArray(mediaData?.captures) ? mediaData.captures : []),
+      ...(Array.isArray(mediaRoot?.alertCaptures) ? mediaRoot.alertCaptures : []),
+      ...(Array.isArray(mediaData?.alertCaptures) ? mediaData.alertCaptures : []),
+    ]
+    captureRows.forEach((row, idx) => {
+      add(`Capture Clip ${idx + 1}`, row?.fileUrl || row?.file_url || row?.url || row?.videoUrl || row?.video_url, row?.id || `capture-${idx}`)
     })
 
     const evidenceVideos = Array.isArray(alert?.metadata?.evidence?.videos)
@@ -155,6 +207,21 @@ export default function VideoAlertsPage() {
   const normalizeAlert = (raw, mediaPayload = null) => {
     const metadata = raw?.metadata || {}
     const vehicleMeta = metadata?.vehicle || raw?.vehicle || {}
+    const sourceTimestamp =
+      raw?.timestamp ||
+      raw?.created_at ||
+      raw?.alert_timestamp ||
+      null
+    const firstOccurrenceTimestamp =
+      getAlertFirstOccurrenceTimestamp(raw) ||
+      sourceTimestamp
+    const lastOccurrenceTimestamp =
+      getAlertLastOccurrenceTimestamp(raw) ||
+      firstOccurrenceTimestamp
+    const displayTimestamp =
+      getAlertDisplayTimestamp(raw) ||
+      lastOccurrenceTimestamp ||
+      firstOccurrenceTimestamp
     const lat = toNum(raw?.location?.latitude ?? raw?.latitude ?? metadata?.locationFix?.latitude)
     const lon = toNum(raw?.location?.longitude ?? raw?.longitude ?? metadata?.locationFix?.longitude)
     const location = {
@@ -178,6 +245,11 @@ export default function VideoAlertsPage() {
         vehicleMeta?.vehicleId ||
         null,
       driver_name: raw?.driver_name || null,
+      timestamp: displayTimestamp || sourceTimestamp,
+      firstOccurrenceTimestamp,
+      lastOccurrenceTimestamp,
+      displayTimestamp,
+      playbackTimestamp: displayTimestamp || lastOccurrenceTimestamp || firstOccurrenceTimestamp || sourceTimestamp,
       location,
       metadata,
       screenshots: normalizeScreenshots(raw, mediaPayload),
@@ -200,15 +272,25 @@ export default function VideoAlertsPage() {
           (Array.isArray(data?.screenshots) ? data.screenshots : null) ||
           (Array.isArray(data?.data?.screenshots) ? data.data.screenshots : null) ||
           []
-        return { screenshots }
+        return { ...data, screenshots }
       }
 
-      const [alertRes, screenshotPayload] = await Promise.all([
+      const loadMedia = async () => {
+        const res = await fetch(`/api/video-server/alerts/${alert.id}/media?ensureMedia=true`, {
+          cache: 'no-store',
+          signal: AbortSignal.timeout(8000)
+        })
+        if (!res.ok) return null
+        return res.json().catch(() => null)
+      }
+
+      const [alertRes, screenshotPayload, mediaPayload] = await Promise.all([
         fetch(`/api/video-server/alerts/${alert.id}?ensureMedia=true`, {
           cache: 'no-store',
           signal: AbortSignal.timeout(8000)
         }),
-        loadScreenshots()
+        loadScreenshots(),
+        loadMedia()
       ])
 
       let alertPayload = alert
@@ -218,13 +300,26 @@ export default function VideoAlertsPage() {
         alertPayload = data?.alert || data?.data || alert
       }
 
-      const normalized = normalizeAlert(alertPayload, screenshotPayload)
+      const mergedMediaPayload = {
+        ...(mediaPayload || {}),
+        screenshots: [
+          ...(Array.isArray(mediaPayload?.screenshots) ? mediaPayload.screenshots : []),
+          ...(Array.isArray(mediaPayload?.data?.screenshots) ? mediaPayload.data.screenshots : []),
+          ...(Array.isArray(screenshotPayload?.screenshots) ? screenshotPayload.screenshots : []),
+        ],
+      }
+      const normalized = normalizeAlert(alertPayload, mergedMediaPayload)
       if ((normalized.videos?.length || 0) === 0) {
         try {
           const playbackVideos = await resolveAlertPlaybackVideos(
             normalized,
             '/api/video-server',
-            { beforeMs: 30 * 1000, afterMs: 30 * 1000 }
+            {
+              beforeMs: 30 * 1000,
+              afterMs: 30 * 1000,
+              preferLatestAvailable: true,
+              latestAvailableDurationMs: 339 * 1000,
+            }
           )
           if (playbackVideos.length > 0) {
             normalized.videos = playbackVideos
@@ -252,16 +347,21 @@ export default function VideoAlertsPage() {
     try {
       let alertRows = []
 
-      const res = await fetch('/api/video-server/alerts', { signal: AbortSignal.timeout(10000) })
+      const activeLimit = 2000
+      const res = await fetch(`/api/video-server/alerts/active?limit=${activeLimit}`, { signal: AbortSignal.timeout(10000) })
       if (res.ok) {
         const data = await res.json()
-        if (data.success && Array.isArray(data.alerts)) {
-          alertRows = data.alerts
-        }
+        alertRows = Array.isArray(data?.alerts)
+          ? data.alerts
+          : Array.isArray(data?.data?.alerts)
+            ? data.data.alerts
+            : Array.isArray(data?.data)
+              ? data.data
+              : []
       }
 
       if (alertRows.length === 0) {
-        const activeRes = await fetch('/api/video-server/alerts/active', { signal: AbortSignal.timeout(10000) })
+        const activeRes = await fetch(`/api/video-server/alerts?limit=${activeLimit}`, { signal: AbortSignal.timeout(10000) })
         if (activeRes.ok) {
           const activeData = await activeRes.json()
           alertRows = Array.isArray(activeData?.alerts)
@@ -274,11 +374,23 @@ export default function VideoAlertsPage() {
         }
       }
 
+      const normalizedAlerts = alertRows
+        .map((rawAlert) => normalizeAlert(rawAlert))
+        .filter((alert) => {
+          const status = String(alert?.status || '').toLowerCase()
+          return status !== 'resolved' && status !== 'closed'
+        })
+
       const grouped = { critical: [], high: [], medium: [], low: [] }
-      alertRows.forEach((rawAlert) => {
-        const alert = normalizeAlert(rawAlert)
+      const sortByLatest = (a, b) =>
+        new Date(b?.timestamp || b?.displayTimestamp || 0).getTime() -
+        new Date(a?.timestamp || a?.displayTimestamp || 0).getTime()
+      normalizedAlerts.forEach((alert) => {
         const priority = alert.priority || 'low'
         if (grouped[priority]) grouped[priority].push(alert)
+      })
+      Object.keys(grouped).forEach((priority) => {
+        grouped[priority].sort(sortByLatest)
       })
       setAlerts(grouped)
       setApiError(false)
@@ -375,7 +487,12 @@ export default function VideoAlertsPage() {
             resolvedWindowVideos = await resolveAlertPlaybackVideos(
               alertToResolve,
               '/api/video-server',
-              { beforeMs: 60 * 1000, afterMs: 0 }
+              {
+                beforeMs: 60 * 1000,
+                afterMs: 0,
+                preferLatestAvailable: true,
+                latestAvailableDurationMs: 339 * 1000,
+              }
             )
           } catch (playbackErr) {
             console.warn('Failed to pull resolved-alert playback window:', playbackErr)

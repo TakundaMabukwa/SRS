@@ -69,35 +69,34 @@ export function getPlaybackHubBaseUrl() {
       process.env.NEXT_PUBLIC_PLAYBACK_HUB_BASE_URL ||
       process.env.VIDEO_ARCHIVE_BASE_URL ||
       process.env.NEXT_PUBLIC_VIDEO_ARCHIVE_BASE_URL,
-    "http://146.190.74.107:3201"
+    "http://169.239.180.72:3215"
   );
 }
 
 export function resolveVideoServerProxyBase(pathArray: string[]) {
   const [first = "", second = "", third = "", fourth = ""] = pathArray;
   const joined = pathArray.join("/").toLowerCase();
-  const isAlertMutationPath =
-    first === "alerts" &&
-    (
-      third === "acknowledge" ||
-      third === "resolve" ||
-      third === "resolve-with-notes" ||
-      third === "close" ||
-      third === "mark-false" ||
-      third === "escalate"
-    );
-  const isAlertMediaPath =
-    first === "alerts" &&
-    (
-      third === "media" ||
-      third === "screenshots" ||
-      third === "videos" ||
-      third === "video" ||
-      third === "collect-evidence"
-    );
+  const isLiveHubPath = first === "live";
+
+  if (isLiveHubPath) {
+    const baseUrl = getLivePreviewBaseUrl();
+    return { name: baseUrl === getListenerBaseUrl() ? "listener" : "livePreview", baseUrl };
+  }
+
+  const isAlertPath =
+    first === "alerts" ||
+    first === "captures" ||
+    first === "dashboard" ||
+    first === "drivers" ||
+    first === "speeding";
+
+  // Keep the full alerts workflow on alert hub (list/detail/status/media/evidence),
+  // so resolve/escalate/close and stored alert media all use the same backend source.
+  if (isAlertPath) {
+    return { name: "alertHub", baseUrl: getAlertHubBaseUrl() };
+  }
 
   const isLiveCommandPath =
-    isAlertMutationPath ||
     (first === "vehicles" &&
       (third === "start-live" ||
         third === "stop-live" ||
@@ -110,8 +109,7 @@ export function resolveVideoServerProxyBase(pathArray: string[]) {
         third === "test-playback" ||
         third === "switch-stream" ||
         third === "optimize-video" ||
-        third === "config")) ||
-    isAlertMediaPath;
+        third === "config"));
 
   if (isLiveCommandPath) {
     const baseUrl = getLiveVideoCommandBaseUrl();
@@ -151,22 +149,13 @@ export function resolveVideoServerProxyBase(pathArray: string[]) {
 
   const isPlaybackPath =
     first === "playback" ||
+    first === "storage" ||
     first === "videos" ||
     (first === "vehicles" && third === "videos") ||
     fourth === "videos";
 
   if (isPlaybackPath) {
     return { name: "playbackHub", baseUrl: getPlaybackHubBaseUrl() };
-  }
-
-  const isAlertPath =
-    first === "alerts" ||
-    first === "dashboard" ||
-    first === "drivers" ||
-    first === "speeding";
-
-  if (isAlertPath) {
-    return { name: "alertHub", baseUrl: getAlertHubBaseUrl() };
   }
 
   const isScreenshotPath =

@@ -88,7 +88,16 @@ import DispatchReportModal from '@/components/video-alerts/dispatch-report-modal
 import IncidentReportTemplateModal from '@/components/video-alerts/incident-report-template-modal';
 import type { SavedAlertArtifact } from '@/components/video-alerts/report-support';
 import { useVideoWebSocket } from "@/hooks/use-video-websocket";
-import { formatRawAlertTimestamp, getAlertDisplayTimestamp as getSharedAlertDisplayTimestamp, getAlertPlaybackSignature, resolveAlertPlaybackVideos, resolveMediaUrlForCurrentOrigin } from "@/lib/video-alert-playback";
+import {
+  formatRawAlertTimestamp,
+  getAlertDisplayTimestamp as getSharedAlertDisplayTimestamp,
+  getAlertFirstOccurrenceTimestamp as getSharedAlertFirstOccurrenceTimestamp,
+  getAlertLastOccurrenceTimestamp as getSharedAlertLastOccurrenceTimestamp,
+  getAlertPlaybackSignature,
+  getAlertPlaybackTimestamp as getSharedAlertPlaybackTimestamp,
+  resolveAlertPlaybackVideos,
+  resolveMediaUrlForCurrentOrigin,
+} from "@/lib/video-alert-playback";
 import { toast } from "sonner";
 
 const VideoAlertsDashboardTab = dynamic(
@@ -3219,7 +3228,12 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
             resolvedWindowVideos = await resolveAlertPlaybackVideos(
               selectedAlert,
               videoProxyBase,
-              { beforeMs: 60 * 1000, afterMs: 0 }
+              {
+                beforeMs: 60 * 1000,
+                afterMs: 0,
+                preferLatestAvailable: true,
+                latestAvailableDurationMs: 339 * 1000,
+              }
             );
           } catch (videoError) {
             console.warn("Failed to pull resolved-alert playback window:", videoError);
@@ -3407,7 +3421,12 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
       const playbackVideos = await resolveAlertPlaybackVideos(
         alertForPlayback,
         videoProxyBase,
-        { beforeMs: 30 * 1000, afterMs: 30 * 1000 }
+        {
+          beforeMs: 30 * 1000,
+          afterMs: 30 * 1000,
+          preferLatestAvailable: true,
+          latestAvailableDurationMs: 339 * 1000,
+        }
       );
       const seen = new Set<string>();
       const entries = playbackVideos
@@ -3791,7 +3810,12 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
         const videos = await resolveAlertPlaybackVideos(
           selectedAlert,
           videoProxyBase,
-          { beforeMs: 30 * 1000, afterMs: 30 * 1000 }
+          {
+            beforeMs: 30 * 1000,
+            afterMs: 30 * 1000,
+            preferLatestAvailable: true,
+            latestAvailableDurationMs: 339 * 1000,
+          }
         );
         if (!cancelled) {
           setSelectedAlertPlaybackVideos(videos);
@@ -3870,8 +3894,32 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
       }
     };
 
+    const baseFirstOccurrenceTimestamp =
+      getSharedAlertFirstOccurrenceTimestamp(alertSeed) ||
+      alertSeed?.timestamp ||
+      alertSeed?.created_at ||
+      alertSeed?.alert_timestamp ||
+      null;
+    const baseLastOccurrenceTimestamp =
+      getSharedAlertLastOccurrenceTimestamp(alertSeed) ||
+      baseFirstOccurrenceTimestamp;
+    const baseDisplayTimestamp =
+      getSharedAlertDisplayTimestamp(alertSeed) ||
+      baseLastOccurrenceTimestamp ||
+      baseFirstOccurrenceTimestamp;
+    const basePlaybackTimestamp =
+      getSharedAlertPlaybackTimestamp(alertSeed) ||
+      baseDisplayTimestamp ||
+      baseLastOccurrenceTimestamp ||
+      baseFirstOccurrenceTimestamp;
+
     const baseAlert = {
       ...alertSeed,
+      timestamp: baseDisplayTimestamp || alertSeed?.timestamp,
+      firstOccurrenceTimestamp: baseFirstOccurrenceTimestamp,
+      lastOccurrenceTimestamp: baseLastOccurrenceTimestamp,
+      displayTimestamp: baseDisplayTimestamp,
+      playbackTimestamp: basePlaybackTimestamp,
       vehicle_registration:
         alertSeed?.vehicle_registration ||
         trip?.vehicleassignments?.[0]?.vehicle?.name ||
@@ -4050,9 +4098,38 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
         : [];
 
       const requestState = alertVideoRequestStateRef.current[alertId] || {};
+      const mergedFirstOccurrenceTimestamp =
+        getSharedAlertFirstOccurrenceTimestamp(detailAlert) ||
+        baseFirstOccurrenceTimestamp;
+      const mergedLastOccurrenceTimestamp =
+        getSharedAlertLastOccurrenceTimestamp(detailAlert) ||
+        baseLastOccurrenceTimestamp ||
+        mergedFirstOccurrenceTimestamp;
+      const mergedDisplayTimestamp =
+        getSharedAlertDisplayTimestamp(detailAlert) ||
+        baseDisplayTimestamp ||
+        mergedLastOccurrenceTimestamp ||
+        mergedFirstOccurrenceTimestamp;
+      const mergedPlaybackTimestamp =
+        getSharedAlertPlaybackTimestamp({
+          ...baseAlert,
+          ...detailAlert,
+          firstOccurrenceTimestamp: mergedFirstOccurrenceTimestamp,
+          lastOccurrenceTimestamp: mergedLastOccurrenceTimestamp,
+          displayTimestamp: mergedDisplayTimestamp,
+        }) ||
+        mergedDisplayTimestamp ||
+        mergedLastOccurrenceTimestamp ||
+        mergedFirstOccurrenceTimestamp;
+
       const merged: any = {
         ...baseAlert,
         ...detailAlert,
+        timestamp: mergedDisplayTimestamp || detailAlert?.timestamp || baseAlert?.timestamp,
+        firstOccurrenceTimestamp: mergedFirstOccurrenceTimestamp,
+        lastOccurrenceTimestamp: mergedLastOccurrenceTimestamp,
+        displayTimestamp: mergedDisplayTimestamp,
+        playbackTimestamp: mergedPlaybackTimestamp,
         severity:
           detailAlert?.severity ||
           detailAlert?.priority ||
@@ -6324,8 +6401,7 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
                           {selectedAlertPlaybackLoading && !primaryAlertVideo ? (
                             <div className="text-center py-12 text-slate-500">
                               <RefreshCw className="w-12 h-12 mx-auto mb-3 opacity-50 animate-spin" />
-                              <p>Loading alert-time playback...</p>
-                              <p className="text-sm mt-2">Using the same timestamp-window playback flow as the playback tab.</p>
+                              <p>Loading event video...</p>
                             </div>
                           ) : alertRealtimeLoading && !primaryAlertVideo ? (
                             <div className="grid grid-cols-1 gap-4">
@@ -6338,42 +6414,13 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
                               {selectedAlertEventVideos.map((video) => {
                                 const channel = getAlertMediaChannel(video);
                                 return (
-                                  <Card key={video.url} className="p-4 border-slate-200 shadow-sm bg-slate-950 text-slate-100">
+                                  <Card key={video.url} className="p-0 overflow-hidden border-slate-200 shadow-sm bg-slate-950 text-slate-100">
                                     <UniversalVideoPlayer
                                       url={video.url}
                                       autoPlay={true}
                                       onScreenshotCapture={(blob) => handleDerivedAlertScreenshotCapture(channel, blob)}
-                                      className="w-full rounded mb-3 border border-slate-700"
+                                      className="w-full h-[48vh] min-h-[320px] max-h-[620px] rounded-none border-0 bg-black object-contain"
                                     />
-                                    <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
-                                      <div className="flex items-center gap-3">
-                                        <Video className="w-5 h-5 text-cyan-300" />
-                                        <div>
-                                          <p className="font-medium text-white">
-                                            {video.label || (channel ? `Alert Window Video CH${channel}` : "Alert Window Video")}
-                                          </p>
-                                          <p className="text-xs text-slate-300">
-                                            {channel
-                                              ? `Stored MP4 clip for camera ${channel} during the alert window.`
-                                              : "Stored MP4 clip for this vehicle and alert time range."}
-                                          </p>
-                                        </div>
-                                      </div>
-                                      <div className="flex items-center gap-2">
-                                        <Button
-                                          variant="outline"
-                                          size="sm"
-                                          className="border-cyan-400/40 bg-slate-900 text-cyan-200 hover:bg-slate-800"
-                                          onClick={() => window.open(resolveMediaUrlForCurrentOrigin(video.url), "_blank")}
-                                        >
-                                          Preview
-                                        </Button>
-                                        <Button variant="outline" size="sm" onClick={() => window.open(resolveMediaUrlForCurrentOrigin(video.url), "_blank")}>
-                                          <Download className="w-4 h-4 mr-2" />
-                                          Download
-                                        </Button>
-                                      </div>
-                                    </div>
                                   </Card>
                                 );
                               })}
@@ -6515,7 +6562,13 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
                         <div>
                           <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Vehicle</p>
                           <p className="mt-1 font-semibold text-slate-900">
-                            {selectedAlert.vehicle_registration || selectedAlert.fleet_number || selectedAlert.vehicleId || "N/A"}
+                            {selectedAlertDriverInfo.registration ||
+                              selectedAlertDriverInfo.fleetNumber ||
+                              selectedAlert?.vehicle_registration ||
+                              selectedAlert?.fleet_number ||
+                              selectedAlert?.vehicleId ||
+                              selectedAlert?.device_id ||
+                              "N/A"}
                           </p>
                         </div>
                       </div>

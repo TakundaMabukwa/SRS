@@ -4,6 +4,22 @@ import { getLivePreviewBaseUrl } from "@/lib/backend-hubs";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
+type LiveScreenshotResult = {
+  vehicleId?: string;
+  channel?: number;
+  ok?: boolean;
+  fileUrl?: string;
+};
+
+function normalizeVehicleAlias(value: string) {
+  const trimmed = String(value || "").trim();
+  if (!/^\d+$/.test(trimmed)) return trimmed;
+  if (trimmed.startsWith("862") && trimmed.length > 12) {
+    return trimmed.slice(3);
+  }
+  return trimmed;
+}
+
 function buildCandidateVehicleIds(vehicleId: string, fallbackIds: string | null) {
   return Array.from(
     new Set(
@@ -38,6 +54,62 @@ function copyHeaders(response: Response) {
   return headers;
 }
 
+function getRequestedChannel(query: URLSearchParams) {
+  const parsed = Number(query.get("channel") || 0);
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  return Math.round(parsed);
+}
+
+async function resolveGoHubScreenshot(
+  upstreamBase: string,
+  candidates: string[],
+  channel: number | null
+) {
+  const latestUrl = `${upstreamBase}/api/live/screenshots/latest`;
+  const latestResponse = await fetch(latestUrl, {
+    cache: "no-store",
+    signal: AbortSignal.timeout(4500),
+  });
+  if (!latestResponse.ok) {
+    return null;
+  }
+
+  const latestPayload = await latestResponse.json().catch(() => ({}));
+  const results = Array.isArray((latestPayload as { results?: unknown[] }).results)
+    ? ((latestPayload as { results?: unknown[] }).results as LiveScreenshotResult[])
+    : [];
+
+  const candidateSet = new Set(
+    candidates
+      .flatMap((value) => [String(value || "").trim(), normalizeVehicleAlias(String(value || "").trim())])
+      .filter(Boolean)
+  );
+
+  const match = results.find((result) => {
+    const vehicle = String(result.vehicleId || "").trim();
+    const normalizedVehicle = normalizeVehicleAlias(vehicle);
+    const resultChannel = Number(result.channel || 0);
+    const channelMatch = channel ? resultChannel === channel : resultChannel > 0;
+    return !!result.ok && !!result.fileUrl && channelMatch && (candidateSet.has(vehicle) || candidateSet.has(normalizedVehicle));
+  });
+
+  if (!match?.fileUrl) {
+    return null;
+  }
+
+  const fileUrl = String(match.fileUrl).trim();
+  const absoluteUrl = /^https?:\/\//i.test(fileUrl) ? fileUrl : `${upstreamBase}${fileUrl.startsWith("/") ? "" : "/"}${fileUrl}`;
+  const imageResponse = await fetch(absoluteUrl, {
+    cache: "no-store",
+    signal: AbortSignal.timeout(4500),
+  });
+  if (!imageResponse.ok) {
+    return null;
+  }
+
+  return imageResponse;
+}
+
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ vehicleId: string }> }
@@ -47,6 +119,7 @@ export async function GET(
   const candidates = buildCandidateVehicleIds(vehicleId, fallbackIds);
   const forwardedQuery = new URLSearchParams(request.nextUrl.searchParams);
   forwardedQuery.delete("fallbackIds");
+  const requestedChannel = getRequestedChannel(forwardedQuery);
 
   const upstreamBase = getLivePreviewBaseUrl();
   let lastErrorResponse: Response | null = null;
@@ -76,6 +149,18 @@ export async function GET(
     } catch (error) {
       console.error("[live-preview/screenshot] Proxy failed for candidate", candidateId, error);
     }
+  }
+
+  try {
+    const screenshotResponse = await resolveGoHubScreenshot(upstreamBase, candidates, requestedChannel);
+    if (screenshotResponse) {
+      return new NextResponse(screenshotResponse.body, {
+        status: screenshotResponse.status,
+        headers: copyHeaders(screenshotResponse),
+      });
+    }
+  } catch (error) {
+    console.error("[live-preview/screenshot] Go Hub screenshot fallback failed:", error);
   }
 
   if (lastErrorResponse) {

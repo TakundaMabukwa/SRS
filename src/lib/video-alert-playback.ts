@@ -10,17 +10,43 @@ type AlertPlaybackSource = string | PlaybackJsonRecord;
 type AlertPlaybackWindowOptions = {
   beforeMs?: number;
   afterMs?: number;
+  preferLatestAvailable?: boolean;
+  latestAvailableDurationMs?: number;
+  fetchAlertDetail?: boolean;
+};
+
+type AlertPlaybackReadyMapOptions = {
+  maxConcurrency?: number;
+  falseTtlMs?: number;
+  force?: boolean;
 };
 
 type PlaybackJsonRecord = Record<string, unknown>;
+type PlaybackReadyCacheEntry = {
+  ready: boolean;
+  checkedAt: number;
+};
 
 const DEFAULT_VIDEO_PROXY_BASE = "/api/video-server";
 const ALERT_PLAYBACK_WINDOW_BEFORE_MS = 60 * 1000;
 const ALERT_PLAYBACK_WINDOW_AFTER_MS = 60 * 1000;
+const ALERT_LAST_AVAILABLE_FALLBACK_MS = 339 * 1000;
+const ALERT_READY_FALSE_TTL_MS = 15 * 1000;
+const ALERT_AVAILABILITY_ROWS_TTL_MS = 20 * 1000;
 const PLAYBACK_CACHE_PREFIX = "alert-playback:";
 const playbackVideoCache = new Map<string, AlertPlaybackVideo[]>();
+const playbackReadyCache = new Map<string, PlaybackReadyCacheEntry>();
+const playbackReadyPending = new Map<string, Promise<boolean>>();
+const availabilityRowsCache = new Map<string, { rows: PlaybackJsonRecord[]; checkedAt: number }>();
 const APPROX_AVAILABLE_RANGE_PATTERN =
   /Approx available range:\s*([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:\.\-+Z]+)\s+to\s+([0-9]{4}-[0-9]{2}-[0-9:\.\-+Z]+)/i;
+
+export const ALERT_READY_WINDOW_OPTIONS: AlertPlaybackWindowOptions = {
+  beforeMs: 30 * 1000,
+  afterMs: 30 * 1000,
+  preferLatestAvailable: true,
+  latestAvailableDurationMs: 339 * 1000,
+};
 
 function resolvePlaybackWindowOptions(options?: AlertPlaybackWindowOptions) {
   const beforeCandidate = Number(options?.beforeMs);
@@ -96,10 +122,167 @@ function getPlaybackRequestBases(videoProxyBase = DEFAULT_VIDEO_PROXY_BASE) {
   return base ? [base] : [];
 }
 
+function addDirectPlaybackVideo(
+  bucket: AlertPlaybackVideo[],
+  seen: Set<string>,
+  label: string,
+  rawUrl: unknown,
+  key: string,
+  videoProxyBase = DEFAULT_VIDEO_PROXY_BASE
+) {
+  const normalized = normalizeBackendMediaUrl(String(rawUrl || "").trim(), videoProxyBase);
+  if (!normalized || seen.has(normalized)) return;
+  seen.add(normalized);
+  bucket.push({
+    key,
+    label: label || "Stored Alert Video",
+    url: normalized,
+  });
+}
+
+function extractDirectEntryUrl(entry: PlaybackJsonRecord) {
+  return String(
+    entry.storage_url ||
+      entry.storageUrl ||
+      entry.fileUrl ||
+      entry.file_url ||
+      entry.videoUrl ||
+      entry.video_url ||
+      entry.url ||
+      entry.path ||
+      entry.raw_url ||
+      entry.rawUrl ||
+      entry.playUrl ||
+      entry.mp4Url ||
+      ""
+  ).trim();
+}
+
+function extractDirectAlertPlaybackVideos(
+  alert: PlaybackJsonRecord | null | undefined,
+  videoProxyBase = DEFAULT_VIDEO_PROXY_BASE
+) {
+  if (!alert || typeof alert !== "object") return [] as AlertPlaybackVideo[];
+
+  const videos: AlertPlaybackVideo[] = [];
+  const seen = new Set<string>();
+  const alertId = String(alert.id || "alert").trim() || "alert";
+  const metadata = readPlaybackRecord(alert.metadata);
+  const clipSources = [
+    readPlaybackRecord(alert.clipUrls),
+    readPlaybackRecord(alert.clip_urls),
+    readPlaybackRecord(alert.videoClips),
+    readPlaybackRecord(metadata.clipUrls),
+    readPlaybackRecord(metadata.clip_urls),
+    readPlaybackRecord(metadata.videoClips),
+  ];
+
+  [
+    alert.fileUrl,
+    alert.file_url,
+    alert.videoUrl,
+    alert.video_url,
+    alert.preIncidentVideoUrl,
+    alert.postIncidentVideoUrl,
+    alert.cameraVideoUrl,
+    alert.preIncidentRawUrl,
+    alert.postIncidentRawUrl,
+  ].forEach((value, index) => {
+    addDirectPlaybackVideo(
+      videos,
+      seen,
+      `Stored Alert Video ${index + 1}`,
+      value,
+      `stored_primary_${alertId}_${index}`,
+      videoProxyBase
+    );
+  });
+
+  clipSources.forEach((source, sourceIndex) => {
+    [
+      source.camera,
+      source.cameraRaw,
+      source.cameraVideo,
+      source.cameraPreVideo,
+      source.cameraPostVideo,
+      source.pre,
+      source.preRaw,
+      source.preIncident,
+      source.preIncidentRaw,
+      source.post,
+      source.postRaw,
+      source.postIncident,
+      source.postIncidentRaw,
+    ].forEach((value, clipIndex) => {
+      addDirectPlaybackVideo(
+        videos,
+        seen,
+        `Stored Clip ${clipIndex + 1}`,
+        value,
+        `stored_clip_${alertId}_${sourceIndex}_${clipIndex}`,
+        videoProxyBase
+      );
+    });
+  });
+
+  const listSources = [
+    ...(Array.isArray(alert.videos) ? alert.videos : []),
+    ...(Array.isArray(alert.clips) ? alert.clips : []),
+    ...(Array.isArray(alert.captures) ? alert.captures : []),
+    ...(Array.isArray(alert.alertCaptures) ? alert.alertCaptures : []),
+    ...(Array.isArray(alert.videoCaptures) ? alert.videoCaptures : []),
+    ...(Array.isArray(alert.videoCapturesAllChannels) ? alert.videoCapturesAllChannels : []),
+    ...(Array.isArray(metadata.captures) ? metadata.captures : []),
+    ...(Array.isArray(readPlaybackRecord(metadata.evidence).videos)
+      ? (readPlaybackRecord(metadata.evidence).videos as unknown[])
+      : []),
+  ];
+
+  listSources.forEach((value, index) => {
+    const entry = readPlaybackRecord(value);
+    const url = extractDirectEntryUrl(entry);
+    const label =
+      String(entry.label || "").trim() ||
+      String(entry.video_type || entry.source || "").trim() ||
+      `Stored Video ${index + 1}`;
+    addDirectPlaybackVideo(
+      videos,
+      seen,
+      label,
+      url,
+      `stored_list_${alertId}_${index}`,
+      videoProxyBase
+    );
+  });
+
+  if (alert.videos && typeof alert.videos === "object" && !Array.isArray(alert.videos)) {
+    const videosRecord = readPlaybackRecord(alert.videos);
+    Object.entries(videosRecord).forEach(([slot, value], index) => {
+      const entry = readPlaybackRecord(value);
+      const url = extractDirectEntryUrl(entry);
+      const label = slot.replace(/_/g, " ").trim() || `Stored Video Slot ${index + 1}`;
+      addDirectPlaybackVideo(
+        videos,
+        seen,
+        label,
+        url,
+        `stored_slot_${alertId}_${index}`,
+        videoProxyBase
+      );
+    });
+  }
+
+  return dedupePlaybackVideos(videos);
+}
+
 function readPlaybackRecord(value: unknown): PlaybackJsonRecord {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as PlaybackJsonRecord)
     : {};
+}
+
+function hasPlaybackRecordValues(record: PlaybackJsonRecord | null | undefined) {
+  return !!record && Object.keys(record).length > 0;
 }
 
 function getPlaybackMessage(value: unknown) {
@@ -143,21 +326,191 @@ function parseApproxAvailableRange(message: string) {
   };
 }
 
+function extractChannelAvailabilityBounds(
+  row: PlaybackJsonRecord,
+  fallbackDurationMs = ALERT_LAST_AVAILABLE_FALLBACK_MS
+) {
+  const channel = Number(row.channel || 0);
+  if (!Number.isFinite(channel) || channel <= 0) return null;
+
+  const startRaw =
+    row.first_packet_time ||
+    row.approx_first_packet_time ||
+    row.earliestTime ||
+    row.startTime ||
+    row.start ||
+    row.from ||
+    "";
+  const endRaw =
+    row.last_packet_time ||
+    row.approx_last_packet_time ||
+    row.latestTime ||
+    row.endTime ||
+    row.end ||
+    row.to ||
+    "";
+
+  const endMs = timestampToComparableMs(endRaw);
+  if (!Number.isFinite(endMs)) return null;
+
+  const rawStartMs = timestampToComparableMs(startRaw);
+  const fallbackStartMs = Math.max(0, endMs - Math.max(1000, fallbackDurationMs));
+  const startMs = Number.isFinite(rawStartMs)
+    ? Math.max(Math.min(rawStartMs, endMs), fallbackStartMs)
+    : fallbackStartMs;
+
+  if (!Number.isFinite(startMs) || startMs >= endMs) return null;
+
+  return {
+    channel,
+    startIso: new Date(startMs).toISOString(),
+    endIso: new Date(endMs).toISOString(),
+    startMs,
+    endMs,
+  };
+}
+
+function getLatestAvailabilityByChannel(rows: PlaybackJsonRecord[]) {
+  const byChannel = new Map<number, ReturnType<typeof extractChannelAvailabilityBounds>>();
+
+  for (const row of rows) {
+    const bounds = extractChannelAvailabilityBounds(row);
+    if (!bounds) continue;
+    const existing = byChannel.get(bounds.channel);
+    if (!existing || bounds.endMs > existing.endMs) {
+      byChannel.set(bounds.channel, bounds);
+    }
+  }
+
+  return byChannel;
+}
+
+async function fetchAlertAvailabilityRows(
+  vehicleId: string,
+  referenceIso: string,
+  videoProxyBase = DEFAULT_VIDEO_PROXY_BASE
+) {
+  const referenceDate = new Date(referenceIso);
+  if (Number.isNaN(referenceDate.getTime())) return [] as PlaybackJsonRecord[];
+
+  const dayStart = new Date(referenceDate);
+  dayStart.setUTCHours(0, 0, 0, 0);
+  const dayEnd = new Date(referenceDate);
+  dayEnd.setUTCHours(23, 59, 59, 999);
+  const dateKey = dayStart.toISOString().slice(0, 10);
+  const cacheKey = `${vehicleId}|${dateKey}`;
+  const cached = availabilityRowsCache.get(cacheKey);
+  if (cached && Date.now() - cached.checkedAt < ALERT_AVAILABILITY_ROWS_TTL_MS) {
+    return cached.rows;
+  }
+
+  const writeCache = (rows: PlaybackJsonRecord[]) => {
+    availabilityRowsCache.set(cacheKey, {
+      rows: Array.isArray(rows) ? rows : [],
+      checkedAt: Date.now(),
+    });
+  };
+
+  for (const playbackBase of getPlaybackRequestBases(videoProxyBase)) {
+    try {
+      const storageQuery = new URLSearchParams({
+        sim: vehicleId,
+        from: dayStart.toISOString(),
+        to: dayEnd.toISOString(),
+      });
+      const storageResponse = await fetch(
+        `${playbackBase}/storage/availability?${storageQuery.toString()}`,
+        {
+          cache: "no-store",
+          signal: timeoutSignal(12000),
+        }
+      );
+      if (storageResponse.ok) {
+        const storageJson = await storageResponse.json().catch(() => ({}));
+        const storageRecord = readPlaybackRecord(storageJson);
+        const channels = Array.isArray(storageRecord.channels)
+          ? storageRecord.channels.map((entry) => readPlaybackRecord(entry))
+          : [];
+        const storageRows = channels
+          .map((entry) => ({
+            ...entry,
+            channel: Number(entry.channel || 0),
+            first_packet_time: entry.from || entry.first_packet_time || "",
+            last_packet_time: entry.to || entry.last_packet_time || "",
+          }))
+          .filter((entry) => Number(entry.channel) > 0);
+        if (storageRows.length > 0) {
+          writeCache(storageRows);
+          return storageRows;
+        }
+      }
+    } catch {
+      // Fall through to legacy availability endpoints.
+    }
+
+    try {
+      const coverageQuery = new URLSearchParams({
+        vehicleId,
+        from: dayStart.toISOString(),
+        to: dayEnd.toISOString(),
+      });
+      const coverageResponse = await fetch(
+        `${playbackBase}/video/coverage?${coverageQuery.toString()}`,
+        {
+          cache: "no-store",
+          signal: timeoutSignal(12000),
+        }
+      );
+      const coverageJson = await coverageResponse.json().catch(() => ({}));
+      const coverageRows = getPlaybackRows(coverageJson);
+      if (coverageRows.length > 0) {
+        writeCache(coverageRows);
+        return coverageRows;
+      }
+    } catch {
+      // Fall through to approximate availability.
+    }
+
+    try {
+      const availabilityResponse = await fetch(
+        `${playbackBase}/vehicles/${encodeURIComponent(vehicleId)}/video/availability?date=${encodeURIComponent(dateKey)}`,
+        {
+          cache: "no-store",
+          signal: timeoutSignal(12000),
+        }
+      );
+      const availabilityJson = await availabilityResponse.json().catch(() => ({}));
+      const availabilityRows = getPlaybackRows(availabilityJson);
+      if (availabilityRows.length > 0) {
+        writeCache(availabilityRows);
+        return availabilityRows;
+      }
+    } catch {
+      // Try the next endpoint.
+    }
+  }
+
+  writeCache([]);
+  return [] as PlaybackJsonRecord[];
+}
+
 function buildChannelAvailabilitySummary(rows: PlaybackJsonRecord[]) {
   const channelSummaries = rows
-    .map((row) => {
+  .map((row) => {
       const channel = Number(row.channel || 0);
       if (!Number.isFinite(channel) || channel <= 0) return "";
 
       const startIso = String(
         row.first_packet_time ||
           row.approx_first_packet_time ||
+          row.from ||
           row.earliestTime ||
           ""
       ).trim();
       const endIso = String(
         row.last_packet_time ||
           row.approx_last_packet_time ||
+          row.to ||
           row.latestTime ||
           ""
       ).trim();
@@ -177,55 +530,8 @@ async function fetchAlertAvailabilitySummary(
   referenceIso: string,
   videoProxyBase = DEFAULT_VIDEO_PROXY_BASE
 ) {
-  const referenceDate = new Date(referenceIso);
-  if (Number.isNaN(referenceDate.getTime())) return "";
-
-  const dayStart = new Date(referenceDate);
-  dayStart.setUTCHours(0, 0, 0, 0);
-  const dayEnd = new Date(referenceDate);
-  dayEnd.setUTCHours(23, 59, 59, 999);
-  const dateKey = dayStart.toISOString().slice(0, 10);
-
-  for (const playbackBase of getPlaybackRequestBases(videoProxyBase)) {
-    try {
-      const coverageQuery = new URLSearchParams({
-        vehicleId,
-        from: dayStart.toISOString(),
-        to: dayEnd.toISOString(),
-      });
-      const coverageResponse = await fetch(
-        `${playbackBase}/video/coverage?${coverageQuery.toString()}`,
-        {
-          cache: "no-store",
-          signal: timeoutSignal(12000),
-        }
-      );
-      const coverageJson = await coverageResponse.json().catch(() => ({}));
-      const coverageSummary = buildChannelAvailabilitySummary(getPlaybackRows(coverageJson));
-      if (coverageSummary) return coverageSummary;
-    } catch {
-      // Fall through to approximate availability.
-    }
-
-    for (const availabilityPath of [
-      `${playbackBase}/vehicles/${encodeURIComponent(vehicleId)}/videos/availability?date=${encodeURIComponent(dateKey)}`,
-      `${playbackBase}/vehicles/${encodeURIComponent(vehicleId)}/video/availability?date=${encodeURIComponent(dateKey)}`,
-    ]) {
-      try {
-        const availabilityResponse = await fetch(availabilityPath, {
-          cache: "no-store",
-          signal: timeoutSignal(12000),
-        });
-        const availabilityJson = await availabilityResponse.json().catch(() => ({}));
-        const availabilitySummary = buildChannelAvailabilitySummary(getPlaybackRows(availabilityJson));
-        if (availabilitySummary) return availabilitySummary;
-      } catch {
-        // Try the next endpoint.
-      }
-    }
-  }
-
-  return "";
+  const rows = await fetchAlertAvailabilityRows(vehicleId, referenceIso, videoProxyBase);
+  return buildChannelAvailabilitySummary(rows);
 }
 
 export function normalizeBackendMediaUrl(url: string, videoProxyBase = DEFAULT_VIDEO_PROXY_BASE) {
@@ -234,7 +540,7 @@ export function normalizeBackendMediaUrl(url: string, videoProxyBase = DEFAULT_V
   if (/^https?:\/\//i.test(value)) {
     try {
       const parsed = new URL(value);
-      if (parsed.pathname.startsWith("/media/")) {
+      if (parsed.pathname.startsWith("/media/") || parsed.pathname.startsWith("/captures/")) {
         return `${videoProxyBase}${parsed.pathname}${parsed.search || ""}`;
       }
       if (parsed.pathname.startsWith("/api/video-server/")) {
@@ -249,8 +555,11 @@ export function normalizeBackendMediaUrl(url: string, videoProxyBase = DEFAULT_V
     }
   }
   if (value.startsWith(`${videoProxyBase}/`)) return value;
-  if (value.startsWith("/media/")) {
+  if (value.startsWith("/media/") || value.startsWith("/captures/")) {
     return `${videoProxyBase}${value}`;
+  }
+  if (value.startsWith("/api/video-server/")) {
+    return `${videoProxyBase}${value.slice("/api/video-server".length)}`;
   }
   if (value.startsWith("/api/")) {
     return `${videoProxyBase}${value.slice(4)}`;
@@ -309,13 +618,22 @@ function getRawAlertTimestampValue(value: unknown) {
   return String(value || "").trim();
 }
 
-function timestampToComparableMs(value: unknown) {
+function hasExplicitTimezone(value: string) {
+  return /(?:[zZ]|[+-]\d{2}:?\d{2})$/.test(String(value || "").trim());
+}
+
+function normalizeAlertTimestampToIso(value: unknown) {
   const raw = getRawAlertTimestampValue(value);
-  if (!raw) return Number.NaN;
+  if (!raw) return "";
+
+  if (hasExplicitTimezone(raw)) {
+    const nativeDate = new Date(raw);
+    return Number.isNaN(nativeDate.getTime()) ? "" : nativeDate.toISOString();
+  }
 
   const parsedRaw = parseRawAlertTimestampParts(raw);
   if (parsedRaw) {
-    return Date.UTC(
+    const localDate = new Date(
       parsedRaw.year,
       Math.max(0, parsedRaw.month - 1),
       parsedRaw.day,
@@ -324,9 +642,15 @@ function timestampToComparableMs(value: unknown) {
       parsedRaw.second,
       0
     );
+    return Number.isNaN(localDate.getTime()) ? "" : localDate.toISOString();
   }
 
-  const nativeMs = new Date(raw).getTime();
+  const nativeDate = new Date(raw);
+  return Number.isNaN(nativeDate.getTime()) ? "" : nativeDate.toISOString();
+}
+
+function timestampToComparableMs(value: unknown) {
+  const nativeMs = new Date(normalizeAlertTimestampToIso(value)).getTime();
   return Number.isFinite(nativeMs) ? nativeMs : Number.NaN;
 }
 
@@ -439,12 +763,25 @@ export function getAlertDisplayTimestamp(alert: PlaybackJsonRecord | null | unde
 }
 
 export function getAlertPlaybackTimestamp(alert: PlaybackJsonRecord | null | undefined) {
+  const explicitPlaybackTimestamp = getRawAlertTimestampValue(
+    alert?.playbackTimestamp ||
+    alert?.playback_timestamp
+  );
+  if (explicitPlaybackTimestamp) {
+    return explicitPlaybackTimestamp;
+  }
+
+  const lastOccurrence = getAlertDisplayTimestamp(alert);
+  if (lastOccurrence) {
+    return lastOccurrence;
+  }
+
   const firstOccurrence = pickEarliestTimestamp(collectAlertFirstOccurrenceCandidates(alert));
-  return firstOccurrence || getAlertDisplayTimestamp(alert);
+  return firstOccurrence || null;
 }
 
 export function getAlertFirstOccurrenceTimestamp(alert: PlaybackJsonRecord | null | undefined) {
-  return getAlertPlaybackTimestamp(alert);
+  return pickEarliestTimestamp(collectAlertFirstOccurrenceCandidates(alert));
 }
 
 export function getAlertLastOccurrenceTimestamp(alert: PlaybackJsonRecord | null | undefined) {
@@ -518,9 +855,10 @@ function getAlertChannel(alert: PlaybackJsonRecord | null | undefined) {
 
 function getAlertChannelCandidates(alert: PlaybackJsonRecord | null | undefined) {
   const primaryChannel = getAlertChannel(alert);
+  const preferredOrder = [2, 1, primaryChannel];
   return Array.from(
     new Set(
-      [primaryChannel, 1, 2].filter((value) => Number.isFinite(value) && value > 0)
+      preferredOrder.filter((value) => Number.isFinite(value) && value > 0)
     )
   );
 }
@@ -548,14 +886,18 @@ function getAlertPlaybackWindow(
     metadata.event_end_time ||
     null;
 
-  const baseTime = new Date(timestamp);
+  const normalizedPlaybackTimestamp = normalizeAlertTimestampToIso(timestamp);
+  const baseTime = new Date(normalizedPlaybackTimestamp || timestamp);
   if (Number.isNaN(baseTime.getTime())) return null;
 
+  const normalizedStartCandidate = normalizeAlertTimestampToIso(startCandidate);
+  const normalizedEndCandidate = normalizeAlertTimestampToIso(endCandidate);
+
   const start = !hasExplicitWindow && startCandidate
-    ? new Date(startCandidate)
+    ? new Date(normalizedStartCandidate || String(startCandidate))
     : new Date(baseTime.getTime() - beforeMs);
   const end = !hasExplicitWindow && endCandidate
-    ? new Date(endCandidate)
+    ? new Date(normalizedEndCandidate || String(endCandidate))
     : new Date(baseTime.getTime() + afterMs);
 
   if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end <= start) {
@@ -586,6 +928,114 @@ function getAlertPlaybackCacheKey(
   });
 }
 
+async function fetchDetailedAlertForPlayback(
+  alert: PlaybackJsonRecord,
+  videoProxyBase = DEFAULT_VIDEO_PROXY_BASE
+) {
+  const alertId = String(alert?.id || "").trim();
+  if (!alertId) return null;
+
+  for (const playbackBase of getPlaybackRequestBases(videoProxyBase)) {
+    try {
+      const response = await fetch(
+        `${playbackBase}/alerts/${encodeURIComponent(alertId)}?ensureMedia=true`,
+        {
+          cache: "no-store",
+          signal: timeoutSignal(8000),
+        }
+      );
+      if (!response.ok) continue;
+
+      const json = await response.json().catch(() => ({}));
+      const jsonRecord = readPlaybackRecord(json);
+      const nestedDataRecord = readPlaybackRecord(jsonRecord.data);
+      const detailAlertCandidates = [
+        readPlaybackRecord(jsonRecord.alert),
+        readPlaybackRecord(nestedDataRecord.alert),
+        nestedDataRecord,
+      ];
+      const detailAlert =
+        detailAlertCandidates.find((record) => hasPlaybackRecordValues(record)) ||
+        null;
+
+      if (!detailAlert) continue;
+
+      const canonicalTimestamp =
+        getRawAlertTimestampValue(detailAlert.timestamp) ||
+        getRawAlertTimestampValue(detailAlert.alert_timestamp) ||
+        getRawAlertTimestampValue(detailAlert.created_at) ||
+        "";
+      const canonicalLastOccurrence =
+        getRawAlertTimestampValue(detailAlert.lastOccurrenceTimestamp) ||
+        getRawAlertTimestampValue(detailAlert.last_occurrence_timestamp) ||
+        getRawAlertTimestampValue(detailAlert.displayTimestamp) ||
+        canonicalTimestamp;
+      const canonicalFirstOccurrence =
+        getRawAlertTimestampValue(detailAlert.firstOccurrenceTimestamp) ||
+        getRawAlertTimestampValue(detailAlert.first_occurrence_timestamp) ||
+        canonicalTimestamp;
+      const existingTimestamp =
+        getRawAlertTimestampValue(alert.timestamp) ||
+        getRawAlertTimestampValue(alert.created_at) ||
+        "";
+      const existingFirstOccurrence =
+        getRawAlertTimestampValue(alert.firstOccurrenceTimestamp) ||
+        getRawAlertTimestampValue(alert.first_occurrence_timestamp) ||
+        existingTimestamp;
+      const existingLastOccurrence =
+        getRawAlertTimestampValue(alert.lastOccurrenceTimestamp) ||
+        getRawAlertTimestampValue(alert.last_occurrence_timestamp) ||
+        getRawAlertTimestampValue(alert.displayTimestamp) ||
+        existingTimestamp;
+      const existingPlaybackTimestamp =
+        getRawAlertTimestampValue(alert.playbackTimestamp) ||
+        getRawAlertTimestampValue(alert.playback_timestamp) ||
+        existingLastOccurrence ||
+        existingTimestamp;
+
+      return {
+        ...alert,
+        ...detailAlert,
+        timestamp:
+          existingTimestamp ||
+          canonicalTimestamp ||
+          getRawAlertTimestampValue(detailAlert.timestamp) ||
+          getRawAlertTimestampValue(detailAlert.created_at) ||
+          getRawAlertTimestampValue(alert.timestamp),
+        firstOccurrenceTimestamp:
+          existingFirstOccurrence ||
+          canonicalFirstOccurrence ||
+          getRawAlertTimestampValue(detailAlert.firstOccurrenceTimestamp) ||
+          getRawAlertTimestampValue(detailAlert.first_occurrence_timestamp) ||
+          getRawAlertTimestampValue(alert.firstOccurrenceTimestamp),
+        lastOccurrenceTimestamp:
+          existingLastOccurrence ||
+          canonicalLastOccurrence ||
+          getRawAlertTimestampValue(detailAlert.lastOccurrenceTimestamp) ||
+          getRawAlertTimestampValue(detailAlert.last_occurrence_timestamp) ||
+          getRawAlertTimestampValue(detailAlert.displayTimestamp) ||
+          getRawAlertTimestampValue(alert.lastOccurrenceTimestamp),
+        displayTimestamp:
+          getRawAlertTimestampValue(alert.displayTimestamp) ||
+          existingLastOccurrence ||
+          canonicalLastOccurrence ||
+          canonicalTimestamp ||
+          getRawAlertTimestampValue(detailAlert.displayTimestamp),
+        playbackTimestamp:
+          existingPlaybackTimestamp ||
+          getRawAlertTimestampValue(detailAlert.playbackTimestamp) ||
+          getRawAlertTimestampValue(detailAlert.playback_timestamp) ||
+          canonicalLastOccurrence ||
+          canonicalTimestamp,
+      } satisfies PlaybackJsonRecord;
+    } catch {
+      // Try next playback base.
+    }
+  }
+
+  return null;
+}
+
 async function resolvePlaybackWindowForAlert(
   alert: PlaybackJsonRecord,
   videoProxyBase = DEFAULT_VIDEO_PROXY_BASE,
@@ -603,73 +1053,134 @@ async function resolvePlaybackWindowForAlert(
   if (!vehicleId || !playbackWindow) return [];
 
   const { startIso, endIso } = playbackWindow;
-  const query = new URLSearchParams({
-    from: startIso,
-    to: endIso,
-  });
+  const preferLatestAvailable = windowOptions.preferLatestAvailable === true;
+  const latestAvailableDurationMs = Number.isFinite(Number(windowOptions.latestAvailableDurationMs))
+    ? Math.max(1000, Number(windowOptions.latestAvailableDurationMs))
+    : ALERT_LAST_AVAILABLE_FALLBACK_MS;
+  const availabilityRows = await fetchAlertAvailabilityRows(vehicleId, startIso, videoProxyBase);
+  const latestByChannel = getLatestAvailabilityByChannel(availabilityRows);
+  const latestAnyChannel = Array.from(latestByChannel.values())
+    .filter((value): value is NonNullable<typeof value> => !!value)
+    .sort((a, b) => b.endMs - a.endMs)[0] || null;
 
-  const requestChannelPlayback = async (targetChannel: number) => {
-    let lastFailureMessage = `No playback available for channel ${targetChannel}.`;
-
-    for (const playbackBase of getPlaybackRequestBases(videoProxyBase)) {
-      try {
-        const res = await fetch(
-          `${playbackBase}/vehicles/${encodeURIComponent(vehicleId)}/video/${encodeURIComponent(String(targetChannel))}?${query.toString()}`,
-          {
-            cache: "no-store",
-            signal: timeoutSignal(15000),
-          }
-        );
-        const json = await res.json().catch(() => ({}));
-        const jsonRecord = readPlaybackRecord(json);
-        if (!res.ok || jsonRecord.success !== true) {
-          throw new Error(getPlaybackMessage(json) || `HTTP ${res.status}`);
-        }
-
-        const channels = getPlaybackChannels(json);
-        const successfulChannel =
-          channels.find(
-            (entry) =>
-              Number(entry.channel || 0) === Number(targetChannel) && entry.success === true
-          ) ||
-          channels.find((entry) => entry.success === true) ||
-          null;
-
-        if (!successfulChannel) {
-          throw new Error(
-            getPlaybackMessage(json) || `No playback available for channel ${targetChannel}.`
-          );
-        }
-
-        const resolvedChannel = Number(successfulChannel.channel || targetChannel);
-        const sourceUrl = String(
-          successfulChannel.playUrl ||
-            successfulChannel.mp4Url ||
-            successfulChannel.playUrlAbsolute ||
-            successfulChannel.mp4UrlAbsolute ||
-            ""
-        ).trim();
-
-        if (!sourceUrl) {
-          throw new Error(`Playback URL missing for channel ${resolvedChannel}.`);
-        }
-
-        return {
-          key: `alert_window_${String(alert?.id || vehicleId)}_${resolvedChannel}_${startIso}_${endIso}`,
-          label: `Alert-time Playback CH${resolvedChannel}`,
-          url: normalizeBackendMediaUrl(sourceUrl, videoProxyBase),
-        } satisfies AlertPlaybackVideo;
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        lastFailureMessage = errorMessage || lastFailureMessage;
-      }
-    }
-
-    throw new Error(`CH${targetChannel}: ${lastFailureMessage}`);
+  const buildPlaybackUrl = (channel: number, range: { startIso: string; endIso: string }) => {
+    const query = new URLSearchParams({
+      sim: vehicleId,
+      channel: String(channel),
+      from: range.startIso,
+      to: range.endIso,
+      includeAudio: "false",
+      input: "auto",
+    });
+    return `${videoProxyBase}/playback/mp4?${query.toString()}`;
   };
 
+  const normalizeRangeToAvailability = (
+    range: { startIso: string; endIso: string },
+    bounds: { startMs: number; endMs: number }
+  ) => {
+    const requestedStartMs = timestampToComparableMs(range.startIso);
+    const requestedEndMs = timestampToComparableMs(range.endIso);
+    if (!Number.isFinite(requestedStartMs) || !Number.isFinite(requestedEndMs)) return null;
+    const clippedStartMs = Math.max(requestedStartMs, bounds.startMs);
+    const clippedEndMs = Math.min(requestedEndMs, bounds.endMs);
+    if (!Number.isFinite(clippedStartMs) || !Number.isFinite(clippedEndMs) || clippedEndMs <= clippedStartMs) {
+      return null;
+    }
+    return {
+      startIso: new Date(clippedStartMs).toISOString(),
+      endIso: new Date(clippedEndMs).toISOString(),
+    };
+  };
+
+  const requestChannelPlaybackForRange = async (
+    targetChannel: number,
+    range: { startIso: string; endIso: string },
+    labelPrefix: string,
+    keyPrefix: string,
+    requestedChannelOverride?: number
+  ) => {
+    const preferredChannel = Number(requestedChannelOverride || 0);
+    const requestedChannel = Number(targetChannel) || 1;
+    const availability =
+      (Number.isFinite(preferredChannel) && preferredChannel > 0
+        ? latestByChannel.get(preferredChannel)
+        : undefined) ||
+      latestByChannel.get(requestedChannel) ||
+      null;
+
+    if (!availability) {
+      throw new Error(`CH${targetChannel}: No playback available for channel ${requestedChannel}.`);
+    }
+
+    const effectiveRange = normalizeRangeToAvailability(range, availability);
+    if (!effectiveRange) {
+      throw new Error(`CH${targetChannel}: No playback available for channel ${requestedChannel}.`);
+    }
+
+    const resolvedChannel = Number(availability.channel || requestedChannel) || requestedChannel;
+    return {
+      key: `${keyPrefix}_${String(alert?.id || vehicleId)}_${resolvedChannel}_${effectiveRange.startIso}_${effectiveRange.endIso}`,
+      label: `${labelPrefix} CH${resolvedChannel}`,
+      url: normalizeBackendMediaUrl(buildPlaybackUrl(resolvedChannel, effectiveRange), videoProxyBase),
+    } satisfies AlertPlaybackVideo;
+  };
+
+  const resolveLatestAvailableVideos = async () => {
+    if (!latestAnyChannel) return [] as AlertPlaybackVideo[];
+
+    const fallbackSettledVideos = await Promise.allSettled(
+      channelCandidates.map((targetChannel) => {
+        const preferred = latestByChannel.get(targetChannel) || latestAnyChannel;
+        if (!preferred) {
+          throw new Error(`CH${targetChannel}: No available stored playback range.`);
+        }
+        const fallbackStartMs = Math.max(
+          preferred.startMs,
+          preferred.endMs - latestAvailableDurationMs
+        );
+        const fallbackRange = {
+          startIso: new Date(fallbackStartMs).toISOString(),
+          endIso: new Date(preferred.endMs).toISOString(),
+        };
+
+        return requestChannelPlaybackForRange(
+          targetChannel,
+          fallbackRange,
+          "Nearest Available Playback (last 339s)",
+          "alert_window_latest",
+          preferred.channel
+        );
+      })
+    );
+
+    return dedupePlaybackVideos(
+      fallbackSettledVideos
+        .filter(
+          (result): result is PromiseFulfilledResult<AlertPlaybackVideo> =>
+            result.status === "fulfilled"
+        )
+        .map((result) => result.value)
+    );
+  };
+
+  if (preferLatestAvailable) {
+    const latestAvailableVideos = await resolveLatestAvailableVideos();
+    if (latestAvailableVideos.length > 0) {
+      writeCachedPlaybackVideos(cacheKey, latestAvailableVideos);
+      return latestAvailableVideos;
+    }
+  }
+
   const settledVideos = await Promise.allSettled(
-    channelCandidates.map((targetChannel) => requestChannelPlayback(targetChannel))
+    channelCandidates.map((targetChannel) =>
+      requestChannelPlaybackForRange(
+        targetChannel,
+        { startIso, endIso },
+        "Alert-time Playback",
+        "alert_window"
+      )
+    )
   );
 
   const resolvedVideos = settledVideos
@@ -683,6 +1194,14 @@ async function resolvePlaybackWindowForAlert(
   if (dedupedVideos.length > 0) {
     writeCachedPlaybackVideos(cacheKey, dedupedVideos);
     return dedupedVideos;
+  }
+
+  if (!preferLatestAvailable) {
+    const latestAvailableVideos = await resolveLatestAvailableVideos();
+    if (latestAvailableVideos.length > 0) {
+      writeCachedPlaybackVideos(cacheKey, latestAvailableVideos);
+      return latestAvailableVideos;
+    }
   }
 
   const failureMessages = settledVideos
@@ -732,6 +1251,160 @@ export async function resolveAlertPlaybackVideos(
   const id = String(alert?.id || alertSource || "").trim();
   if (!id || !alert) return [];
 
-  return resolvePlaybackWindowForAlert(alert, videoProxyBase, windowOptions);
+  const directFromAlert = extractDirectAlertPlaybackVideos(alert, videoProxyBase);
+  if (directFromAlert.length > 0) {
+    return directFromAlert;
+  }
+
+  const shouldFetchDetail = windowOptions.fetchAlertDetail === true;
+  let detailedAlert: PlaybackJsonRecord | null = null;
+  if (shouldFetchDetail) {
+    detailedAlert = await fetchDetailedAlertForPlayback(alert, videoProxyBase);
+    if (detailedAlert) {
+      const directFromDetail = extractDirectAlertPlaybackVideos(detailedAlert, videoProxyBase);
+      if (directFromDetail.length > 0) {
+        return directFromDetail;
+      }
+    }
+  }
+
+  return resolvePlaybackWindowForAlert(detailedAlert || alert, videoProxyBase, windowOptions);
+}
+
+function isClosedOrResolvedAlert(alert: PlaybackJsonRecord | null | undefined) {
+  const status = String(alert?.status || "").trim().toLowerCase();
+  return status === "closed" || status === "resolved";
+}
+
+function getAlertReadyCacheKey(
+  alert: PlaybackJsonRecord | null | undefined,
+  windowOptions: AlertPlaybackWindowOptions = {}
+) {
+  return getAlertPlaybackCacheKey(alert, windowOptions);
+}
+
+export function clearAlertPlaybackReadyCache(
+  alertSource?: AlertPlaybackSource,
+  windowOptions: AlertPlaybackWindowOptions = ALERT_READY_WINDOW_OPTIONS
+) {
+  if (!alertSource || typeof alertSource !== "object") {
+    playbackReadyCache.clear();
+    return;
+  }
+
+  const cacheKey = getAlertReadyCacheKey(alertSource, windowOptions);
+  if (!cacheKey) return;
+  playbackReadyCache.delete(cacheKey);
+}
+
+export async function isAlertPlaybackReady(
+  alertSource: AlertPlaybackSource,
+  videoProxyBase = DEFAULT_VIDEO_PROXY_BASE,
+  windowOptions: AlertPlaybackWindowOptions = ALERT_READY_WINDOW_OPTIONS,
+  options: AlertPlaybackReadyMapOptions = {}
+) {
+  const alert = typeof alertSource === "object" && alertSource !== null ? alertSource : null;
+  if (!alert) return false;
+  if (isClosedOrResolvedAlert(alert)) return true;
+
+  const cacheKey = getAlertReadyCacheKey(alert, windowOptions);
+  if (!cacheKey) return false;
+
+  const falseTtlMs = Number.isFinite(Number(options.falseTtlMs))
+    ? Math.max(0, Number(options.falseTtlMs))
+    : ALERT_READY_FALSE_TTL_MS;
+  const now = Date.now();
+  const cached = playbackReadyCache.get(cacheKey);
+  if (!options.force && cached) {
+    if (cached.ready) return true;
+    if (now - cached.checkedAt < falseTtlMs) return false;
+  }
+
+  const pending = playbackReadyPending.get(cacheKey);
+  if (!options.force && pending) {
+    return pending;
+  }
+
+  const readinessPromise = resolveAlertPlaybackVideos(alert, videoProxyBase, windowOptions)
+    .then((videos) => Array.isArray(videos) && videos.length > 0)
+    .catch(() => false)
+    .then((ready) => {
+      playbackReadyCache.set(cacheKey, { ready, checkedAt: Date.now() });
+      return ready;
+    })
+    .finally(() => {
+      playbackReadyPending.delete(cacheKey);
+    });
+
+  playbackReadyPending.set(cacheKey, readinessPromise);
+  return readinessPromise;
+}
+
+export async function resolveAlertPlaybackReadyMap<T extends PlaybackJsonRecord>(
+  alerts: T[],
+  videoProxyBase = DEFAULT_VIDEO_PROXY_BASE,
+  windowOptions: AlertPlaybackWindowOptions = ALERT_READY_WINDOW_OPTIONS,
+  options: AlertPlaybackReadyMapOptions = {}
+) {
+  const alertList = Array.isArray(alerts) ? alerts : [];
+  const readyMap: Record<string, boolean> = {};
+  const queue = alertList.filter((alert) => {
+    const alertId = String(alert?.id || "").trim();
+    if (!alertId) return false;
+    if (isClosedOrResolvedAlert(alert)) {
+      readyMap[alertId] = true;
+      return false;
+    }
+    return true;
+  });
+
+  if (queue.length === 0) return readyMap;
+
+  const maxConcurrencyCandidate = Number(options.maxConcurrency);
+  const maxConcurrency = Number.isFinite(maxConcurrencyCandidate) && maxConcurrencyCandidate > 0
+    ? Math.min(queue.length, Math.floor(maxConcurrencyCandidate))
+    : Math.min(queue.length, 4);
+
+  let nextIndex = 0;
+  const workers = Array.from({ length: maxConcurrency }, async () => {
+    while (nextIndex < queue.length) {
+      const currentIndex = nextIndex;
+      nextIndex += 1;
+
+      const alert = queue[currentIndex];
+      const alertId = String(alert?.id || "").trim();
+      if (!alertId) continue;
+
+      readyMap[alertId] = await isAlertPlaybackReady(
+        alert,
+        videoProxyBase,
+        windowOptions,
+        options
+      );
+    }
+  });
+
+  await Promise.all(workers);
+  return readyMap;
+}
+
+export async function filterAlertsWithReadyPlayback<T extends PlaybackJsonRecord>(
+  alerts: T[],
+  videoProxyBase = DEFAULT_VIDEO_PROXY_BASE,
+  windowOptions: AlertPlaybackWindowOptions = ALERT_READY_WINDOW_OPTIONS,
+  options: AlertPlaybackReadyMapOptions = {}
+) {
+  const readyMap = await resolveAlertPlaybackReadyMap(
+    alerts,
+    videoProxyBase,
+    windowOptions,
+    options
+  );
+
+  return (Array.isArray(alerts) ? alerts : []).filter((alert) => {
+    if (isClosedOrResolvedAlert(alert)) return true;
+    const alertId = String(alert?.id || "").trim();
+    return !!readyMap[alertId];
+  });
 }
 
