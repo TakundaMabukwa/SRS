@@ -234,8 +234,55 @@ export default function VideoAlertsDashboardTab({
   const availabilityCacheRef = useRef<Map<string, any[]>>(new Map());
   const pendingAvailabilityKeysRef = useRef<Set<string>>(new Set());
   const exactReadyCacheRef = useRef<Map<string, boolean>>(new Map());
+  const closedAlertSuppressUntilRef = useRef<Map<string, number>>(new Map());
+
+  const getAlertIdentityIds = useCallback((alert: any) => {
+    const ids = new Set<string>();
+    const directId = String(alert?.id || "").trim();
+    if (directId) ids.add(directId);
+    if (Array.isArray(alert?.groupedIds)) {
+      for (const value of alert.groupedIds) {
+        const id = String(value || "").trim();
+        if (id) ids.add(id);
+      }
+    }
+    return Array.from(ids.values());
+  }, []);
+
+  const purgeExpiredSuppressedAlerts = useCallback((now: number = Date.now()) => {
+    const suppressMap = closedAlertSuppressUntilRef.current;
+    for (const [id, expiresAt] of suppressMap.entries()) {
+      if (!Number.isFinite(expiresAt) || expiresAt <= now) {
+        suppressMap.delete(id);
+      }
+    }
+  }, []);
+
+  const isSuppressedAlert = useCallback((alert: any) => {
+    const now = Date.now();
+    purgeExpiredSuppressedAlerts(now);
+    const suppressMap = closedAlertSuppressUntilRef.current;
+    const ids = getAlertIdentityIds(alert);
+    return ids.some((id) => {
+      const expiresAt = suppressMap.get(id);
+      return Number.isFinite(expiresAt) && Number(expiresAt) > now;
+    });
+  }, [getAlertIdentityIds, purgeExpiredSuppressedAlerts]);
+
+  const registerSuppressedAlertIds = useCallback((detail: any, ttlMs: number = 5 * 60 * 1000) => {
+    const now = Date.now();
+    purgeExpiredSuppressedAlerts(now);
+    const ids = getAlertIdentityIds(detail);
+    if (ids.length === 0) return;
+    const expiresAt = now + Math.max(60_000, ttlMs);
+    const suppressMap = closedAlertSuppressUntilRef.current;
+    for (const id of ids) {
+      suppressMap.set(id, expiresAt);
+    }
+  }, [getAlertIdentityIds, purgeExpiredSuppressedAlerts]);
 
   const removeClosedAlertFromBoard = useCallback((detail: any) => {
+    registerSuppressedAlertIds(detail);
     const idsToRemove = new Set(
       [detail?.id, ...(Array.isArray(detail?.groupedIds) ? detail.groupedIds : [])]
         .map((value) => String(value || "").trim())
@@ -254,7 +301,7 @@ export default function VideoAlertsDashboardTab({
     setSourceAlerts((prev) => filterClosed(prev));
     setRealtimeAlerts((prev) => filterClosed(prev));
     setPinnedHistoryAlerts((prev) => filterClosed(prev));
-  }, []);
+  }, [registerSuppressedAlertIds]);
 
   const getStructuredAlertMapping = useCallback((value: string) => {
     const text = String(value || "").trim();
@@ -770,11 +817,12 @@ export default function VideoAlertsDashboardTab({
             ? json.data
             : [];
 
-      setSourceAlerts(dedupeByIdAndSort(activeList));
+      const deduped = dedupeByIdAndSort(activeList).filter((alert: any) => !isSuppressedAlert(alert));
+      setSourceAlerts(deduped);
     } catch (error) {
       console.error("Failed to fetch video alerts board data:", error);
     }
-  }, [dedupeByIdAndSort, readJsonSafely, suspendBackgroundWork, videoProxyBase]);
+  }, [dedupeByIdAndSort, isSuppressedAlert, readJsonSafely, suspendBackgroundWork, videoProxyBase]);
 
   const fetchPinnedVehicleHistoryAlerts = useCallback(async () => {
     const vehicleIds = pinnedVehicleIds.filter(Boolean);
@@ -818,12 +866,13 @@ export default function VideoAlertsDashboardTab({
           new Date(getAlertDisplayTimestamp(a) || a?.timestamp || a?.created_at || 0).getTime()
       );
 
-      setPinnedHistoryAlerts((prev) => (areAlertListsEquivalent(prev, merged) ? prev : merged));
+      const visiblePinnedHistory = merged.filter((alert: any) => !isSuppressedAlert(alert));
+      setPinnedHistoryAlerts((prev) => (areAlertListsEquivalent(prev, visiblePinnedHistory) ? prev : visiblePinnedHistory));
     } catch (error) {
       console.error("Failed to fetch pinned vehicle alert history:", error);
       setPinnedHistoryAlerts((prev) => (prev.length === 0 ? prev : []));
     }
-  }, [pinnedVehicleIds, readJsonSafely, videoProxyBase]);
+  }, [isSuppressedAlert, pinnedVehicleIds, readJsonSafely, videoProxyBase]);
 
   const fetchClosedHistoryAlerts = useCallback(async () => {
     if (suspendBackgroundWork) return;
@@ -992,6 +1041,10 @@ export default function VideoAlertsDashboardTab({
       return;
     }
 
+    if (isSuppressedAlert(payloadAlert)) {
+      return;
+    }
+
     clearAlertPlaybackReadyCache(payloadAlert, ALERT_READY_WINDOW_OPTIONS);
     exactReadyCacheRef.current.delete(String(payloadAlert?.id || "").trim());
 
@@ -1009,7 +1062,7 @@ export default function VideoAlertsDashboardTab({
     ) {
       fetchTripRoutingStyleAlerts();
     }
-  }, [dedupeByIdAndSort, fetchTripRoutingStyleAlerts, normalizeRealtimeAlert, suspendBackgroundWork]);
+  }, [dedupeByIdAndSort, fetchTripRoutingStyleAlerts, isSuppressedAlert, normalizeRealtimeAlert, suspendBackgroundWork]);
 
   const { connected: wsConnected } = useVideoWebSocket(handleRealtimeMessage);
 

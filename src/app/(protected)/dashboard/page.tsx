@@ -3624,55 +3624,139 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
   const selectedAlertTimeline = Array.isArray((selectedAlert as any)?.resolution_timeline)
     ? (selectedAlert as any).resolution_timeline
     : [];
+  const selectedAlertRecentVehicleHistory = Array.isArray((selectedAlert as any)?.recent_alerts)
+    ? (selectedAlert as any).recent_alerts
+    : [];
   const selectedAlertDriverInfo = useMemo(() => {
-    const clean = (value: unknown) => String(value || '').trim();
+    const clean = (value: unknown) => String(value || "").trim();
     const isRawId = (value: unknown) => /^\d{8,}$/.test(clean(value));
+    const metadata =
+      selectedAlert?.metadata && typeof selectedAlert.metadata === "object"
+        ? (selectedAlert.metadata as Record<string, any>)
+        : {};
     const registrationCandidates = [
       selectedAlert?.vehicle_registration,
+      selectedAlert?.vehicleRegistration,
       selectedAlert?.registration_number,
       selectedAlert?.registration,
       selectedAlert?.plate,
       selectedAlert?.vehicleName,
       selectedAlert?.vehicle?.registration_number,
       selectedAlert?.vehicle?.name,
-    ].map(clean).filter(Boolean);
-    const registration = registrationCandidates.find((value) => !isRawId(value)) || '';
+      metadata?.vehicle_registration,
+      metadata?.vehicleRegistration,
+      metadata?.registration_number,
+      metadata?.registration,
+      metadata?.plate,
+    ]
+      .map(clean)
+      .filter(Boolean);
+    const registration =
+      registrationCandidates.find((value) => !isRawId(value)) || "";
+    const fleetCandidates = [
+      selectedAlert?.fleet_number,
+      selectedAlert?.fleetNumber,
+      selectedAlert?.vehicle?.fleet_number,
+      selectedAlert?.vehicle?.fleetNumber,
+      metadata?.fleet_number,
+      metadata?.fleetNumber,
+      metadata?.fleet,
+    ]
+      .map(clean)
+      .filter(Boolean);
     const fleetNumber =
-      clean(selectedAlert?.fleet_number) ||
-      clean(selectedAlert?.fleetNumber) ||
-      clean(selectedAlert?.vehicle?.fleet_number) ||
+      fleetCandidates.find((value) => !isRawId(value) && value !== registration) ||
+      fleetCandidates.find(Boolean) ||
       registration ||
       clean(selectedAlert?.device_id) ||
       clean(selectedAlert?.vehicleId) ||
-      'Unknown Vehicle';
+      clean(selectedAlert?.vehicle_id) ||
+      "Unknown Vehicle";
     return {
       name:
         clean(selectedAlert?.driver_name) ||
         clean(selectedAlert?.driverName) ||
         clean(selectedAlert?.vehicle?.driver_name) ||
-        'Unknown Driver',
+        clean(metadata?.driver_name) ||
+        clean(metadata?.driverName) ||
+        "Unknown Driver",
       fleetNumber,
       registration: registration || undefined,
-      department: clean(selectedAlert?.department) || 'Fleet Operations',
-      timestamp: selectedAlertLastOccurrenceTs || selectedAlertDisplayTs || selectedAlert?.timestamp || '',
+      department:
+        clean(selectedAlert?.department) ||
+        clean(metadata?.department) ||
+        "Fleet Operations",
+      timestamp:
+        selectedAlertLastOccurrenceTs ||
+        selectedAlertDisplayTs ||
+        selectedAlert?.timestamp ||
+        "",
       location: selectedAlertLocationText || undefined,
     };
-  }, [selectedAlert, selectedAlertDisplayTs, selectedAlertLastOccurrenceTs, selectedAlertLocationText]);
-  const selectedAlertReportDetails = useMemo(() => ({
-    id: selectedAlert?.id,
-    type: selectedAlert?.type || selectedAlert?.alert_type,
-    severity: selectedAlert?.priority || selectedAlert?.severity,
-    timestamp: selectedAlertDisplayTs || selectedAlert?.timestamp,
-    lastOccurrenceTimestamp: selectedAlertLastOccurrenceTs || selectedAlertDisplayTs || selectedAlert?.timestamp,
-    location: selectedAlertResolvedLocationName
-      ? {
-          address: selectedAlertResolvedLocationName,
-          ...(selectedAlertCoordinates || {}),
-        }
-      : selectedAlert?.location || selectedAlert?.metadata,
-    screenshots: selectedAlertScreenshots || [],
-    videos: selectedAlertVideoList || [],
-  }), [selectedAlert, selectedAlertCoordinates, selectedAlertDisplayTs, selectedAlertLastOccurrenceTs, selectedAlertResolvedLocationName, selectedAlertScreenshots, selectedAlertVideoList]);
+  }, [
+    selectedAlert,
+    selectedAlertDisplayTs,
+    selectedAlertLastOccurrenceTs,
+    selectedAlertLocationText,
+  ]);
+  const selectedAlertFleetNumber = String(
+    selectedAlertDriverInfo.fleetNumber || ""
+  ).trim();
+  const selectedAlertRegistration = String(
+    selectedAlertDriverInfo.registration || ""
+  ).trim();
+  const selectedAlertVehicleDisplay =
+    selectedAlertFleetNumber &&
+    selectedAlertRegistration &&
+    selectedAlertFleetNumber !== selectedAlertRegistration
+      ? `${selectedAlertFleetNumber} - ${selectedAlertRegistration}`
+      : selectedAlertFleetNumber || selectedAlertRegistration || "N/A";
+  const selectedAlertReportDetails = useMemo(
+    () => ({
+      id: selectedAlert?.id,
+      type: selectedAlert?.type || selectedAlert?.alert_type,
+      severity: selectedAlert?.priority || selectedAlert?.severity,
+      timestamp: selectedAlertDisplayTs || selectedAlert?.timestamp,
+      lastOccurrenceTimestamp:
+        selectedAlertLastOccurrenceTs ||
+        selectedAlertDisplayTs ||
+        selectedAlert?.timestamp,
+      fleetNumber: selectedAlertFleetNumber || undefined,
+      vehicleRegistration: selectedAlertRegistration || undefined,
+      driverName: selectedAlertDriverInfo.name || undefined,
+      department: selectedAlertDriverInfo.department || undefined,
+      vehicleId:
+        selectedAlert?.vehicleId ||
+        selectedAlert?.vehicle_id ||
+        selectedAlert?.device_id ||
+        undefined,
+      deviceId:
+        selectedAlert?.device_id ||
+        selectedAlert?.vehicle?.device_id ||
+        undefined,
+      location: selectedAlertResolvedLocationName
+        ? {
+            address: selectedAlertResolvedLocationName,
+            ...(selectedAlertCoordinates || {}),
+          }
+        : selectedAlert?.location || selectedAlert?.metadata,
+      screenshots: selectedAlertScreenshots || [],
+      videos: selectedAlertVideoList || [],
+    }),
+    [
+      selectedAlert,
+      selectedAlertCoordinates,
+      selectedAlertDisplayTs,
+      selectedAlertDriverInfo.department,
+      selectedAlertDriverInfo.name,
+      selectedAlertFleetNumber,
+      selectedAlertLastOccurrenceTs,
+      selectedAlertRegistration,
+      selectedAlertResolvedLocationName,
+      selectedAlertScreenshots,
+      selectedAlertVideoList,
+    ]
+  );
   const buildSelectedAlertClosurePayload = useCallback((
     artifact?: SavedAlertArtifact | null,
     resolvedWindowVideos: Array<{ key: string; label: string; url: string }> = []
@@ -3690,8 +3774,14 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
     severity: selectedAlert?.priority || selectedAlert?.severity || null,
     timestamp: selectedAlertDisplayTs || selectedAlert?.timestamp || null,
     lastOccurrenceTimestamp: selectedAlertLastOccurrenceTs || selectedAlertDisplayTs || selectedAlert?.timestamp || null,
+    vehicle: selectedAlertVehicleDisplay || null,
+    fleetNumber: selectedAlertFleetNumber || null,
+    vehicleRegistration: selectedAlertRegistration || null,
+    driverName: selectedAlertDriverInfo.name || null,
+    department: selectedAlertDriverInfo.department || null,
     locationText: selectedAlertLocationText || null,
     coordinates: selectedAlertCoordinates || null,
+    alertInfo: selectedAlertReportDetails,
     screenshots: selectedAlertScreenshots || [],
     videos: selectedAlertVideoList || [],
     resolvedWindowVideos,
@@ -3720,13 +3810,77 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
     selectedAlert?.vehicle_id,
     selectedAlert?.metadata?.channel,
     selectedAlertCoordinates,
+    selectedAlertDriverInfo.department,
+    selectedAlertDriverInfo.name,
     selectedAlertDisplayTs,
+    selectedAlertFleetNumber,
     selectedAlertLastOccurrenceTs,
     selectedAlertLocationText,
+    selectedAlertRegistration,
+    selectedAlertReportDetails,
     selectedAlertScreenshots,
     selectedAlertTimeline,
+    selectedAlertVehicleDisplay,
     selectedAlertVideoList,
     selectedAlertVideoRequestState,
+  ]);
+  const selectedAlertForIncidentTemplate = useMemo(() => {
+    if (!selectedAlert) return null;
+    return {
+      ...selectedAlert,
+      fleet_number:
+        selectedAlertFleetNumber ||
+        selectedAlert?.fleet_number ||
+        selectedAlert?.fleetNumber ||
+        "",
+      fleetNumber:
+        selectedAlertFleetNumber ||
+        selectedAlert?.fleetNumber ||
+        selectedAlert?.fleet_number ||
+        "",
+      vehicle_registration:
+        selectedAlertRegistration ||
+        selectedAlert?.vehicle_registration ||
+        selectedAlert?.registration_number ||
+        selectedAlert?.registration ||
+        "",
+      vehicleRegistration:
+        selectedAlertRegistration ||
+        selectedAlert?.vehicleRegistration ||
+        selectedAlert?.vehicle_registration ||
+        "",
+      registration_number:
+        selectedAlertRegistration ||
+        selectedAlert?.registration_number ||
+        selectedAlert?.registration ||
+        "",
+      driver_name:
+        selectedAlertDriverInfo.name ||
+        selectedAlert?.driver_name ||
+        selectedAlert?.driverName ||
+        "",
+      department:
+        selectedAlertDriverInfo.department ||
+        selectedAlert?.department ||
+        "",
+      alert_type: selectedAlert?.type || selectedAlert?.alert_type || "",
+      timestamp:
+        selectedAlertLastOccurrenceTs ||
+        selectedAlertDisplayTs ||
+        selectedAlert?.timestamp ||
+        "",
+      location: selectedAlertReportDetails.location || selectedAlert?.location,
+      alert_details: selectedAlertReportDetails,
+    };
+  }, [
+    selectedAlert,
+    selectedAlertDisplayTs,
+    selectedAlertDriverInfo.department,
+    selectedAlertDriverInfo.name,
+    selectedAlertFleetNumber,
+    selectedAlertLastOccurrenceTs,
+    selectedAlertRegistration,
+    selectedAlertReportDetails,
   ]);
   const selectedAlertScreenshotChannelSignature = React.useMemo(
     () =>
@@ -3864,16 +4018,58 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
     };
     const normalizeIdLocal = (value: unknown) =>
       value === null || value === undefined ? "" : String(value).trim();
-    const getVehicleKeyLocal = (alert: any) =>
+    const getVehicleDeviceKeyLocal = (alert: any) =>
       normalizeIdLocal(
         alert?.vehicleId ||
           alert?.vehicle_id ||
           alert?.device_id ||
           alert?.deviceId ||
-          alert?.phone ||
-          alert?.vehicle_registration ||
-          alert?.fleet_number
+          alert?.phone
       );
+    const toIdentityTokenLocal = (value: unknown) =>
+      normalizeIdLocal(value).toLowerCase().replace(/[^a-z0-9]/g, "");
+    const getVehicleIdentityTokensLocal = (alert: any) => {
+      const metadata =
+        alert?.metadata && typeof alert.metadata === "object"
+          ? (alert.metadata as Record<string, any>)
+          : {};
+      const tokens = new Set<string>();
+      const addCandidate = (value: unknown) => {
+        const clean = normalizeIdLocal(value);
+        if (!clean) return;
+        const lower = clean.toLowerCase();
+        if (["na", "n/a", "none", "unknown", "unk", "null", "undefined"].includes(lower)) return;
+        const compact = toIdentityTokenLocal(clean);
+        if (compact.length < 4) return;
+        tokens.add(compact);
+      };
+      [
+        alert?.vehicleId,
+        alert?.vehicle_id,
+        alert?.device_id,
+        alert?.deviceId,
+        alert?.phone,
+        alert?.vehicle_registration,
+        alert?.vehicleRegistration,
+        alert?.registration_number,
+        alert?.registration,
+        alert?.plate,
+        alert?.fleet_number,
+        alert?.fleetNumber,
+        alert?.vehicle?.registration_number,
+        alert?.vehicle?.name,
+        alert?.vehicle?.fleet_number,
+        metadata?.vehicle_registration,
+        metadata?.vehicleRegistration,
+        metadata?.registration_number,
+        metadata?.registration,
+        metadata?.plate,
+        metadata?.fleet_number,
+        metadata?.fleetNumber,
+        metadata?.fleet,
+      ].forEach(addCandidate);
+      return tokens;
+    };
     const fetchJsonWithTimeout = async (url: string, timeoutMs: number = 5000) => {
       try {
         const res = await fetch(url, { cache: "no-store", signal: AbortSignal.timeout(timeoutMs) });
@@ -3940,8 +4136,8 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
       const alertId = String(baseAlert?.id || "").trim();
       if (!alertId) return null;
 
-      const vehicleKey = getVehicleKeyLocal(baseAlert);
-      const vehicleKeyParam = encodeURIComponent(vehicleKey || "");
+      const vehicleDeviceKey = getVehicleDeviceKeyLocal(baseAlert);
+      const vehicleDeviceKeyParam = encodeURIComponent(vehicleDeviceKey || "");
 
       const detailJson = await fetchJsonWithTimeout(`${videoProxyBase}/alerts/${alertId}`, 5000);
       const mediaJson = null;
@@ -4179,10 +4375,16 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
       // Skip this on silent polling refreshes to keep alert detail fast.
       if (!silent) {
         void (async () => {
+          const recentVehiclePromise = vehicleDeviceKey
+            ? fetchJsonWithTimeout(
+                `${videoProxyBase}/alerts/history?device_id=${vehicleDeviceKeyParam}&days=30&limit=300`,
+                3500
+              )
+            : Promise.resolve(null);
           const [recentVehicleJson, recentJson] = await Promise.all([
-            fetchJsonWithTimeout(`${videoProxyBase}/alerts/history?device_id=${vehicleKeyParam}&days=30&limit=200`, 3000),
-            fetchJsonWithTimeout(`${videoProxyBase}/alerts/history?limit=200`, 3000),
-        ]);
+            recentVehiclePromise,
+            fetchJsonWithTimeout(`${videoProxyBase}/alerts/history?days=30&limit=600`, 3500),
+          ]);
         const recentVehicleAlertsRaw = firstArray(
           recentVehicleJson?.alerts,
           recentVehicleJson?.data?.alerts,
@@ -4202,12 +4404,18 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
         recentVehicleAlertsRaw.forEach(pushHistory);
         recentAlertsRaw.forEach(pushHistory);
         const allHistory = Array.from(byId.values());
-        const baseVehicleRegistration = normalizeIdLocal(baseAlert?.vehicle_registration || detailAlert?.vehicle_registration || baseAlert?.fleet_number);
+        const baseVehicleIdentityTokens = getVehicleIdentityTokensLocal({
+          ...baseAlert,
+          ...detailAlert,
+        });
         const sameVehicleAlerts = allHistory.filter((a: any) => {
-          const vehicleIdMatch = getVehicleKeyLocal(a);
-          if (vehicleKey && vehicleIdMatch && vehicleKey === vehicleIdMatch) return true;
-          const reg = normalizeIdLocal(a?.vehicle_registration || a?.fleet_number);
-          return !!baseVehicleRegistration && !!reg && reg === baseVehicleRegistration;
+          if (baseVehicleIdentityTokens.size === 0) return false;
+          const rowTokens = getVehicleIdentityTokensLocal(a);
+          if (rowTokens.size === 0) return false;
+          for (const token of rowTokens.values()) {
+            if (baseVehicleIdentityTokens.has(token)) return true;
+          }
+          return false;
         });
         const fastRecentAlerts = sameVehicleAlerts
           .slice(0, 10)
@@ -6541,6 +6749,54 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
                               </div>
                             ))}
                           </div>
+                        ) : selectedAlertRecentVehicleHistory.length > 0 ? (
+                          <div className="space-y-3">
+                            <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                              <p className="text-sm font-medium text-slate-900">Vehicle Alert History</p>
+                              <p className="text-xs text-slate-500 mt-1">
+                                No resolved entries yet. Showing recent alerts for this vehicle.
+                              </p>
+                            </div>
+                            {selectedAlertRecentVehicleHistory.slice(0, 20).map((entry: any, idx: number) => {
+                              const status = String(entry?.status || (entry?.resolved ? "resolved" : "open")).toLowerCase();
+                              const isClosed = ["resolved", "closed"].includes(status) || !!entry?.resolved;
+                              const severity = String(entry?.severity || entry?.priority || "info").toUpperCase();
+                              const timestamp = entry?.timestamp || entry?.created_at || entry?.updated_at;
+                              return (
+                                <Card
+                                  key={entry?.id || `${timestamp}-${entry?.alert_type || entry?.type}-${idx}`}
+                                  className="border-slate-200 bg-white p-3"
+                                >
+                                  <div className="flex items-center justify-between gap-2">
+                                    <p className="text-sm font-medium text-slate-900">
+                                      {String(entry?.alert_type || entry?.type || "Alert")
+                                        .replace(/_/g, " ")
+                                        .replace(/\b\w/g, (c: string) => c.toUpperCase())}
+                                    </p>
+                                    <div className="flex items-center gap-2">
+                                      <Badge
+                                        variant="outline"
+                                        className={cn(
+                                          "text-[10px]",
+                                          isClosed
+                                            ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                                            : "border-amber-200 bg-amber-50 text-amber-700"
+                                        )}
+                                      >
+                                        {isClosed ? "Closed" : "Open"}
+                                      </Badge>
+                                      <Badge variant="outline" className="text-[10px]">
+                                        {severity}
+                                      </Badge>
+                                    </div>
+                                  </div>
+                                  <p className="text-xs text-slate-500 mt-1">
+                                    {timestamp ? new Date(timestamp).toLocaleString() : "Unknown time"}
+                                  </p>
+                                </Card>
+                              );
+                            })}
+                          </div>
                         ) : (
                           <div className="text-center py-12 text-slate-500">
                             No resolved history available for this vehicle yet
@@ -6562,14 +6818,15 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
                         <div>
                           <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Vehicle</p>
                           <p className="mt-1 font-semibold text-slate-900">
-                            {selectedAlertDriverInfo.registration ||
-                              selectedAlertDriverInfo.fleetNumber ||
-                              selectedAlert?.vehicle_registration ||
-                              selectedAlert?.fleet_number ||
-                              selectedAlert?.vehicleId ||
-                              selectedAlert?.device_id ||
-                              "N/A"}
+                            {selectedAlertVehicleDisplay}
                           </p>
+                          {(selectedAlertFleetNumber || selectedAlertRegistration) ? (
+                            <p className="mt-1 text-xs text-slate-600">
+                              {selectedAlertFleetNumber ? `Fleet: ${selectedAlertFleetNumber}` : ""}
+                              {selectedAlertFleetNumber && selectedAlertRegistration ? " | " : ""}
+                              {selectedAlertRegistration ? `Reg: ${selectedAlertRegistration}` : ""}
+                            </p>
+                          ) : null}
                         </div>
                       </div>
                       <div className="hidden border-t border-slate-200" />
@@ -6850,9 +7107,23 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
             setIncidentReportModalOpen(false);
             setSelectedTripForIncident(null);
           }}
-          alert={selectedAlert}
+          alert={selectedAlertForIncidentTemplate || selectedAlert}
           trip={selectedTripForIncident}
           onResolved={() => {
+            const closingAlertId = String((selectedAlertForIncidentTemplate || selectedAlert)?.id || "").trim();
+            const groupedIds = Array.isArray((selectedAlertForIncidentTemplate || selectedAlert)?.groupedIds)
+              ? (selectedAlertForIncidentTemplate || selectedAlert).groupedIds
+              : [];
+            if (typeof window !== "undefined" && closingAlertId) {
+              window.dispatchEvent(
+                new CustomEvent("video-alert-closed", {
+                  detail: {
+                    id: closingAlertId,
+                    groupedIds,
+                  },
+                })
+              );
+            }
             setIncidentReportModalOpen(false);
             setSelectedTripForIncident(null);
             setAlertNotesDraft("");

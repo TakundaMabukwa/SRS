@@ -69,12 +69,36 @@ export default function IncidentReportTemplateModal({
   onResolved,
 }: IncidentReportTemplateModalProps) {
   const defaultState = useMemo<IncidentFormState>(() => {
-    const timestamp = alert?.timestamp;
+    const clean = (value: unknown) => String(value || "").trim();
+    const timestamp = alert?.lastOccurrenceTimestamp || alert?.timestamp;
     const locationText =
       alert?.location?.address ||
       (alert?.location?.latitude && alert?.location?.longitude
         ? `${alert.location.latitude}, ${alert.location.longitude}`
         : "");
+    const fleetNumber =
+      clean(alert?.fleet_number) ||
+      clean(alert?.fleetNumber) ||
+      clean(alert?.alert_details?.fleetNumber) ||
+      clean(trip?.vehicleassignments?.[0]?.vehicle?.fleet_number) ||
+      clean(trip?.vehicleassignments?.[0]?.vehicle?.name);
+    const registration =
+      clean(alert?.vehicle_registration) ||
+      clean(alert?.vehicleRegistration) ||
+      clean(alert?.registration_number) ||
+      clean(alert?.registration) ||
+      clean(alert?.alert_details?.vehicleRegistration);
+    const fleetVehicleNumber =
+      fleetNumber && registration && fleetNumber !== registration
+        ? `${fleetNumber} - ${registration}`
+        : fleetNumber || registration;
+    const alertType = clean(alert?.alert_type || alert?.type || alert?.alert_details?.type)
+      .replace(/_/g, " ");
+    const driverName =
+      clean(alert?.driver_name) ||
+      clean(alert?.driverName) ||
+      clean(alert?.alert_details?.driverName) ||
+      clean(trip?.drivername);
 
     return {
       date: toDateInput(timestamp),
@@ -85,17 +109,10 @@ export default function IncidentReportTemplateModal({
       positionTitle: "",
       contactNumber: "",
       dateTimeOfIncident: toDateTimeText(timestamp),
-      fleetVehicleNumber:
-        alert?.vehicle_registration ||
-        alert?.fleet_number ||
-        trip?.vehicleassignments?.[0]?.vehicle?.fleet_number ||
-        trip?.vehicleassignments?.[0]?.vehicle?.name ||
-        "",
-      typeOfIncident: alert?.alert_type
-        ? String(alert.alert_type).replace(/_/g, " ")
-        : "Vehicle alert",
+      fleetVehicleNumber: fleetVehicleNumber || "",
+      typeOfIncident: alertType || "Vehicle alert",
       locationOfIncident: locationText || "",
-      personsInvolved: alert?.driver_name || trip?.drivername || "",
+      personsInvolved: driverName || "",
       descriptionOfIncident: "",
       immediateActionTaken: "",
       reportedToSupervisorManager: "",
@@ -164,6 +181,36 @@ export default function IncidentReportTemplateModal({
     setSaving(true);
     setError(null);
     try {
+      const clean = (value: unknown) => String(value || "").trim();
+      const payloadFleetNumber =
+        clean(alert?.fleet_number) ||
+        clean(alert?.fleetNumber) ||
+        clean(alert?.alert_details?.fleetNumber) ||
+        clean(form.fleetVehicleNumber);
+      const payloadRegistration =
+        clean(alert?.vehicle_registration) ||
+        clean(alert?.vehicleRegistration) ||
+        clean(alert?.registration_number) ||
+        clean(alert?.registration) ||
+        clean(alert?.alert_details?.vehicleRegistration);
+      const payloadDriverName =
+        clean(alert?.driver_name) ||
+        clean(alert?.driverName) ||
+        clean(alert?.alert_details?.driverName) ||
+        clean(form.personsInvolved);
+      const payloadAlertType =
+        clean(alert?.alert_type) ||
+        clean(alert?.type) ||
+        clean(alert?.alert_details?.type) ||
+        clean(form.typeOfIncident);
+      const payloadSeverity =
+        clean(alert?.severity) ||
+        clean(alert?.priority) ||
+        clean(alert?.alert_details?.severity);
+      const payloadTimestamp =
+        clean(alert?.lastOccurrenceTimestamp) ||
+        clean(alert?.timestamp);
+
       const response = await fetch(`/api/video-server/alerts/${alert.id}/close`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -176,6 +223,19 @@ export default function IncidentReportTemplateModal({
           payload: {
             actionTaken: form.immediateActionTaken,
             incidentReport: form,
+            alertContext: {
+              alertId: alert?.id || null,
+              alertType: payloadAlertType || null,
+              severity: payloadSeverity || null,
+              timestamp: payloadTimestamp || null,
+              fleetNumber: payloadFleetNumber || null,
+              vehicleRegistration: payloadRegistration || null,
+              driverName: payloadDriverName || null,
+              location:
+                clean(form.locationOfIncident) ||
+                clean(form.location) ||
+                null,
+            },
           },
         }),
       });

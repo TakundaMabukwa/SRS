@@ -8,6 +8,12 @@ export interface ReportAlertDetails {
   severity?: string
   timestamp?: string
   lastOccurrenceTimestamp?: string
+  fleetNumber?: string
+  vehicleRegistration?: string
+  driverName?: string
+  department?: string
+  vehicleId?: string
+  deviceId?: string
   location?: { latitude?: number; longitude?: number; address?: string } | string
   screenshots?: Array<{ url?: string; timestamp?: string; storage_url?: string; signed_url?: string; image_url?: string; channel?: number }>
   videos?: Array<{ key?: string; label?: string; url?: string; src?: string; path?: string; channel?: number }>
@@ -255,6 +261,25 @@ export function buildAlertEvidencePayload(
     url: toResolvedMediaUrl(video.url),
     channel: video.channel || null,
   }))
+  const resolvedFleetNumber =
+    cleanText(driverInfo.fleetNumber) ||
+    cleanText(alertDetails?.fleetNumber)
+  const resolvedVehicleRegistration =
+    getReportVehicleRegistrationText(driverInfo.registration) ||
+    getReportVehicleRegistrationText(alertDetails?.vehicleRegistration)
+  const resolvedDriverName =
+    cleanText(driverInfo.name) ||
+    cleanText(alertDetails?.driverName)
+  const resolvedDepartment =
+    cleanText(driverInfo.department) ||
+    cleanText(alertDetails?.department)
+  const resolvedDriverInfo: ReportDriverInfo = {
+    ...driverInfo,
+    name: resolvedDriverName || driverInfo.name,
+    fleetNumber: resolvedFleetNumber || driverInfo.fleetNumber,
+    registration: resolvedVehicleRegistration || driverInfo.registration,
+    department: resolvedDepartment || driverInfo.department,
+  }
 
   return {
     alertId: alertDetails?.id || null,
@@ -262,11 +287,13 @@ export function buildAlertEvidencePayload(
     severity: alertDetails?.severity || null,
     timestamp: resolveAlertEventTimestamp(alertDetails, driverInfo.timestamp) || null,
     lastOccurrenceTimestamp: resolveAlertEventTimestamp(alertDetails, driverInfo.timestamp) || null,
-    vehicle: getReportVehicleDisplayText(driverInfo),
-    fleetNumber: driverInfo.fleetNumber || null,
-    vehicleRegistration: driverInfo.registration || null,
-    driver: driverInfo.name || null,
-    department: driverInfo.department || null,
+    vehicle: getReportVehicleDisplayText(resolvedDriverInfo),
+    fleetNumber: resolvedFleetNumber || null,
+    vehicleRegistration: resolvedVehicleRegistration || null,
+    driver: resolvedDriverName || null,
+    department: resolvedDepartment || null,
+    vehicleId: cleanText(alertDetails?.vehicleId) || null,
+    deviceId: cleanText(alertDetails?.deviceId) || null,
     locationText: resolveReportLocationText(alertDetails?.location, driverInfo.location),
     screenshots,
     screenshotCount: screenshots.length,
