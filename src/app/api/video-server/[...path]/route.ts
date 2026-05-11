@@ -593,7 +593,6 @@ export async function GET(
       })
     }
 
-    const body = await response.arrayBuffer()
     const passHeaders = new Headers()
     const passThroughKeys = [
       'content-type',
@@ -610,7 +609,7 @@ export async function GET(
       if (value) passHeaders.set(key, value)
     })
 
-    return new Response(body, {
+    return new Response(response.body, {
       status: response.status,
       headers: passHeaders
     })

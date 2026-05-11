@@ -1,0 +1,1133 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Go Hub Monitor</title>
+  <style>
+    :root {
+      --bg: #0b1020;
+      --panel: #131a33;
+      --line: #26325f;
+      --text: #e6ecff;
+      --muted: #99a6d9;
+      --ok: #20c997;
+      --warn: #ffb347;
+      --bad: #ff6b6b;
+      --btn: #1f6feb;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Segoe UI, Arial, sans-serif;
+      background: radial-gradient(circle at 20% 0%, #17224b 0, var(--bg) 55%);
+      color: var(--text);
+    }
+    .tabs {
+      max-width: 1800px;
+      margin: 0 auto;
+      padding: 16px 16px 0 16px;
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    .tab-btn {
+      background: #2d3969;
+      border: 1px solid var(--line);
+      color: #dbe5ff;
+      padding: 8px 12px;
+      border-radius: 10px;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .tab-btn.active {
+      background: var(--btn);
+      border-color: #4b86ff;
+      color: #fff;
+    }
+    .tab-panel.hidden {
+      display: none;
+    }
+    .wrap {
+      max-width: 1800px;
+      margin: 0 auto;
+      padding: 16px;
+      display: grid;
+      grid-template-columns: 380px 1fr 540px;
+      gap: 16px;
+    }
+    @media (max-width: 1400px) {
+      .wrap {
+        grid-template-columns: 1fr;
+      }
+    }
+    .panel {
+      background: rgba(19, 26, 51, 0.92);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      overflow: hidden;
+    }
+    .panel h2 {
+      margin: 0;
+      font-size: 15px;
+      letter-spacing: 0.3px;
+      border-bottom: 1px solid var(--line);
+      padding: 12px 14px;
+      color: #c7d4ff;
+    }
+    .toolbar {
+      display: flex;
+      gap: 8px;
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--line);
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .btn {
+      background: var(--btn);
+      border: 0;
+      color: white;
+      padding: 7px 10px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 12px;
+    }
+    .btn.secondary {
+      background: #3a4372;
+    }
+    .btn.warn {
+      background: #946200;
+    }
+    .status {
+      margin-left: auto;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .capture-info {
+      font-size: 11px;
+      color: var(--muted);
+      padding: 8px 14px 12px 14px;
+      border-bottom: 1px solid var(--line);
+      line-height: 1.45;
+      word-break: break-word;
+      max-height: 220px;
+      overflow: auto;
+    }
+    .list {
+      max-height: calc(100vh - 180px);
+      overflow: auto;
+      padding: 10px;
+    }
+    .vehicle {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 10px;
+      margin-bottom: 10px;
+      background: rgba(13, 19, 39, 0.85);
+    }
+    .row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .id {
+      font-weight: 700;
+      font-size: 13px;
+      color: #dbe5ff;
+    }
+    .meta {
+      font-size: 11px;
+      color: var(--muted);
+      margin-top: 4px;
+      line-height: 1.4;
+    }
+    .ch {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 8px;
+      width: 100%;
+    }
+    .pill {
+      font-size: 11px;
+      padding: 3px 7px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      color: #d0dcff;
+      min-width: 42px;
+      text-align: center;
+    }
+    .pill.video { border-color: #2b8a3e; color: #8ce99a; }
+    .pill.other { border-color: #9f6b00; color: #ffd58a; }
+    .feeds {
+      padding: 10px;
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
+      gap: 10px;
+      align-content: start;
+      min-height: 70vh;
+    }
+    .feed {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      overflow: hidden;
+      background: #0e1530;
+    }
+    .feed-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 12px;
+      padding: 8px 10px;
+      border-bottom: 1px solid var(--line);
+      color: #c7d4ff;
+    }
+    .feed img {
+      width: 100%;
+      height: 240px;
+      object-fit: contain;
+      background: #000;
+      display: block;
+    }
+    .hint {
+      font-size: 11px;
+      color: var(--muted);
+      padding: 8px 10px;
+      border-top: 1px solid var(--line);
+    }
+    .playback {
+      padding: 12px;
+    }
+    .form-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+    .form-grid .full {
+      grid-column: 1 / -1;
+    }
+    label {
+      display: block;
+      font-size: 11px;
+      color: var(--muted);
+      margin-bottom: 4px;
+    }
+    select, input {
+      width: 100%;
+      background: #0e1530;
+      border: 1px solid var(--line);
+      color: var(--text);
+      border-radius: 8px;
+      padding: 8px;
+      font-size: 12px;
+    }
+    .history-video {
+      width: 100%;
+      height: 300px;
+      background: #000;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      margin-top: 8px;
+    }
+    .history-info {
+      font-size: 11px;
+      color: var(--muted);
+      margin-top: 8px;
+      line-height: 1.4;
+      word-break: break-all;
+    }
+    .shots-wrap {
+      max-width: 1800px;
+      margin: 0 auto;
+      padding: 16px;
+    }
+    .shots-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(440px, 1fr));
+      gap: 12px;
+      padding: 12px;
+      max-height: calc(100vh - 190px);
+      overflow: auto;
+    }
+    .shot-vehicle {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: rgba(13, 19, 39, 0.92);
+      overflow: hidden;
+    }
+    .shot-head {
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .shot-title {
+      font-weight: 700;
+      color: #dce6ff;
+      font-size: 14px;
+    }
+    .shot-sub {
+      padding: 0 14px 10px 14px;
+      color: var(--muted);
+      font-size: 12px;
+      border-bottom: 1px solid var(--line);
+    }
+    .shot-state {
+      font-size: 11px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      color: var(--muted);
+      background: rgba(255,255,255,0.03);
+    }
+    .shot-state.live {
+      color: #a8f0c8;
+      border-color: #2d7f56;
+      background: rgba(35, 117, 71, 0.2);
+    }
+    .shot-state.idle {
+      color: #e7b87f;
+      border-color: #7e5d2a;
+      background: rgba(126, 93, 42, 0.2);
+    }
+    .shot-state.warn {
+      color: #ffd58a;
+      border-color: #a86d00;
+      background: rgba(138, 94, 0, 0.22);
+    }
+    .shot-channels {
+      padding: 12px;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+    .shot-channel {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #071234;
+      position: relative;
+      overflow: hidden;
+    }
+    .shot-badge {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      background: #020b24;
+      border: 1px solid #162a64;
+      color: #fff;
+      font-weight: 700;
+      border-radius: 7px;
+      font-size: 11px;
+      padding: 3px 8px;
+      z-index: 2;
+    }
+    .shot-image-wrap {
+      width: 100%;
+      height: 180px;
+      background: #000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .shot-image {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      display: none;
+      background: #000;
+    }
+    .shot-placeholder {
+      color: #7f8fb8;
+      font-size: 12px;
+      text-align: center;
+      padding: 0 10px;
+      line-height: 1.4;
+    }
+    .shot-caption {
+      padding: 8px 10px;
+      border-top: 1px solid var(--line);
+      font-size: 12px;
+      color: #a9b7e0;
+      background: #000a26;
+    }
+  </style>
+</head>
+<body>
+  <div class="tabs">
+    <button id="tabLiveBtn" class="tab-btn active">Live + Playback</button>
+    <button id="tabShotsBtn" class="tab-btn">Screenshots</button>
+  </div>
+
+  <div id="tabLive" class="tab-panel">
+  <div class="wrap">
+    <section class="panel">
+      <h2>Connected Vehicles</h2>
+      <div class="toolbar">
+        <button id="refreshBtn" class="btn">Refresh Now</button>
+        <button id="clearBtn" class="btn secondary">Clear Feeds</button>
+        <button id="captureAllBtn" class="btn warn">Capture All Shots</button>
+        <span class="status" id="status">Loading...</span>
+      </div>
+      <div id="captureInfo" class="capture-info">Bulk screenshot job not run yet.</div>
+      <div class="list" id="vehicleList"></div>
+    </section>
+
+    <section class="panel">
+      <h2>Live Feeds (On Demand)</h2>
+      <div class="feeds" id="feeds"></div>
+    </section>
+
+    <section class="panel">
+      <h2>Stored Playback (History)</h2>
+      <div class="toolbar">
+        <button id="historyRefreshBtn" class="btn">Refresh History</button>
+        <button id="randomBtn" class="btn warn">Random Vehicle</button>
+        <span class="status" id="historyStatus">Loading...</span>
+      </div>
+      <div class="playback">
+        <div class="form-grid">
+          <div class="full">
+            <label for="histVehicle">Vehicle</label>
+            <select id="histVehicle"></select>
+          </div>
+          <div>
+            <label for="histChannel">Channel</label>
+            <select id="histChannel"></select>
+          </div>
+          <div>
+            <label for="histMinutes">Latest Minutes</label>
+            <input id="histMinutes" type="number" min="1" max="720" value="10" />
+          </div>
+          <div>
+            <label for="histFrom">From</label>
+            <input id="histFrom" type="datetime-local" />
+          </div>
+          <div>
+            <label for="histTo">To</label>
+            <input id="histTo" type="datetime-local" />
+          </div>
+          <div class="full">
+            <button id="playLatestBtn" class="btn">Play Latest</button>
+            <button id="playRangeBtn" class="btn secondary">Play Selected Range</button>
+          </div>
+        </div>
+        <video id="historyVideo" class="history-video" controls autoplay muted playsinline></video>
+        <div id="historyInfo" class="history-info"></div>
+      </div>
+    </section>
+  </div>
+  </div>
+
+  <div id="tabShots" class="tab-panel hidden">
+    <div class="shots-wrap">
+      <section class="panel">
+        <h2>Screenshots (Auto Refresh Every 30s)</h2>
+        <div class="toolbar">
+          <button id="shotsRefreshBtn" class="btn">Refresh Screenshots</button>
+          <span class="status" id="shotsStatus">Waiting...</span>
+        </div>
+        <div id="shotsGrid" class="shots-grid"></div>
+      </section>
+    </div>
+  </div>
+
+  <script>
+    const vehicleListEl = document.getElementById('vehicleList');
+    const feedsEl = document.getElementById('feeds');
+    const statusEl = document.getElementById('status');
+    const refreshBtn = document.getElementById('refreshBtn');
+    const clearBtn = document.getElementById('clearBtn');
+    const captureAllBtn = document.getElementById('captureAllBtn');
+    const captureInfoEl = document.getElementById('captureInfo');
+    const openFeeds = new Map();
+
+    const historyRefreshBtn = document.getElementById('historyRefreshBtn');
+    const randomBtn = document.getElementById('randomBtn');
+    const historyStatusEl = document.getElementById('historyStatus');
+    const histVehicleEl = document.getElementById('histVehicle');
+    const histChannelEl = document.getElementById('histChannel');
+    const histFromEl = document.getElementById('histFrom');
+    const histToEl = document.getElementById('histTo');
+    const histMinutesEl = document.getElementById('histMinutes');
+    const playLatestBtn = document.getElementById('playLatestBtn');
+    const playRangeBtn = document.getElementById('playRangeBtn');
+    const historyVideoEl = document.getElementById('historyVideo');
+    const historyInfoEl = document.getElementById('historyInfo');
+    const historyMap = new Map();
+
+    const tabLiveBtn = document.getElementById('tabLiveBtn');
+    const tabShotsBtn = document.getElementById('tabShotsBtn');
+    const tabLiveEl = document.getElementById('tabLive');
+    const tabShotsEl = document.getElementById('tabShots');
+    const shotsRefreshBtn = document.getElementById('shotsRefreshBtn');
+    const shotsStatusEl = document.getElementById('shotsStatus');
+    const shotsGridEl = document.getElementById('shotsGrid');
+
+    const screenshotCards = new Map();
+    let screenshotTimer = null;
+    let screenshotBusy = false;
+    let shotsWs = null;
+    let shotsWsReconnectTimer = null;
+    let activeTab = 'live';
+
+    function esc(v) {
+      return String(v ?? '').replace(/[&<>\"']/g, s => ({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#39;'}[s]));
+    }
+
+    function feedKey(sim, channel) {
+      return `${sim}|${channel}`;
+    }
+
+    function streamBadge(s) {
+      const hasVideo = (s.videoPackets || 0) > 0;
+      const cls = hasVideo ? 'video' : 'other';
+      const txt = hasVideo ? 'video' : 'other';
+      return `<span class="pill ${cls}">${txt}</span>`;
+    }
+
+    function toLocalInput(rfc3339) {
+      const d = new Date(rfc3339);
+      if (!Number.isFinite(d.getTime())) return '';
+      const pad = n => String(n).padStart(2, '0');
+      return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    }
+
+    function localInputToRfc(v) {
+      if (!v) return '';
+      const d = new Date(v);
+      if (!Number.isFinite(d.getTime())) return '';
+      return d.toISOString();
+    }
+
+    function formatAge(ms) {
+      if (!Number.isFinite(ms) || ms < 0) return 'n/a';
+      const sec = Math.floor(ms / 1000);
+      if (sec < 60) return `${sec}s ago`;
+      const min = Math.floor(sec / 60);
+      if (min < 60) return `${min}m ago`;
+      const hr = Math.floor(min / 60);
+      return `${hr}h ago`;
+    }
+
+    function screenshotKey(sim, channel) {
+      return `${sim}|${channel}`;
+    }
+
+    function setActiveTab(tabName) {
+      activeTab = tabName === 'shots' ? 'shots' : 'live';
+      const onShots = activeTab === 'shots';
+      tabLiveBtn.classList.toggle('active', !onShots);
+      tabShotsBtn.classList.toggle('active', onShots);
+      tabLiveEl.classList.toggle('hidden', onShots);
+      tabShotsEl.classList.toggle('hidden', !onShots);
+      if (onShots) {
+        startScreenshotAutoRefresh();
+      } else {
+        stopScreenshotAutoRefresh();
+      }
+    }
+
+    function ensureScreenshotCard(vehicle) {
+      const sim = String(vehicle.id || '').trim();
+      if (!sim) return;
+      const channels = Array.isArray(vehicle.channels) && vehicle.channels.length > 0
+        ? [...vehicle.channels].sort((a, b) => a - b)
+        : [1, 2];
+      let card = screenshotCards.get(sim);
+      if (!card) {
+        const wrap = document.createElement('div');
+        wrap.className = 'shot-vehicle';
+        wrap.dataset.sim = sim;
+        wrap.innerHTML = `
+          <div class="shot-head">
+            <div class="shot-title">${esc(sim)}</div>
+            <span class="shot-state idle">Idle</span>
+          </div>
+          <div class="shot-sub">Offline - Waiting for screenshots</div>
+          <div class="shot-channels"></div>
+        `;
+        shotsGridEl.appendChild(wrap);
+        card = {
+          el: wrap,
+          stateEl: wrap.querySelector('.shot-state'),
+          subEl: wrap.querySelector('.shot-sub'),
+          channelsEl: wrap.querySelector('.shot-channels'),
+          channels: new Map()
+        };
+        screenshotCards.set(sim, card);
+      }
+
+      const existing = new Set(card.channels.keys());
+      channels.forEach((channel) => {
+        if (card.channels.has(channel)) return;
+        const chEl = document.createElement('div');
+        chEl.className = 'shot-channel';
+        chEl.dataset.channel = String(channel);
+        chEl.innerHTML = `
+          <span class="shot-badge">CH ${channel}</span>
+          <div class="shot-image-wrap">
+            <img class="shot-image" alt="${esc(sim)} CH${channel}" />
+            <div class="shot-placeholder">Channel idle</div>
+          </div>
+          <div class="shot-caption">No screenshot yet</div>
+        `;
+        card.channelsEl.appendChild(chEl);
+        const state = {
+          el: chEl,
+          imgEl: chEl.querySelector('.shot-image'),
+          placeholderEl: chEl.querySelector('.shot-placeholder'),
+          captionEl: chEl.querySelector('.shot-caption'),
+          lastSuccessAt: 0,
+          lastUrl: '',
+          lastErrorAt: 0,
+          lastError: ''
+        };
+        card.channels.set(channel, state);
+      });
+
+      existing.forEach((channel) => {
+        if (channels.includes(channel)) return;
+        const state = card.channels.get(channel);
+        if (state) state.el.remove();
+        card.channels.delete(channel);
+      });
+    }
+
+    function updateScreenshotCardStatus(sim) {
+      const card = screenshotCards.get(sim);
+      if (!card) return;
+      let freshest = 0;
+      let latestErrorAt = 0;
+      let latestError = '';
+      card.channels.forEach((state) => {
+        if (state.lastSuccessAt > freshest) freshest = state.lastSuccessAt;
+        if (state.lastErrorAt > latestErrorAt) {
+          latestErrorAt = state.lastErrorAt;
+          latestError = state.lastError || '';
+        }
+      });
+      if (freshest > 0) {
+        card.stateEl.className = 'shot-state live';
+        card.stateEl.textContent = 'Live';
+        card.subEl.textContent = `Connected - Last update ${formatAge(Date.now() - freshest)}`;
+      } else if (latestErrorAt > 0) {
+        card.stateEl.className = 'shot-state warn';
+        card.stateEl.textContent = 'Degraded';
+        const reason = latestError ? ` (${latestError.slice(0, 80)})` : '';
+        card.subEl.textContent = `Capture failures ${formatAge(Date.now() - latestErrorAt)}${reason}`;
+      } else {
+        card.stateEl.className = 'shot-state idle';
+        card.stateEl.textContent = 'Idle';
+        card.subEl.textContent = 'Offline - Waiting for screenshots';
+      }
+    }
+
+    function applyScreenshotResult(result) {
+      const sim = String(result.vehicleId || '').trim();
+      const channel = Number(result.channel || 0);
+      if (!sim || !Number.isFinite(channel) || channel <= 0) return;
+      ensureScreenshotCard({ id: sim, channels: [channel] });
+      const card = screenshotCards.get(sim);
+      if (!card) return;
+      const state = card.channels.get(channel);
+      if (!state) return;
+
+      if (result.ok && result.fileUrl) {
+        const nextUrl = `${result.fileUrl}?v=${Date.now()}`;
+        state.lastSuccessAt = Date.now();
+        state.lastUrl = nextUrl;
+        state.lastErrorAt = 0;
+        state.lastError = '';
+        state.imgEl.src = nextUrl;
+        state.imgEl.style.display = 'block';
+        state.placeholderEl.style.display = 'none';
+        state.captionEl.textContent = `Updated ${formatAge(0)} - ${result.bytes || 0} bytes`;
+      } else if (state.lastSuccessAt > 0) {
+        const reason = String((result && result.error) || '').trim();
+        state.lastErrorAt = Date.now();
+        state.lastError = reason;
+        if (reason) {
+          state.captionEl.textContent = `Last good ${formatAge(Date.now() - state.lastSuccessAt)} - retrying (${reason.slice(0, 120)})`;
+        } else {
+          state.captionEl.textContent = `Last good ${formatAge(Date.now() - state.lastSuccessAt)} - waiting for next image`;
+        }
+      } else {
+        const reason = String((result && result.error) || '').trim();
+        state.lastErrorAt = Date.now();
+        state.lastError = reason;
+        state.captionEl.textContent = reason ? `Capture failed: ${reason.slice(0, 140)}` : 'Channel idle';
+      }
+      updateScreenshotCardStatus(sim);
+    }
+
+    async function loadScreenshotVehicles() {
+      const res = await fetch('/api/live/vehicles', { cache: 'no-store' });
+      if (!res.ok) throw new Error(`vehicles HTTP ${res.status}`);
+      const data = await res.json();
+      const vehicles = Array.isArray(data.vehicles) ? data.vehicles : [];
+      vehicles.forEach((vehicle) => ensureScreenshotCard(vehicle));
+      return vehicles.length;
+    }
+
+    async function refreshScreenshots() {
+      if (screenshotBusy) return;
+      screenshotBusy = true;
+      shotsRefreshBtn.disabled = true;
+      const started = Date.now();
+      try {
+        const count = await loadScreenshotVehicles();
+        shotsStatusEl.textContent = `Capturing... vehicles=${count}`;
+        const res = await fetch('/api/live/screenshots/all', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            mode: 'hub',
+            concurrency: 6,
+            timeoutSec: 12,
+            fps: 6,
+            input: 'auto',
+            videoOnly: true
+          })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+        const results = Array.isArray(data.results) ? data.results : [];
+        results.forEach((result) => applyScreenshotResult(result));
+        const ok = Number(data.successCount || 0);
+        const fail = Number(data.failureCount || 0);
+        shotsStatusEl.textContent = `${new Date().toLocaleTimeString()} • success=${ok} fail=${fail} targets=${results.length} • ${Date.now() - started}ms`;
+      } catch (err) {
+        shotsStatusEl.textContent = `Screenshot refresh failed: ${err.message}`;
+      } finally {
+        screenshotBusy = false;
+        shotsRefreshBtn.disabled = false;
+      }
+    }
+
+    function startScreenshotAutoRefresh() {
+      void loadScreenshotVehicles().catch(() => {});
+      connectScreenshotsSocket();
+    }
+
+    function stopScreenshotAutoRefresh() {
+      if (screenshotTimer) {
+        clearInterval(screenshotTimer);
+        screenshotTimer = null;
+      }
+      disconnectScreenshotsSocket();
+    }
+
+    function screenshotSocketUrl() {
+      const protocol = location.protocol === 'https:' ? 'wss' : 'ws';
+      return `${protocol}://${location.host}/ws/screenshots`;
+    }
+
+    function scheduleScreenshotsReconnect() {
+      if (shotsWsReconnectTimer) return;
+      shotsWsReconnectTimer = setTimeout(() => {
+        shotsWsReconnectTimer = null;
+        if (activeTab === 'shots') {
+          connectScreenshotsSocket();
+        }
+      }, 3000);
+    }
+
+    function connectScreenshotsSocket() {
+      if (shotsWs && (shotsWs.readyState === WebSocket.OPEN || shotsWs.readyState === WebSocket.CONNECTING)) {
+        return;
+      }
+      const wsUrl = screenshotSocketUrl();
+      shotsStatusEl.textContent = `Connecting websocket... ${wsUrl}`;
+      const ws = new WebSocket(wsUrl);
+      shotsWs = ws;
+
+      ws.onopen = () => {
+        shotsStatusEl.textContent = `${new Date().toLocaleTimeString()} - websocket connected`;
+      };
+
+      ws.onmessage = (event) => {
+        let data = null;
+        try {
+          data = JSON.parse(event.data);
+        } catch (_) {
+          return;
+        }
+
+        if (data && data.type === 'snapshot' && Array.isArray(data.results)) {
+          data.results.forEach((result) => applyScreenshotResult(result));
+          shotsStatusEl.textContent = `${new Date().toLocaleTimeString()} - snapshot ${data.results.length} channels`;
+          return;
+        }
+
+        if (data && data.type === 'update' && data.result) {
+          applyScreenshotResult(data.result);
+          const result = data.result;
+          const label = result && result.ok
+            ? `${result.vehicleId} CH${result.channel}`
+            : `${(result && result.vehicleId) || '-'} CH${(result && result.channel) || '-'} failed`;
+          shotsStatusEl.textContent = `${new Date().toLocaleTimeString()} - ${label}`;
+        }
+      };
+
+      ws.onerror = () => {
+        shotsStatusEl.textContent = 'Screenshots websocket error (retrying...)';
+      };
+
+      ws.onclose = () => {
+        if (shotsWs === ws) {
+          shotsWs = null;
+        }
+        if (activeTab === 'shots') {
+          shotsStatusEl.textContent = 'Screenshots websocket disconnected (retrying...)';
+          scheduleScreenshotsReconnect();
+        }
+      };
+    }
+
+    function disconnectScreenshotsSocket() {
+      if (shotsWsReconnectTimer) {
+        clearTimeout(shotsWsReconnectTimer);
+        shotsWsReconnectTimer = null;
+      }
+      if (shotsWs) {
+        const ws = shotsWs;
+        shotsWs = null;
+        try {
+          ws.close();
+        } catch (_) {}
+      }
+    }
+
+    async function startLive(sim, channel) {
+      const ac = new AbortController();
+      const t = setTimeout(() => ac.abort(), 12000);
+      try {
+        const res = await fetch('/api/live/start', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sim, channel }),
+          signal: ac.signal
+        });
+        if (!res.ok) {
+          throw new Error(`start-live failed (${res.status})`);
+        }
+      } finally {
+        clearTimeout(t);
+      }
+    }
+
+    function addFeed(sim, channel) {
+      const key = feedKey(sim, channel);
+      if (openFeeds.has(key)) return;
+
+      const box = document.createElement('div');
+      box.className = 'feed';
+      box.dataset.key = key;
+
+      const head = document.createElement('div');
+      head.className = 'feed-head';
+      head.innerHTML = `<span>${esc(sim)} - CH${channel}</span>`;
+
+      const closeBtn = document.createElement('button');
+      closeBtn.className = 'btn secondary';
+      closeBtn.textContent = 'Close';
+      closeBtn.onclick = () => {
+        clearInterval(fallbackTimer);
+        const rec = openFeeds.get(key);
+        if (rec && rec.img) rec.img.src = '';
+        openFeeds.delete(key);
+        box.remove();
+      };
+      head.appendChild(closeBtn);
+
+      const img = document.createElement('img');
+      img.alt = `${sim} CH${channel}`;
+      const liveUrls = [
+        `/api/live/mjpeg?sim=${encodeURIComponent(sim)}&channel=${channel}&autoStart=true&videoOnly=true&input=auto&t=${Date.now()}`,
+        `/api/live/mjpeg?sim=${encodeURIComponent(sim)}&channel=${channel}&autoStart=true&videoOnly=true&input=h264&t=${Date.now()}`,
+        `/api/live/mjpeg?sim=${encodeURIComponent(sim)}&channel=${channel}&autoStart=true&videoOnly=true&input=hevc&t=${Date.now()}`,
+        `/api/live/mjpeg?sim=${encodeURIComponent(sim)}&channel=${channel}&autoStart=true&videoOnly=true&input=mpeg&t=${Date.now()}`
+      ];
+      let liveIdx = 0;
+      img.src = liveUrls[liveIdx];
+      const nextFallback = () => {
+        if (liveIdx + 1 >= liveUrls.length) {
+          clearInterval(fallbackTimer);
+          return;
+        }
+        liveIdx += 1;
+        img.src = `${liveUrls[liveIdx]}&retry=${Date.now()}`;
+      };
+      img.addEventListener('error', nextFallback);
+      const fallbackTimer = setInterval(() => {
+        if (img.naturalWidth > 0 && img.naturalHeight > 0) {
+          clearInterval(fallbackTimer);
+          return;
+        }
+        nextFallback();
+      }, 7000);
+
+      const hint = document.createElement('div');
+      hint.className = 'hint';
+      hint.textContent = 'On-demand conversion only for selected feeds. Others continue raw packet storage.';
+
+      box.appendChild(head);
+      box.appendChild(img);
+      box.appendChild(hint);
+      feedsEl.prepend(box);
+      openFeeds.set(key, { box, img });
+    }
+
+    function clearFeeds() {
+      for (const rec of openFeeds.values()) {
+        if (rec.img) rec.img.src = '';
+      }
+      openFeeds.clear();
+      feedsEl.innerHTML = '';
+    }
+
+    function renderCaptureSummary(data) {
+      const ok = Number(data.successCount || 0);
+      const fail = Number(data.failureCount || 0);
+      const targets = Number(data.countTargets || 0);
+      const vehicles = Number(data.countVehicles || 0);
+      const runDir = data.runDirUrl || '';
+      const runId = data.runId || '-';
+      const rows = Array.isArray(data.results) ? data.results : [];
+      const sample = rows.slice(0, 12).map(row => {
+        if (row.ok) {
+          return `<li>${esc(row.vehicleId)} CH${row.channel}: <a href="${esc(row.fileUrl)}" target="_blank" rel="noopener">saved</a> (${row.bytes || 0} bytes, ${row.durationMs || 0}ms)</li>`;
+        }
+        return `<li>${esc(row.vehicleId)} CH${row.channel}: failed (${esc(row.error || 'unknown error')})</li>`;
+      }).join('');
+
+      captureInfoEl.innerHTML = `
+        <div><strong>Run:</strong> ${esc(runId)}</div>
+        <div><strong>Summary:</strong> vehicles=${vehicles}, targets=${targets}, success=${ok}, failure=${fail}</div>
+        <div><strong>Settings:</strong> concurrency=${esc(data.concurrency || '-')}, timeoutSec=${esc(data.timeoutSec || '-')}, fps=${esc(data.fps || '-')}, input=${esc(data.input || '-')}</div>
+        <div><strong>Output:</strong> <a href="${esc(runDir)}" target="_blank" rel="noopener">${esc(runDir)}</a></div>
+        <ul style="margin:8px 0 0 16px; padding:0;">${sample}</ul>
+      `;
+    }
+
+    async function captureAllScreenshots() {
+      captureAllBtn.disabled = true;
+      const previousLabel = captureAllBtn.textContent;
+      captureAllBtn.textContent = 'Capturing...';
+      captureInfoEl.textContent = 'Running bulk screenshot capture for all connected vehicles/channels...';
+      try {
+        const res = await fetch('/api/live/screenshots/all', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            mode: 'hub',
+            concurrency: 6,
+            timeoutSec: 12,
+            fps: 6,
+            input: 'auto',
+            videoOnly: true
+          })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          throw new Error(data.error || `HTTP ${res.status}`);
+        }
+        renderCaptureSummary(data);
+      } catch (err) {
+        captureInfoEl.textContent = `Bulk screenshot capture failed: ${err.message}`;
+      } finally {
+        captureAllBtn.disabled = false;
+        captureAllBtn.textContent = previousLabel;
+      }
+    }
+
+    function renderVehicles(vehicles) {
+      vehicleListEl.innerHTML = '';
+      for (const v of vehicles) {
+        const card = document.createElement('div');
+        card.className = 'vehicle';
+
+        const streamRows = (v.streams || []).map(s => {
+          const lastType = s.lastDataType ?? '-';
+          const lastPt = s.lastPayloadType ?? '-';
+          const age = s.lastSeenAgeSec == null ? 'n/a' : `${Math.round(s.lastSeenAgeSec)}s ago`;
+          return `
+            <div class="ch">
+              <span class="pill">CH${s.channel}</span>
+              ${streamBadge(s)}
+              <span class="meta">type=${lastType}, pt=${lastPt}, seen=${age}</span>
+              <button class="btn" data-sim="${esc(v.id)}" data-ch="${s.channel}">Watch</button>
+            </div>
+          `;
+        }).join('');
+
+        card.innerHTML = `
+          <div class="row">
+            <span class="id">${esc(v.id)}</span>
+            <span class="meta">active=${(v.activeStreams || []).join(',') || '-'}</span>
+          </div>
+          <div class="meta">phone=${esc(v.phone || '-')}</div>
+          ${streamRows}
+        `;
+        vehicleListEl.appendChild(card);
+      }
+
+      vehicleListEl.querySelectorAll('button[data-sim]').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const sim = btn.getAttribute('data-sim');
+          const ch = Number(btn.getAttribute('data-ch'));
+          btn.disabled = true;
+          btn.textContent = 'Starting...';
+          try {
+            await startLive(sim, ch);
+            addFeed(sim, ch);
+          } finally {
+            btn.disabled = false;
+            btn.textContent = 'Watch';
+          }
+        });
+      });
+    }
+
+    async function refreshVehicles() {
+      try {
+        const res = await fetch('/api/live/vehicles', { cache: 'no-store' });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        renderVehicles(data.vehicles || []);
+        statusEl.textContent = `${new Date().toLocaleTimeString()} - ${data.count || 0} vehicles`;
+      } catch (err) {
+        statusEl.textContent = `Error: ${err.message}`;
+      }
+    }
+
+    function fillChannelSelect(vehicle) {
+      histChannelEl.innerHTML = '';
+      if (!vehicle || !vehicle.channels || vehicle.channels.length === 0) {
+        const opt = document.createElement('option');
+        opt.value = '1';
+        opt.textContent = 'CH1';
+        histChannelEl.appendChild(opt);
+        return;
+      }
+      for (const ch of vehicle.channels) {
+        const opt = document.createElement('option');
+        opt.value = String(ch.channel);
+        opt.textContent = `CH${ch.channel}`;
+        histChannelEl.appendChild(opt);
+      }
+    }
+
+    function applyChannelRange(vehicle, channel) {
+      if (!vehicle || !vehicle.channels) return;
+      const found = vehicle.channels.find(c => Number(c.channel) === Number(channel));
+      if (!found) return;
+      histFromEl.value = toLocalInput(found.from || vehicle.from);
+      histToEl.value = toLocalInput(found.to || vehicle.to);
+      historyInfoEl.textContent = `Available: ${found.from || vehicle.from} to ${found.to || vehicle.to}`;
+    }
+
+    function updateSelectedVehicleUI() {
+      const sim = histVehicleEl.value;
+      const vehicle = historyMap.get(sim);
+      fillChannelSelect(vehicle);
+      const ch = Number(histChannelEl.value || 1);
+      applyChannelRange(vehicle, ch);
+    }
+
+    async function refreshHistoryVehicles() {
+      try {
+        const res = await fetch('/api/storage/vehicles?limit=5000', { cache: 'no-store' });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        const vehicles = Array.isArray(data.vehicles) ? data.vehicles : [];
+        historyMap.clear();
+        histVehicleEl.innerHTML = '';
+        for (const v of vehicles) {
+          historyMap.set(v.sim, v);
+          const opt = document.createElement('option');
+          opt.value = v.sim;
+          opt.textContent = `${v.sim} (to ${new Date(v.to).toLocaleString()})`;
+          histVehicleEl.appendChild(opt);
+        }
+        historyStatusEl.textContent = `${new Date().toLocaleTimeString()} - ${vehicles.length} stored vehicles`;
+        if (vehicles.length > 0) {
+          updateSelectedVehicleUI();
+        } else {
+          historyInfoEl.textContent = 'No stored vehicles found.';
+        }
+      } catch (err) {
+        historyStatusEl.textContent = `Error: ${err.message}`;
+      }
+    }
+
+    function setHistoryVideo(url, note) {
+      historyVideoEl.src = url;
+      historyVideoEl.load();
+      historyInfoEl.textContent = `${note}\n${url}`;
+    }
+
+    function playLatestForSelected() {
+      const sim = histVehicleEl.value;
+      if (!sim) return;
+      const channel = Number(histChannelEl.value || 1);
+      let minutes = Number(histMinutesEl.value || 10);
+      if (!Number.isFinite(minutes) || minutes < 1) minutes = 10;
+      if (minutes > 720) minutes = 720;
+      const url = `/api/playback/latest/mp4?sim=${encodeURIComponent(sim)}&channel=${channel}&minutes=${minutes}`;
+      setHistoryVideo(url, `Playing latest ${minutes}m for ${sim} CH${channel}`);
+    }
+
+    function playRangeForSelected() {
+      const sim = histVehicleEl.value;
+      if (!sim) return;
+      const channel = Number(histChannelEl.value || 1);
+      const from = localInputToRfc(histFromEl.value);
+      const to = localInputToRfc(histToEl.value);
+      if (!from || !to) {
+        historyInfoEl.textContent = 'Select valid From/To values first.';
+        return;
+      }
+      const url = `/api/playback/mp4?sim=${encodeURIComponent(sim)}&channel=${channel}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`;
+      setHistoryVideo(url, `Playing selected range for ${sim} CH${channel}`);
+    }
+
+    function playRandomVehicle() {
+      const options = Array.from(histVehicleEl.options || []);
+      if (options.length === 0) return;
+      const idx = Math.floor(Math.random() * options.length);
+      histVehicleEl.selectedIndex = idx;
+      updateSelectedVehicleUI();
+      playLatestForSelected();
+    }
+
+    refreshBtn.addEventListener('click', refreshVehicles);
+    clearBtn.addEventListener('click', clearFeeds);
+    captureAllBtn.addEventListener('click', captureAllScreenshots);
+    tabLiveBtn.addEventListener('click', () => setActiveTab('live'));
+    tabShotsBtn.addEventListener('click', () => setActiveTab('shots'));
+    shotsRefreshBtn.addEventListener('click', () => { void refreshScreenshots(); });
+    historyRefreshBtn.addEventListener('click', refreshHistoryVehicles);
+    randomBtn.addEventListener('click', playRandomVehicle);
+    histVehicleEl.addEventListener('change', updateSelectedVehicleUI);
+    histChannelEl.addEventListener('change', () => {
+      const sim = histVehicleEl.value;
+      const vehicle = historyMap.get(sim);
+      applyChannelRange(vehicle, Number(histChannelEl.value || 1));
+    });
+    playLatestBtn.addEventListener('click', playLatestForSelected);
+    playRangeBtn.addEventListener('click', playRangeForSelected);
+
+    refreshVehicles();
+    refreshHistoryVehicles();
+    setInterval(refreshVehicles, 5000);
+    setActiveTab('live');
+  </script>
+</body>
+</html>
+

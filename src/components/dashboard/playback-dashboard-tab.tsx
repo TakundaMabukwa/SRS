@@ -57,10 +57,14 @@ type AvailabilityChannelResponse = {
   channel?: number;
   clipCount?: number;
   clip_count?: number;
+  fileCount?: number;
+  file_count?: number;
   earliestTime?: string;
   earliest_time?: string;
   latestTime?: string;
   latest_time?: string;
+  from?: string;
+  to?: string;
   clips?: AvailabilityClipResponse[];
 };
 
@@ -91,6 +95,18 @@ type ParsedAvailableRange = {
   endIso: string;
 };
 
+type PlaybackCatalogRow = {
+  registration_number?: string | null;
+  fleet_number?: string | null;
+  camera_sim_id?: string | null;
+  camera_serial?: string | null;
+  make?: string | null;
+  model?: string | null;
+};
+
+const SOUTH_AFRICA_TIME_ZONE = "Africa/Johannesburg";
+const SOUTH_AFRICA_UTC_OFFSET_MINUTES = 2 * 60;
+
 function channelHasStoredFiles(entry?: PlaybackChannelAvailability | null) {
   if (!entry) return false;
   const clipCount = Number(entry.clipCount || 0);
@@ -101,12 +117,90 @@ function channelHasStoredFiles(entry?: PlaybackChannelAvailability | null) {
   return Number.isFinite(startMs) && Number.isFinite(endMs) && endMs >= startMs;
 }
 
-function buildCandidateVehicleIds(vehicle?: PlaybackVehicle | null, preferredId?: string | null): string[] {
-  const cameraSimId = String(vehicle?.cameraSimId || vehicle?.vehicleId || "").trim();
-  if (cameraSimId) return [cameraSimId];
+function buildVehicleLookupKeys(value: unknown): string[] {
+  const raw = String(value || "").trim();
+  if (!raw) return [];
+  const stripped = raw.replace(/[_-]+$/, "");
+  const variants = [raw, raw.toLowerCase(), stripped, stripped.toLowerCase()];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const key of variants) {
+    const normalized = String(key || "").trim();
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    out.push(normalized);
+  }
+  return out;
+}
 
-  const fallback = String(preferredId || "").trim();
-  return fallback ? [fallback] : [];
+function hasMatchedVehicleIdentity(vehicle: PlaybackVehicle | null | undefined) {
+  if (!vehicle) return false;
+  return Boolean(String(vehicle.vehicleRegistration || "").trim() || String(vehicle.fleetNumber || "").trim());
+}
+
+function getSouthAfricaDateTimeParts(date: Date) {
+  const formatter = new Intl.DateTimeFormat("en-GB", {
+    timeZone: SOUTH_AFRICA_TIME_ZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  });
+  const parts = formatter.formatToParts(date);
+  const byType = new Map(parts.map((part) => [part.type, part.value]));
+  return {
+    year: String(byType.get("year") || ""),
+    month: String(byType.get("month") || ""),
+    day: String(byType.get("day") || ""),
+    hour: String(byType.get("hour") || ""),
+    minute: String(byType.get("minute") || ""),
+    second: String(byType.get("second") || ""),
+  };
+}
+
+function formatDateInputValue(value?: string | null) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const parts = getSouthAfricaDateTimeParts(date);
+  if (!parts.year || !parts.month || !parts.day) return "";
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
+function southAfricaLocalToUtcMs(
+  year: number,
+  month: number,
+  day: number,
+  hours: number,
+  minutes: number,
+  seconds: number,
+  milliseconds = 0
+) {
+  const localAsUtc = Date.UTC(year, month - 1, day, hours, minutes, seconds, milliseconds);
+  return localAsUtc - SOUTH_AFRICA_UTC_OFFSET_MINUTES * 60 * 1000;
+}
+
+function buildCandidateVehicleIds(vehicle?: PlaybackVehicle | null, preferredId?: string | null): string[] {
+  const ordered = [
+    String(preferredId || "").trim(),
+    String(vehicle?.cameraSimId || "").trim(),
+    String(vehicle?.vehicleId || "").trim(),
+    ...((vehicle?.deviceIds || []).map((value) => String(value || "").trim())),
+    String(vehicle?.vehicleRegistration || "").trim(),
+    String(vehicle?.fleetNumber || "").trim(),
+  ];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const value of ordered) {
+    if (!value) continue;
+    if (seen.has(value)) continue;
+    seen.add(value);
+    out.push(value);
+  }
+  return out;
 }
 
 function formatDateTime(value?: string | null) {
@@ -114,18 +208,19 @@ function formatDateTime(value?: string | null) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "N/A";
   return `${date.toLocaleString(undefined, {
-    timeZone: "UTC",
+    timeZone: SOUTH_AFRICA_TIME_ZONE,
     hour12: false,
-  })} UTC`;
+  })} SAST`;
 }
 
 function formatTimeInputValue(value?: string | null) {
   if (!value) return "";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "";
-  const hours = String(date.getUTCHours()).padStart(2, "0");
-  const minutes = String(date.getUTCMinutes()).padStart(2, "0");
-  const seconds = String(date.getUTCSeconds()).padStart(2, "0");
+  const parts = getSouthAfricaDateTimeParts(date);
+  const hours = String(parts.hour || "").padStart(2, "0");
+  const minutes = String(parts.minute || "").padStart(2, "0");
+  const seconds = String(parts.second || "").padStart(2, "0");
   return `${hours}:${minutes}:${seconds}`;
 }
 
@@ -174,7 +269,7 @@ function combineDateAndTime(dateValue: string, timeValue: string) {
     return "";
   }
 
-  const ms = Date.UTC(year, month - 1, day, hours, minutes, seconds, 0);
+  const ms = southAfricaLocalToUtcMs(year, month, day, hours, minutes, seconds, 0);
   if (!Number.isFinite(ms)) return "";
   return new Date(ms).toISOString();
 }
@@ -186,8 +281,8 @@ function getUtcDayBounds(dateValue: string): { startMs: number; endMs: number } 
   const month = Number(match[2]);
   const day = Number(match[3]);
   if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) return null;
-  const startMs = Date.UTC(year, month - 1, day, 0, 0, 0, 0);
-  const endMs = Date.UTC(year, month - 1, day, 23, 59, 59, 999);
+  const startMs = southAfricaLocalToUtcMs(year, month, day, 0, 0, 0, 0);
+  const endMs = southAfricaLocalToUtcMs(year, month, day, 23, 59, 59, 999);
   if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) return null;
   return { startMs, endMs };
 }
@@ -352,7 +447,9 @@ export default function PlaybackDashboardTab() {
           signal: AbortSignal.timeout(timeoutMs),
         });
         const json = await res.json().catch(() => ({}));
-        if (!res.ok || !json?.success) {
+        const hasSuccessFlag = json && typeof json === "object" && Object.prototype.hasOwnProperty.call(json, "success");
+        const isSuccess = hasSuccessFlag ? Boolean((json as { success?: unknown }).success) : true;
+        if (!res.ok || !isSuccess) {
           throw new Error(json?.message || json?.error || `HTTP ${res.status}`);
         }
         return json;
@@ -366,30 +463,183 @@ export default function PlaybackDashboardTab() {
   }, []);
 
   const fetchVehicles = useCallback(async (): Promise<PlaybackVehicle[]> => {
+    const bySimId = new Map<string, PlaybackVehicle>();
+    type CatalogMeta = {
+      registration: string | null;
+      fleetNumber: string | null;
+      make: string | null;
+      model: string | null;
+      primaryId: string;
+      aliases: string[];
+    };
+    const catalogByLookup = new Map<string, CatalogMeta>();
+    const seedCatalogByKey = (key: string, meta: CatalogMeta) => {
+      for (const lookupKey of buildVehicleLookupKeys(key)) {
+        if (!catalogByLookup.has(lookupKey)) {
+          catalogByLookup.set(lookupKey, meta);
+        }
+      }
+    };
+
+    const toValidIso = (value: unknown) => {
+      const raw = String(value || "").trim();
+      if (!raw) return null;
+      const ms = new Date(raw).getTime();
+      return Number.isFinite(ms) ? new Date(ms).toISOString() : null;
+    };
+
     const { data: vehicleRows, error: vehiclesError } = await supabase
       .from("vehiclesc")
-      .select("registration_number, fleet_number, camera_sim_id, make, model");
+      .select("registration_number, fleet_number, camera_sim_id, camera_serial, make, model");
 
     if (vehiclesError) {
       throw new Error(vehiclesError.message || "Failed to load vehicles");
     }
 
-    const bySimId = new Map<string, PlaybackVehicle>();
+    for (const rawRow of vehicleRows || []) {
+      const row = rawRow as PlaybackCatalogRow;
+      const primaryId = String(row?.camera_sim_id || row?.camera_serial || "").trim();
+      if (!primaryId) continue;
+      const serialId = String(row?.camera_serial || "").trim();
+      const simId = String(row?.camera_sim_id || "").trim();
+      const aliases = [simId, serialId].filter(Boolean);
+      const meta: CatalogMeta = {
+        registration: String(row?.registration_number || "").trim() || null,
+        fleetNumber: String(row?.fleet_number || "").trim() || null,
+        make: String(row?.make || "").trim() || null,
+        model: String(row?.model || "").trim() || null,
+        primaryId,
+        aliases,
+      };
+      for (const alias of aliases) {
+        seedCatalogByKey(alias, meta);
+      }
+      seedCatalogByKey(primaryId, meta);
+    }
+
+    const lookupCatalog = (...values: unknown[]) => {
+      for (const value of values) {
+        for (const lookupKey of buildVehicleLookupKeys(value)) {
+          const found = catalogByLookup.get(lookupKey);
+          if (found) return found;
+        }
+      }
+      return null;
+    };
+
+    try {
+      const inventoryJson = await fetchJsonWithRetry(
+        `${videoProxyBase}/storage/vehicles?limit=5000`,
+        PLAYBACK_AVAILABILITY_TIMEOUT_MS,
+        1
+      );
+      const inventoryRecord = readRecord(inventoryJson);
+      const inventoryData = readRecord(inventoryRecord.data);
+      const inventoryRows = Array.isArray(inventoryRecord.vehicles)
+        ? inventoryRecord.vehicles
+        : Array.isArray(inventoryData.vehicles)
+          ? inventoryData.vehicles
+          : [];
+
+      for (const rawVehicle of inventoryRows) {
+        const row = readRecord(rawVehicle);
+        const simId = String(
+          row?.sim || row?.vehicleId || row?.vehicle_id || row?.camera_sim_id || row?.id || ""
+        ).trim();
+        if (!simId) continue;
+        const serialId = String(row?.camera_serial || row?.serial || "").trim();
+        const catalogMeta = lookupCatalog(simId, serialId);
+
+        const channelEntries = Array.isArray(row?.channels)
+          ? row.channels.map((entry) => readRecord(entry))
+          : [];
+        const channels = Array.from(
+          new Set(
+            channelEntries
+              .map((entry) => Number(entry?.channel || 0))
+              .filter((value) => Number.isFinite(value) && value > 0)
+          )
+        ).sort((a, b) => a - b);
+
+        const earliestCandidates = [
+          row?.from,
+          row?.earliestTime,
+          row?.first_packet_time,
+          ...channelEntries.map((entry) => entry?.from || entry?.earliestTime || entry?.first_packet_time),
+        ]
+          .map(toValidIso)
+          .filter((value): value is string => !!value);
+
+        const latestCandidates = [
+          row?.to,
+          row?.latestTime,
+          row?.last_packet_time,
+          ...channelEntries.map((entry) => entry?.to || entry?.latestTime || entry?.last_packet_time),
+        ]
+          .map(toValidIso)
+          .filter((value): value is string => !!value);
+
+        const clipCount = channelEntries.reduce((total, entry) => {
+          const next = Number(
+            entry?.clipCount ??
+              entry?.clip_count ??
+              entry?.fileCount ??
+              entry?.file_count ??
+              entry?.count ??
+              0
+          );
+          return total + (Number.isFinite(next) && next > 0 ? next : 0);
+        }, 0);
+
+        const deviceIds = Array.from(
+          new Set(
+            [
+              simId,
+              serialId,
+              ...(catalogMeta?.aliases || []),
+              String(row?.vehicleId || "").trim(),
+              String(row?.vehicle_id || "").trim(),
+            ]
+              .map((value) => String(value || "").trim())
+              .filter(Boolean)
+          )
+        );
+
+        bySimId.set(simId, {
+          vehicleId: simId,
+          deviceIds: deviceIds.length > 0 ? deviceIds : [simId],
+          cameraSimId: simId,
+          clipCount,
+          earliestTime: earliestCandidates.sort()[0] || null,
+          latestTime: latestCandidates.sort().slice(-1)[0] || null,
+          channels: channels.length > 0 ? channels : [1, 2],
+          vehicleRegistration: catalogMeta?.registration || null,
+          fleetNumber: catalogMeta?.fleetNumber || null,
+          make: catalogMeta?.make || null,
+          model: catalogMeta?.model || null,
+        });
+      }
+    } catch {
+      // Fall back to metadata inventory only if hub inventory is temporarily unavailable.
+    }
+
     for (const row of vehicleRows || []) {
-      const cameraSimId = String(row?.camera_sim_id || "").trim();
+      const catalogRow = row as PlaybackCatalogRow;
+      const cameraSimId = String(catalogRow?.camera_sim_id || catalogRow?.camera_serial || "").trim();
       if (!cameraSimId) continue;
 
-      const registration = String(row?.registration_number || "").trim();
-      const fleetNumber = String(row?.fleet_number || "").trim();
-      const make = String(row?.make || "").trim();
-      const model = String(row?.model || "").trim();
+      const registration = String(catalogRow?.registration_number || "").trim();
+      const fleetNumber = String(catalogRow?.fleet_number || "").trim();
+      const make = String(catalogRow?.make || "").trim();
+      const model = String(catalogRow?.model || "").trim();
+      const serialId = String(catalogRow?.camera_serial || "").trim();
       const existing = bySimId.get(cameraSimId);
 
       if (!existing) {
         bySimId.set(cameraSimId, {
           vehicleId: cameraSimId,
-          deviceIds: [cameraSimId],
-          cameraSimId: cameraSimId || null,
+          deviceIds: Array.from(new Set([cameraSimId, serialId].filter(Boolean))),
+          cameraSimId: cameraSimId,
           clipCount: 0,
           earliestTime: null,
           latestTime: null,
@@ -402,9 +652,11 @@ export default function PlaybackDashboardTab() {
         continue;
       }
 
-      existing.deviceIds = [cameraSimId];
-      existing.cameraSimId = cameraSimId;
-      existing.vehicleId = cameraSimId;
+      existing.deviceIds = Array.from(
+        new Set([cameraSimId, serialId, ...existing.deviceIds].map((value) => String(value || "").trim()).filter(Boolean))
+      );
+      existing.cameraSimId = existing.cameraSimId || cameraSimId;
+      existing.vehicleId = existing.vehicleId || cameraSimId;
       if (!existing.vehicleRegistration && registration) existing.vehicleRegistration = registration;
       if (!existing.fleetNumber && fleetNumber) existing.fleetNumber = fleetNumber;
       if (!existing.make && make) existing.make = make;
@@ -412,18 +664,21 @@ export default function PlaybackDashboardTab() {
       bySimId.set(cameraSimId, existing);
     }
 
-    const rowsByVehicle = Array.from(bySimId.values()).sort((a, b) =>
-      vehicleDisplayLabel(a).localeCompare(vehicleDisplayLabel(b))
-    );
+    const rowsByVehicle = Array.from(bySimId.values()).sort((a, b) => {
+      const aRank = hasMatchedVehicleIdentity(a) ? 0 : 1;
+      const bRank = hasMatchedVehicleIdentity(b) ? 0 : 1;
+      if (aRank !== bRank) return aRank - bRank;
+      return vehicleDisplayLabel(a).localeCompare(vehicleDisplayLabel(b));
+    });
 
     setVehicles(rowsByVehicle);
     return rowsByVehicle;
-  }, [supabase, vehicleDisplayLabel]);
+  }, [PLAYBACK_AVAILABILITY_TIMEOUT_MS, fetchJsonWithRetry, supabase, vehicleDisplayLabel, videoProxyBase]);
 
   const fetchAvailability = useCallback(async (vehicle: PlaybackVehicle, date: string) => {
     setAvailabilityLoading(true);
     try {
-      const candidateVehicleIds = buildCandidateVehicleIds(vehicle);
+      const candidateVehicleIds = buildCandidateVehicleIds(vehicle, resolvedVehicleId);
       const dayBounds = getUtcDayBounds(date);
       const dayStartMs = dayBounds?.startMs ?? Number.NaN;
       const dayEndMs = dayBounds?.endMs ?? Number.NaN;
@@ -444,12 +699,12 @@ export default function PlaybackDashboardTab() {
 
         if (channelsFromResponse.length > 0) {
           return channelsFromResponse
-            .map((entry: AvailabilityChannelResponse) => ({
-              channel: Number(entry?.channel || 0),
-              clipCount: Number(entry?.clipCount ?? entry?.clip_count ?? 0),
-              earliestTime: String(entry?.earliestTime || entry?.earliest_time || "").trim() || null,
-              latestTime: String(entry?.latestTime || entry?.latest_time || "").trim() || null,
-              clips: Array.isArray(entry?.clips)
+            .map((entry: AvailabilityChannelResponse) => {
+              const earliestTime =
+                String(entry?.earliestTime || entry?.earliest_time || entry?.from || "").trim() || null;
+              const latestTime =
+                String(entry?.latestTime || entry?.latest_time || entry?.to || "").trim() || null;
+              const normalizedClips = Array.isArray(entry?.clips)
                 ? entry.clips.map((clip: AvailabilityClipResponse, idx: number) => ({
                     id: String(clip?.id || `${candidateVehicleId}_${entry?.channel || 1}_${idx}`),
                     startTime: String(clip?.startTime || clip?.start_time || "").trim(),
@@ -458,8 +713,29 @@ export default function PlaybackDashboardTab() {
                     fileSize: Number(clip?.fileSize ?? clip?.file_size ?? 0) || undefined,
                     videoType: String(clip?.videoType || clip?.video_type || "").trim() || undefined,
                   }))
-                : [],
-            }))
+                : [];
+              const clips = normalizedClips.length > 0
+                ? normalizedClips
+                : earliestTime && latestTime
+                  ? [
+                      {
+                        id: `${candidateVehicleId}_${entry?.channel || 1}_window`,
+                        startTime: earliestTime,
+                        endTime: latestTime,
+                      },
+                    ]
+                  : [];
+              const clipCountCandidate = Number(
+                entry?.clipCount ?? entry?.clip_count ?? entry?.fileCount ?? entry?.file_count ?? 0
+              );
+              return {
+                channel: Number(entry?.channel || 0),
+                clipCount: Number.isFinite(clipCountCandidate) && clipCountCandidate > 0 ? clipCountCandidate : clips.length,
+                earliestTime,
+                latestTime,
+                clips,
+              };
+            })
             .filter((entry: PlaybackChannelAvailability) => Number.isFinite(entry.channel) && entry.channel > 0)
             .sort((a, b) => a.channel - b.channel);
         }
@@ -614,6 +890,39 @@ export default function PlaybackDashboardTab() {
       for (const candidateVehicleId of candidateVehicleIds) {
         if (Number.isFinite(dayStartMs) && Number.isFinite(dayEndMs)) {
           try {
+            const storageQuery = new URLSearchParams({
+              sim: candidateVehicleId,
+              from: new Date(dayStartMs).toISOString(),
+              to: new Date(dayEndMs).toISOString(),
+            });
+            const storageJson = await fetchJsonWithRetry(
+              `${videoProxyBase}/storage/availability?${storageQuery.toString()}`,
+              PLAYBACK_AVAILABILITY_TIMEOUT_MS,
+              0
+            );
+            hasSuccessfulResponse = true;
+            const storageChannels = parseAvailability(storageJson, candidateVehicleId).filter((entry) =>
+              channelHasStoredFiles(entry)
+            );
+            if (storageChannels.length > 0) {
+              setAvailability(storageChannels);
+              setResolvedVehicleId(candidateVehicleId);
+              const preferredChannel = storageChannels.find((entry) => channelHasStoredFiles(entry)) || storageChannels[0];
+              const nextChannel = Number(preferredChannel?.channel || 1);
+              setSelectedChannel(nextChannel);
+              const firstClip = preferredChannel?.clips?.[0];
+              const lastClip = preferredChannel?.clips?.[preferredChannel?.clips?.length - 1];
+              setStartTime(formatTimeInputValue(firstClip?.startTime || preferredChannel?.earliestTime));
+              setEndTime(formatTimeInputValue(lastClip?.endTime || lastClip?.startTime || preferredChannel?.latestTime));
+              return;
+            }
+          } catch (error) {
+            lastError = error;
+          }
+        }
+
+        if (Number.isFinite(dayStartMs) && Number.isFinite(dayEndMs)) {
+          try {
             const exactCoverageQuery = new URLSearchParams({
               from: new Date(dayStartMs).toISOString(),
               to: new Date(dayEndMs).toISOString(),
@@ -688,7 +997,7 @@ export default function PlaybackDashboardTab() {
     } finally {
       setAvailabilityLoading(false);
     }
-  }, [fetchJsonWithRetry, videoProxyBase]);
+  }, [fetchJsonWithRetry, resolvedVehicleId, videoProxyBase]);
 
   const refreshAll = useCallback(async () => {
     setRefreshing(true);
@@ -723,20 +1032,33 @@ export default function PlaybackDashboardTab() {
 
   const filteredVehicles = useMemo(() => {
     const needle = searchQuery.trim().toLowerCase();
-    if (!needle) return vehicles;
-    return vehicles.filter((vehicle) =>
-      [
-        vehicle.vehicleId,
-        ...(vehicle.deviceIds || []),
-        vehicle.fleetNumber,
-        vehicle.vehicleRegistration,
-        vehicleDisplayLabel(vehicle),
-        vehicle.make,
-        vehicle.model,
-      ]
-        .map((value) => String(value || "").toLowerCase())
-        .some((value) => value.includes(needle))
-    );
+
+    const getMatchRank = (vehicle: PlaybackVehicle) => {
+      const reg = String(vehicle.vehicleRegistration || "").trim().toLowerCase();
+      const fleet = String(vehicle.fleetNumber || "").trim().toLowerCase();
+      const display = String(vehicleDisplayLabel(vehicle) || "").trim().toLowerCase();
+      const id = String(vehicle.vehicleId || "").trim().toLowerCase();
+      const aliases = (vehicle.deviceIds || []).map((value) => String(value || "").trim().toLowerCase());
+
+      if (!needle) return hasMatchedVehicleIdentity(vehicle) ? 0 : 1;
+      if (reg === needle || fleet === needle) return 0;
+      if (reg.startsWith(needle) || fleet.startsWith(needle)) return 1;
+      if (reg.includes(needle) || fleet.includes(needle)) return 2;
+      if (display.includes(needle)) return 3;
+      if (id.includes(needle) || aliases.some((value) => value.includes(needle))) return 4;
+      return 99;
+    };
+
+    return vehicles
+      .filter((vehicle) => getMatchRank(vehicle) < 99)
+      .sort((a, b) => {
+        const rankDiff = getMatchRank(a) - getMatchRank(b);
+        if (rankDiff !== 0) return rankDiff;
+        const aIdentityRank = hasMatchedVehicleIdentity(a) ? 0 : 1;
+        const bIdentityRank = hasMatchedVehicleIdentity(b) ? 0 : 1;
+        if (aIdentityRank !== bIdentityRank) return aIdentityRank - bIdentityRank;
+        return vehicleDisplayLabel(a).localeCompare(vehicleDisplayLabel(b));
+      });
   }, [searchQuery, vehicleDisplayLabel, vehicles]);
 
   const canonicalSelectedVehicle = useMemo(() => {
@@ -902,108 +1224,56 @@ export default function PlaybackDashboardTab() {
     labelStart: string,
     labelEnd: string
   ): Promise<PlaybackItem> => {
-    let lastError: unknown = null;
-
-    for (const vehicleId of candidateVehicleIds) {
-      const query = new URLSearchParams({
-        from: startIso,
-        to: endIso,
-      });
-      try {
-        const parsePlayableChannel = (json: unknown, preferredChannel: number) => {
-          const payload = readRecord(json);
-          const channels = Array.isArray(payload.channels)
-            ? payload.channels
-            : Array.isArray(readRecord(payload.data).channels)
-              ? (readRecord(payload.data).channels as unknown[])
-              : [];
-
-          const normalizeChannel = (entry: unknown) => readRecord(entry);
-          const preferred = channels
-            .map(normalizeChannel)
-            .find(
-              (entry) =>
-                Number(entry?.channel || 0) === Number(preferredChannel) &&
-                Boolean(entry?.success)
-            );
-          const firstSuccessful = channels.map(normalizeChannel).find((entry) => Boolean(entry?.success));
-          const picked = preferred || firstSuccessful;
-          if (!picked) return null;
-
-          const sourceUrl = String(
-            picked?.playUrl ||
-              picked?.mp4Url ||
-              picked?.playUrlAbsolute ||
-              picked?.mp4UrlAbsolute ||
-              ""
-          ).trim();
-          if (!sourceUrl) return null;
-
-          return {
-            channel: Number(picked?.channel || preferredChannel),
-            sourceUrl,
-          };
-        };
-
-        const channelScopedUrl = `${videoProxyBase}/vehicles/${encodeURIComponent(vehicleId)}/video/${encodeURIComponent(String(channel))}?${query.toString()}`;
-        const channelScopedRes = await fetch(channelScopedUrl, { cache: "no-store" });
-        const channelScopedJson = await channelScopedRes.json().catch(() => ({}));
-        if (channelScopedRes.ok && channelScopedJson?.success) {
-          const scopedPlayable = parsePlayableChannel(channelScopedJson, channel);
-          if (scopedPlayable) {
-            setResolvedVehicleId(vehicleId);
-            return {
-              channel: scopedPlayable.channel,
-              url: normalizeBackendMediaUrl(scopedPlayable.sourceUrl, videoProxyBase),
-              label: `${vehicleLabel} CH${scopedPlayable.channel} ${labelStart} - ${labelEnd}`,
-            };
-          }
-        }
-
-        const channelAgnosticUrl = `${videoProxyBase}/vehicles/${encodeURIComponent(vehicleId)}/video?${query.toString()}`;
-        const channelAgnosticRes = await fetch(channelAgnosticUrl, { cache: "no-store" });
-        const channelAgnosticJson = await channelAgnosticRes.json().catch(() => ({}));
-        if (channelAgnosticRes.ok && channelAgnosticJson?.success) {
-          const fallbackPlayable = parsePlayableChannel(channelAgnosticJson, channel);
-          if (fallbackPlayable) {
-            setResolvedVehicleId(vehicleId);
-            return {
-              channel: fallbackPlayable.channel,
-              url: normalizeBackendMediaUrl(fallbackPlayable.sourceUrl, videoProxyBase),
-              label: `${vehicleLabel} CH${fallbackPlayable.channel} ${labelStart} - ${labelEnd}`,
-            };
-          }
-        }
-
-        const channelScopedMessage =
-          String(channelScopedJson?.message || "").trim() ||
-          String(
-            Array.isArray(channelScopedJson?.channels)
-              ? channelScopedJson.channels
-                  .map((entry: { message?: string }) => String(entry?.message || "").trim())
-                  .find(Boolean) || ""
-              : ""
-          );
-        const channelAgnosticMessage =
-          String(channelAgnosticJson?.message || "").trim() ||
-          String(
-            Array.isArray(channelAgnosticJson?.channels)
-              ? channelAgnosticJson.channels
-                  .map((entry: { message?: string }) => String(entry?.message || "").trim())
-                  .find(Boolean) || ""
-              : ""
-          );
-        const failureMessage =
-          channelScopedMessage ||
-          channelAgnosticMessage ||
-          `No playable video for CH${channel} in that range.`;
-        throw new Error(failureMessage);
-      } catch (error) {
-        lastError = error;
-      }
+    const vehicleId = String(candidateVehicleIds[0] || "").trim();
+    if (!vehicleId) {
+      throw new Error(`No vehicle id available for CH${channel} playback.`);
     }
 
-    throw lastError || new Error(`No playable video for CH${channel} in that range.`);
+    const query = new URLSearchParams({
+      sim: vehicleId,
+      channel: String(channel),
+      from: startIso,
+      to: endIso,
+      includeAudio: "false",
+      input: "auto",
+    });
+    const playbackUrl = `${videoProxyBase}/playback/mp4?${query.toString()}`;
+    try {
+      const probe = await fetch(playbackUrl, {
+        method: "GET",
+        headers: {
+          range: "bytes=0-1",
+        },
+        cache: "no-store",
+        signal: AbortSignal.timeout(12000),
+      });
+
+      const contentType = String(probe.headers.get("content-type") || "").toLowerCase();
+      if (!probe.ok) {
+        let message = `Playback probe failed for CH${channel} (HTTP ${probe.status}).`;
+        if (contentType.includes("application/json")) {
+          const payload = await probe.json().catch(() => ({}));
+          message = String(payload?.message || payload?.error || message).trim() || message;
+        }
+        throw new Error(message);
+      }
+
+      if (contentType.includes("application/json")) {
+        const payload = await probe.json().catch(() => ({}));
+        throw new Error(
+          String(payload?.message || payload?.error || `No playable video for CH${channel} in selected range.`)
+        );
+      }
+    } catch (error) {
+      throw new Error(errorMessage(error, `No playable video for CH${channel} in selected range.`));
+    }
+
+    setResolvedVehicleId(vehicleId);
+    return {
+      channel,
+      url: playbackUrl,
+      label: `${vehicleLabel} CH${channel} ${labelStart} - ${labelEnd}`,
+    };
   }, [videoProxyBase]);
 
   const requestPlayback = useCallback(async () => {
@@ -1047,7 +1317,7 @@ export default function PlaybackDashboardTab() {
         )
       );
       setPlaybackItems(items);
-      setRangeSummary(`${selectedDate} ${startTime} - ${endTime} UTC`);
+      setRangeSummary(`${formatDateTime(startIso)} - ${formatDateTime(endIso)}`);
       setPlaybackState("ready");
     } catch (error: unknown) {
       setPlaybackState("error");
@@ -1115,7 +1385,7 @@ export default function PlaybackDashboardTab() {
         )
       );
       setPlaybackItems(items);
-      setRangeSummary(`${selectedDate} ${nextStart} - ${nextEnd} UTC`);
+      setRangeSummary(`${formatDateTime(startIso)} - ${formatDateTime(endIso)}`);
       setPlaybackState("ready");
     } catch (error: unknown) {
       setPlaybackState("error");
@@ -1173,8 +1443,7 @@ export default function PlaybackDashboardTab() {
                   const first = filteredVehicles[0];
                   setSelectedVehicle(first);
                   setResolvedVehicleId(first.cameraSimId || first.vehicleId);
-                  const latest = first.latestTime ? new Date(first.latestTime) : new Date();
-                  const nextDate = latest.toISOString().slice(0, 10);
+                  const nextDate = formatDateInputValue(first.latestTime || new Date().toISOString());
                   setSelectedDate(nextDate);
                   setAvailability([]);
                   setPlaybackState("idle");
@@ -1220,8 +1489,7 @@ export default function PlaybackDashboardTab() {
                             onClick={() => {
                               setSelectedVehicle(vehicle);
                               setResolvedVehicleId(vehicle.cameraSimId || vehicle.vehicleId);
-                              const latest = vehicle.latestTime ? new Date(vehicle.latestTime) : new Date();
-                              const nextDate = latest.toISOString().slice(0, 10);
+                              const nextDate = formatDateInputValue(vehicle.latestTime || new Date().toISOString());
                               setSelectedDate(nextDate);
                               setAvailability([]);
                               setPlaybackState("idle");
@@ -1261,7 +1529,7 @@ export default function PlaybackDashboardTab() {
 
               <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
                 <label className="space-y-1">
-                  <span className="text-xs font-medium text-slate-600">Date</span>
+                  <span className="text-xs font-medium text-slate-600">Date (SAST)</span>
                   <div className="relative">
                     <Calendar className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
                     <input
@@ -1293,7 +1561,7 @@ export default function PlaybackDashboardTab() {
                 </label>
 
                 <label className="space-y-1">
-                  <span className="text-xs font-medium text-slate-600">Start Time</span>
+                  <span className="text-xs font-medium text-slate-600">Start Time (SAST)</span>
                   <div className="relative">
                     <Clock3 className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
                     <input
@@ -1307,7 +1575,7 @@ export default function PlaybackDashboardTab() {
                 </label>
 
                 <label className="space-y-1">
-                  <span className="text-xs font-medium text-slate-600">End Time</span>
+                  <span className="text-xs font-medium text-slate-600">End Time (SAST)</span>
                   <div className="relative">
                     <Clock3 className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
                     <input
