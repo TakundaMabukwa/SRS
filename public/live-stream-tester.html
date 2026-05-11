@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Live Stream Tester</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        background: #0b1220;
+        color: #e6edf7;
+        margin: 0;
+        padding: 16px;
+      }
+      .panel {
+        background: #121c2f;
+        border: 1px solid #2a3a57;
+        border-radius: 10px;
+        padding: 12px;
+        margin-bottom: 12px;
+      }
+      .row {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      input, button, select {
+        border: 1px solid #33507d;
+        background: #0f1727;
+        color: #e6edf7;
+        border-radius: 8px;
+        padding: 8px 10px;
+      }
+      button {
+        cursor: pointer;
+      }
+      button:hover {
+        background: #17233a;
+      }
+      #status {
+        font-weight: 700;
+      }
+      #preview {
+        width: 100%;
+        max-width: 980px;
+        aspect-ratio: 16 / 9;
+        object-fit: cover;
+        background: #000;
+        border: 1px solid #2a3a57;
+        border-radius: 10px;
+      }
+      #log {
+        height: 220px;
+        overflow: auto;
+        white-space: pre-wrap;
+        background: #0b1220;
+        border: 1px solid #2a3a57;
+        border-radius: 10px;
+        padding: 10px;
+        font-family: Consolas, monospace;
+        font-size: 12px;
+      }
+      .hint {
+        color: #a8bbd8;
+        font-size: 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="panel">
+      <h2 style="margin: 0 0 10px">Live Stream Tester</h2>
+      <div class="row">
+        <input id="sim" placeholder="SIM / Vehicle ID" value="221085851136" />
+        <select id="channel">
+          <option value="1" selected>CH1</option>
+          <option value="2">CH2</option>
+        </select>
+        <input id="fallbackIds" placeholder="Fallback IDs (comma-separated)" />
+        <button id="start">Start + Wait Ready + Play</button>
+        <button id="snapshot">Snapshot</button>
+        <button id="stop">Clear</button>
+      </div>
+      <p class="hint">
+        Flow: start-live, poll /api/video-server/live/ready, then attach /api/video-server/vehicles/:id/live.mjpeg
+      </p>
+      <p id="status">Idle</p>
+    </div>
+
+    <div class="panel">
+      <img id="preview" alt="Live preview" />
+    </div>
+
+    <div class="panel">
+      <div id="log"></div>
+    </div>
+
+    <script>
+      const el = (id) => document.getElementById(id);
+      const simEl = el("sim");
+      const channelEl = el("channel");
+      const fallbackIdsEl = el("fallbackIds");
+      const statusEl = el("status");
+      const previewEl = el("preview");
+      const logEl = el("log");
+
+      let currentToken = 0;
+
+      function nowIso() {
+        return new Date().toISOString();
+      }
+
+      function log(message, data) {
+        const line = `[${nowIso()}] ${message}${data ? " " + JSON.stringify(data) : ""}`;
+        logEl.textContent = `${line}\n${logEl.textContent}`.slice(0, 40000);
+      }
+
+      function setStatus(text) {
+        statusEl.textContent = text;
+      }
+
+      function getInputs() {
+        const sim = String(simEl.value || "").trim();
+        const channel = Number(channelEl.value || 1) || 1;
+        const fallbackIds = String(fallbackIdsEl.value || "").trim();
+        return { sim, channel, fallbackIds };
+      }
+
+      async function startLive(sim, channel) {
+        const response = await fetch(`/api/video-server/vehicles/${encodeURIComponent(sim)}/start-live`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ channel }),
+        });
+        const body = await response.json().catch(() => ({}));
+        log("start-live", { status: response.status, ok: response.ok, body });
+        return response.ok;
+      }
+
+      async function waitReady(sim, channel, fallbackIds, token) {
+        const deadline = Date.now() + 15000;
+        while (Date.now() < deadline && token === currentToken) {
+          const qs = new URLSearchParams({
+            sim,
+            channel: String(channel),
+            maxAgeMs: "20000",
+          });
+          if (fallbackIds) qs.set("fallbackIds", fallbackIds);
+          const response = await fetch(`/api/video-server/live/ready?${qs.toString()}`, { cache: "no-store" });
+          const body = await response.json().catch(() => ({}));
+          log("ready-check", { status: response.status, body });
+          if (response.ok && body && body.ready === true) {
+            return true;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 900));
+        }
+        return false;
+      }
+
+      function buildMjpegUrl(sim, channel, fallbackIds) {
+        const qs = new URLSearchParams({
+          channel: String(channel),
+          waitMs: "2500",
+          maxAgeMs: "20000",
+          autoStart: "true",
+          videoOnly: "true",
+          input: "auto",
+          fps: "8",
+          _ts: String(Date.now()),
+        });
+        if (fallbackIds) qs.set("fallbackIds", fallbackIds);
+        return `/api/video-server/vehicles/${encodeURIComponent(sim)}/live.mjpeg?${qs.toString()}`;
+      }
+
+      function buildScreenshotUrl(sim, channel, fallbackIds) {
+        const qs = new URLSearchParams({
+          channel: String(channel),
+          maxAgeMs: "120000",
+          _ts: String(Date.now()),
+        });
+        if (fallbackIds) qs.set("fallbackIds", fallbackIds);
+        return `/api/video-server/vehicles/${encodeURIComponent(sim)}/screenshot?${qs.toString()}`;
+      }
+
+      el("start").addEventListener("click", async () => {
+        const { sim, channel, fallbackIds } = getInputs();
+        if (!sim) {
+          setStatus("Enter a SIM/vehicle ID.");
+          return;
+        }
+
+        currentToken += 1;
+        const token = currentToken;
+        previewEl.removeAttribute("src");
+
+        setStatus(`Starting stream ${sim} CH${channel}...`);
+        const started = await startLive(sim, channel);
+        if (!started && token === currentToken) {
+          setStatus("start-live failed.");
+          return;
+        }
+
+        setStatus("Waiting for ready state...");
+        const ready = await waitReady(sim, channel, fallbackIds, token);
+        if (!ready && token === currentToken) {
+          setStatus("Ready timeout; stream not warm yet.");
+          return;
+        }
+        if (token !== currentToken) return;
+
+        const mjpegUrl = buildMjpegUrl(sim, channel, fallbackIds);
+        log("attach-mjpeg", { url: mjpegUrl });
+        previewEl.src = mjpegUrl;
+        setStatus("Attached MJPEG stream.");
+      });
+
+      el("snapshot").addEventListener("click", async () => {
+        const { sim, channel, fallbackIds } = getInputs();
+        if (!sim) return;
+        const url = buildScreenshotUrl(sim, channel, fallbackIds);
+        log("attach-screenshot", { url });
+        previewEl.src = url;
+        setStatus("Snapshot mode.");
+      });
+
+      el("stop").addEventListener("click", () => {
+        currentToken += 1;
+        previewEl.removeAttribute("src");
+        setStatus("Cleared.");
+      });
+
+      previewEl.addEventListener("load", () => {
+        setStatus("Frames received.");
+      });
+
+      previewEl.addEventListener("error", () => {
+        setStatus("Image load error.");
+      });
+    </script>
+  </body>
+</html>

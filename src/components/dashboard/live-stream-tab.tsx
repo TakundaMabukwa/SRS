@@ -69,7 +69,6 @@ type StreamEntry = {
   vehicleName: string;
 };
 
-const LIVE_REFRESH_INTERVAL_MS = 10000;
 const RUNTIME_HEARTBEAT_GRACE_MS = 3 * 60 * 1000;
 const RUNTIME_SNAPSHOT_GRACE_MS = 2 * 60 * 1000;
 
@@ -644,13 +643,8 @@ export default function LiveStreamTab() {
     void fetchConnectedVehicles();
   }, [fetchConnectedVehicles]);
 
-  useEffect(() => {
-    const timer = setInterval(() => {
-      void fetchConnectedVehicles({ background: true });
-    }, LIVE_REFRESH_INTERVAL_MS);
-
-    return () => clearInterval(timer);
-  }, [fetchConnectedVehicles]);
+  // Intentionally no background polling:
+  // load once on page open, then only refresh when user clicks Refresh.
 
   useEffect(() => {
     setSelectedVehicles((previous) => {

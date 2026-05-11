@@ -11,16 +11,16 @@ interface HLSPlayerProps {
   fallbackVehicleIds?: string[];
 }
 
-const PREVIEW_WAIT_MS = 1200;
-const PREVIEW_MAX_AGE_MS = 12000;
-const PREVIEW_READY_TIMEOUT_MS = 3500;
-const PREVIEW_READY_POLL_MS = 450;
-const PREVIEW_RETRY_DELAY_MS = 1800;
-const MJPEG_FIRST_FRAME_DEADLINE_MS = 3200;
-const MJPEG_RECOVERY_RETRY_MS = 5000;
+// Stability mode: allow older frames (up to ~15s) to avoid constant reconnect churn.
+const PREVIEW_WAIT_MS = 2500;
+const PREVIEW_MAX_AGE_MS = 15000;
+const PREVIEW_READY_TIMEOUT_MS = 7000;
+const PREVIEW_READY_POLL_MS = 800;
+const PREVIEW_RETRY_DELAY_MS = 5000;
+const MJPEG_FIRST_FRAME_DEADLINE_MS = 15000;
 const SCREENSHOT_MAX_AGE_MS = 120000;
-const SCREENSHOT_REFRESH_MS = 2500;
-const START_LIVE_THROTTLE_MS = 6000;
+const SCREENSHOT_REFRESH_MS = 5000;
+const START_LIVE_THROTTLE_MS = 12000;
 
 type PreviewMode = 'mjpeg' | 'screenshot';
 
@@ -277,16 +277,11 @@ export default function HLSPlayer({
 
   useEffect(() => {
     if (mode !== 'screenshot') return;
-    const retryTimer = setInterval(() => {
-      setMjpegReady(false);
-      setMjpegAttached(true);
-      setMode('mjpeg');
-      setStatus('Retrying live stream...');
-      setReloadToken((value) => value + 1);
+    // Keep requesting live start in the background without forcing UI reloads.
+    const keepAliveTimer = setInterval(() => {
       void startLive();
-    }, MJPEG_RECOVERY_RETRY_MS);
-
-    return () => clearInterval(retryTimer);
+    }, START_LIVE_THROTTLE_MS);
+    return () => clearInterval(keepAliveTimer);
   }, [mode, startLive]);
 
   const handleMjpegLoaded = () => {
@@ -318,13 +313,14 @@ export default function HLSPlayer({
   };
 
   const handleSnapshotError = () => {
-    void captureFreezeFrame(previewImgRef.current);
+    const captured = captureFreezeFrame(previewImgRef.current);
+    const hasFrame = captured || !!frozenFrameUrl;
     setShowFrozenFrame(true);
     if (tryNextCandidate('Retrying listener stream with alternate id...')) {
       return;
     }
-    setStatus('Connection unstable, showing last frame...');
-    setError(true);
+    setStatus(hasFrame ? 'Waiting for frame... showing last frame' : 'Live preview unavailable');
+    setError(!hasFrame);
   };
 
   useEffect(() => {
@@ -404,7 +400,7 @@ export default function HLSPlayer({
           </div>
         )}
 
-        {!error && !isStreaming && (
+        {!error && !isStreaming && !hasFrozenFrame && (
           <div className="absolute inset-0 flex items-center justify-center">
             <div className="text-center text-slate-400">
               <Loader2 className="w-12 h-12 mx-auto mb-2 animate-spin" />
@@ -415,7 +411,7 @@ export default function HLSPlayer({
 
         {hasFrozenFrame && (
           <div className="absolute left-2 top-2 z-20 rounded bg-slate-950/75 px-2 py-1 text-[10px] text-amber-300">
-            Reconnecting... showing last frame
+            Waiting for frame... showing last frame
           </div>
         )}
       </div>
