@@ -218,6 +218,41 @@ export default function DriverPerformanceDashboard() {
     })
   }, [drivers, searchTerm])
 
+  const summary = useMemo(() => {
+    if (drivers.length === 0) {
+      return {
+        fleetSafetyScore: 0,
+        highRiskCount: 0,
+        speedingTotal: 0,
+        pendingNcrs: 0,
+        totalVehicles: 0,
+      }
+    }
+
+    let totalPoints = 0
+    let highRiskCount = 0
+    let speedingTotal = 0
+    let pendingNcrs = 0
+
+    for (const driver of drivers) {
+      totalPoints += toNumber(driver.currentPoints, 100)
+      const riskCategory = String(driver.scores.riskCategory || '').trim().toLowerCase()
+      if (riskCategory === 'high risk') {
+        highRiskCount++
+      }
+      speedingTotal += toNumber(driver.violations.speeding)
+      pendingNcrs += toNumber(driver.ncrOpen)
+    }
+
+    return {
+      fleetSafetyScore: Math.round(totalPoints / drivers.length),
+      highRiskCount,
+      speedingTotal,
+      pendingNcrs,
+      totalVehicles: drivers.length,
+    }
+  }, [drivers])
+
   const handleVehicleNcrSaved = useCallback(async (artifact?: SavedAlertArtifact) => {
     if (!selectedVehicle || !artifact) {
       setShowVehicleNcrModal(false)
@@ -263,7 +298,7 @@ export default function DriverPerformanceDashboard() {
     <div className="space-y-6">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
         <div>
-          <h2 className="text-2xl font-bold">Vehicle Performance Profiles</h2>
+          <h2 className="text-2xl font-bold">Driver Safety Scorecard</h2>
           <p className="text-muted-foreground">Current month standings based on alert activity and linked NCR readiness</p>
         </div>
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
@@ -285,6 +320,40 @@ export default function DriverPerformanceDashboard() {
             </SelectContent>
           </Select>
         </div>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <Card className="border-l-4 border-l-green-500">
+          <CardContent className="p-4">
+            <div className="text-sm text-slate-500">Fleet Safety Score</div>
+            <div className="mt-2 text-3xl font-bold text-slate-900">
+              {summary.fleetSafetyScore}
+              <span className="ml-1 text-sm font-normal text-slate-500">/100</span>
+            </div>
+            <div className="mt-1 text-xs text-slate-500">{summary.totalVehicles} vehicles</div>
+          </CardContent>
+        </Card>
+        <Card className="border-l-4 border-l-red-500">
+          <CardContent className="p-4">
+            <div className="text-sm text-slate-500">High Risk Vehicles</div>
+            <div className="mt-2 text-3xl font-bold text-red-700">{summary.highRiskCount}</div>
+            <div className="mt-1 text-xs text-slate-500">Risk category = High Risk</div>
+          </CardContent>
+        </Card>
+        <Card className="border-l-4 border-l-orange-500">
+          <CardContent className="p-4">
+            <div className="text-sm text-slate-500">Speeding Violations</div>
+            <div className="mt-2 text-3xl font-bold text-orange-700">{summary.speedingTotal}</div>
+            <div className="mt-1 text-xs text-slate-500">Month-to-date total</div>
+          </CardContent>
+        </Card>
+        <Card className="border-l-4 border-l-purple-500">
+          <CardContent className="p-4">
+            <div className="text-sm text-slate-500">Pending NCRs</div>
+            <div className="mt-2 text-3xl font-bold text-purple-700">{summary.pendingNcrs}</div>
+            <div className="mt-1 text-xs text-slate-500">Open NCR records</div>
+          </CardContent>
+        </Card>
       </div>
 
       {isLoading ? (
