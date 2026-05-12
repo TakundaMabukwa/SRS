@@ -20,6 +20,7 @@ type PlaybackVehicle = {
   fleetNumber?: string | null;
   make?: string | null;
   model?: string | null;
+  costCenter?: string | null;
 };
 
 type PlaybackClip = {
@@ -102,6 +103,7 @@ type PlaybackCatalogRow = {
   camera_serial?: string | null;
   make?: string | null;
   model?: string | null;
+  cost_center?: string | null;
 };
 
 const SOUTH_AFRICA_TIME_ZONE = "Africa/Johannesburg";
@@ -136,6 +138,19 @@ function buildVehicleLookupKeys(value: unknown): string[] {
 function hasMatchedVehicleIdentity(vehicle: PlaybackVehicle | null | undefined) {
   if (!vehicle) return false;
   return Boolean(String(vehicle.vehicleRegistration || "").trim() || String(vehicle.fleetNumber || "").trim());
+}
+
+function normalizeCostCenter(value: unknown): string {
+  return String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function matchesCostCenterFilter(costCenter: string | null | undefined, selectedCostCenters: Set<string>) {
+  if (selectedCostCenters.size === 0) return true;
+  const normalized = normalizeCostCenter(costCenter);
+  if (!normalized) {
+    return selectedCostCenters.has("unassigned");
+  }
+  return selectedCostCenters.has(normalized);
 }
 
 function getSouthAfricaDateTimeParts(date: Date) {
@@ -416,7 +431,11 @@ function PlaybackVideoPlayer({
   );
 }
 
-export default function PlaybackDashboardTab() {
+type PlaybackDashboardTabProps = {
+  selectedCostCenters?: string[];
+};
+
+export default function PlaybackDashboardTab({ selectedCostCenters = [] }: PlaybackDashboardTabProps) {
   const videoProxyBase = "/api/video-server";
   const supabase = createClient();
   const [vehicles, setVehicles] = useState<PlaybackVehicle[]>([]);
@@ -481,6 +500,7 @@ export default function PlaybackDashboardTab() {
       fleetNumber: string | null;
       make: string | null;
       model: string | null;
+      costCenter: string | null;
       primaryId: string;
       aliases: string[];
     };
@@ -502,7 +522,7 @@ export default function PlaybackDashboardTab() {
 
     const { data: vehicleRows, error: vehiclesError } = await supabase
       .from("vehiclesc")
-      .select("registration_number, fleet_number, camera_sim_id, camera_serial, make, model");
+      .select("registration_number, fleet_number, camera_sim_id, camera_serial, make, model, cost_center");
 
     if (vehiclesError) {
       throw new Error(vehiclesError.message || "Failed to load vehicles");
@@ -520,6 +540,7 @@ export default function PlaybackDashboardTab() {
         fleetNumber: String(row?.fleet_number || "").trim() || null,
         make: String(row?.make || "").trim() || null,
         model: String(row?.model || "").trim() || null,
+        costCenter: String(row?.cost_center || "").trim() || null,
         primaryId,
         aliases,
       };
@@ -629,6 +650,7 @@ export default function PlaybackDashboardTab() {
           fleetNumber: catalogMeta?.fleetNumber || null,
           make: catalogMeta?.make || null,
           model: catalogMeta?.model || null,
+          costCenter: catalogMeta?.costCenter || null,
         });
       }
     } catch {
@@ -644,6 +666,7 @@ export default function PlaybackDashboardTab() {
       const fleetNumber = String(catalogRow?.fleet_number || "").trim();
       const make = String(catalogRow?.make || "").trim();
       const model = String(catalogRow?.model || "").trim();
+      const costCenter = String(catalogRow?.cost_center || "").trim();
       const serialId = String(catalogRow?.camera_serial || "").trim();
       const existing = bySimId.get(cameraSimId);
 
@@ -660,6 +683,7 @@ export default function PlaybackDashboardTab() {
           fleetNumber: fleetNumber || null,
           make: make || null,
           model: model || null,
+          costCenter: costCenter || null,
         });
         continue;
       }
@@ -673,6 +697,7 @@ export default function PlaybackDashboardTab() {
       if (!existing.fleetNumber && fleetNumber) existing.fleetNumber = fleetNumber;
       if (!existing.make && make) existing.make = make;
       if (!existing.model && model) existing.model = model;
+      if (!existing.costCenter && costCenter) existing.costCenter = costCenter;
       bySimId.set(cameraSimId, existing);
     }
 
@@ -1042,6 +1067,39 @@ export default function PlaybackDashboardTab() {
     void fetchAvailability(selectedVehicle, selectedDate);
   }, [fetchAvailability, selectedDate, selectedVehicle]);
 
+  const selectedCostCenterSet = useMemo(
+    () =>
+      new Set(
+        selectedCostCenters
+          .map((value) => normalizeCostCenter(value))
+          .filter(Boolean)
+      ),
+    [selectedCostCenters]
+  );
+
+  const scopedVehicles = useMemo(
+    () => vehicles.filter((vehicle) => matchesCostCenterFilter(vehicle.costCenter, selectedCostCenterSet)),
+    [selectedCostCenterSet, vehicles]
+  );
+
+  useEffect(() => {
+    if (!selectedVehicle) return;
+    const selectedId = String(selectedVehicle.vehicleId || "").trim();
+    const hasSelectedInScope = scopedVehicles.some((vehicle) => {
+      const vehicleId = String(vehicle.vehicleId || "").trim();
+      const vehicleSimId = String(vehicle.cameraSimId || "").trim();
+      return !!selectedId && (vehicleId === selectedId || vehicleSimId === selectedId);
+    });
+    if (!hasSelectedInScope) {
+      setSelectedVehicle(null);
+      setAvailability([]);
+      setPlaybackItems([]);
+      setPlaybackState("idle");
+      setPlaybackError("");
+      setRangeSummary("");
+    }
+  }, [scopedVehicles, selectedVehicle]);
+
   const filteredVehicles = useMemo(() => {
     const needle = searchQuery.trim().toLowerCase();
 
@@ -1061,7 +1119,7 @@ export default function PlaybackDashboardTab() {
       return 99;
     };
 
-    return vehicles
+    return scopedVehicles
       .filter((vehicle) => getMatchRank(vehicle) < 99)
       .sort((a, b) => {
         const rankDiff = getMatchRank(a) - getMatchRank(b);
@@ -1071,7 +1129,7 @@ export default function PlaybackDashboardTab() {
         if (aIdentityRank !== bIdentityRank) return aIdentityRank - bIdentityRank;
         return vehicleDisplayLabel(a).localeCompare(vehicleDisplayLabel(b));
       });
-  }, [searchQuery, vehicleDisplayLabel, vehicles]);
+  }, [scopedVehicles, searchQuery, vehicleDisplayLabel]);
 
   const canonicalSelectedVehicle = useMemo(() => {
     if (!selectedVehicle) return null;
@@ -1081,7 +1139,7 @@ export default function PlaybackDashboardTab() {
     const selectedFleet = String(selectedVehicle.fleetNumber || "").trim().toLowerCase();
 
     return (
-      vehicles.find((vehicle) => {
+      scopedVehicles.find((vehicle) => {
         const vehicleId = String(vehicle.vehicleId || "").trim();
         const vehicleSimId = String(vehicle.cameraSimId || "").trim();
         if (selectedId && (vehicleId === selectedId || vehicleSimId === selectedId)) return true;
@@ -1091,7 +1149,7 @@ export default function PlaybackDashboardTab() {
         return !!selectedReg && !!selectedFleet && vehicleReg === selectedReg && vehicleFleet === selectedFleet;
       }) || selectedVehicle
     );
-  }, [selectedVehicle, vehicles]);
+  }, [scopedVehicles, selectedVehicle]);
 
   const selectedChannelAvailability = useMemo(
     () => availability.find((entry) => Number(entry.channel) === Number(selectedChannel)) || null,

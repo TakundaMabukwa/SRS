@@ -77,6 +77,14 @@ import { cn } from "@/lib/utils";
 import { FuelGaugesView } from "@/components/fuelGauge/FuelGaugesView";
 import FuelCanBusDisplay from "@/components/FuelCanBusDisplay";
 import { DateTimePicker } from "@/components/ui/datetime-picker";
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line, Area, AreaChart } from 'recharts';
 import { EditTripModal } from "@/components/ui/edit-trip-modal";
 import { NCRTemplate } from '@/components/reports/ncr-template';
@@ -2813,6 +2821,8 @@ function TripReportsSection() {
 
 export default function Dashboard() {
   const [activeTab, setActiveTab] = useState<string>("video-alerts");
+  const [costCenterOptions, setCostCenterOptions] = useState<string[]>([]);
+  const [selectedCostCenters, setSelectedCostCenters] = useState<string[]>([]);
   const [auditData, setAuditData] = useState<any[]>([]);
   const [auditLoading, setAuditLoading] = useState(true);
   const [userRole, setUserRole] = useState<string>("");
@@ -2894,6 +2904,78 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
   const [selectedTripForIncident, setSelectedTripForIncident] = useState<any>(null);
   const [timelinePlaybackByAlert, setTimelinePlaybackByAlert] = useState<Record<string, Array<{ key: string; label: string; url: string }>>>({});
   const [timelinePlaybackLoading, setTimelinePlaybackLoading] = useState<Record<string, boolean>>({});
+  const normalizeCostCenter = useCallback((value: unknown) => {
+    return String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
+  }, []);
+  const toggleCostCenterFilter = useCallback((costCenter: string) => {
+    const normalizedTarget = normalizeCostCenter(costCenter);
+    if (!normalizedTarget) return;
+    setSelectedCostCenters((previous) => {
+      const exists = previous.some((value) => normalizeCostCenter(value) === normalizedTarget);
+      if (exists) {
+        return previous.filter((value) => normalizeCostCenter(value) !== normalizedTarget);
+      }
+      return [...previous, costCenter];
+    });
+  }, [normalizeCostCenter]);
+  useEffect(() => {
+    let active = true;
+    const loadCostCenters = async () => {
+      try {
+        const supabase = createClient();
+        const { data, error } = await supabase
+          .from("vehiclesc")
+          .select("cost_center");
+        if (error) {
+          throw error;
+        }
+
+        const byNormalized = new Map<string, string>();
+        let hasUnassigned = false;
+        for (const row of data || []) {
+          const raw = String((row as { cost_center?: string | null })?.cost_center || "").trim();
+          const normalized = normalizeCostCenter(raw);
+          if (!normalized) {
+            hasUnassigned = true;
+            continue;
+          }
+          if (!byNormalized.has(normalized)) {
+            byNormalized.set(normalized, raw);
+          }
+        }
+
+        const uniqueCostCenters = Array.from(byNormalized.values()).sort((left, right) =>
+          left.localeCompare(right, undefined, { sensitivity: "base" })
+        );
+        if (hasUnassigned) {
+          uniqueCostCenters.push("Unassigned");
+        }
+
+        if (active) {
+          setCostCenterOptions(uniqueCostCenters);
+        }
+      } catch (error) {
+        console.error("Failed to load cost center options:", error);
+        if (active) {
+          setCostCenterOptions([]);
+        }
+      }
+    };
+
+    void loadCostCenters();
+    return () => {
+      active = false;
+    };
+  }, [normalizeCostCenter]);
+  const selectedCostCenterSummary = useMemo(() => {
+    if (selectedCostCenters.length === 0) return "All Cost Centers";
+    if (selectedCostCenters.length === 1) return selectedCostCenters[0];
+    return `${selectedCostCenters.length} Cost Centers`;
+  }, [selectedCostCenters]);
+  const showCostCenterFilter = useMemo(
+    () => ["video-alerts", "screenshots", "playback", "live-stream"].includes(activeTab),
+    [activeTab]
+  );
   const alertReasonOptions = [
     "Accident",
     "Battery disconnect",
@@ -4753,6 +4835,44 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
           </Tabs>
         </div>
 
+        {showCostCenterFilter && (
+          <div className="mb-4 flex justify-end">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" className="h-9 min-w-[260px] justify-between border-slate-300 bg-white text-slate-700">
+                  <span className="flex items-center gap-2">
+                    <Building2 className="h-4 w-4" />
+                    {selectedCostCenterSummary}
+                  </span>
+                  <ChevronDown className="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-80 max-h-[24rem] overflow-y-auto">
+                <DropdownMenuLabel>Cost Center Filter</DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <DropdownMenuCheckboxItem
+                  checked={selectedCostCenters.length === 0}
+                  onSelect={(event) => event.preventDefault()}
+                  onCheckedChange={() => setSelectedCostCenters([])}
+                >
+                  All Cost Centers
+                </DropdownMenuCheckboxItem>
+                <DropdownMenuSeparator />
+                {costCenterOptions.map((costCenter) => (
+                  <DropdownMenuCheckboxItem
+                    key={costCenter}
+                    checked={selectedCostCenters.some((value) => normalizeCostCenter(value) === normalizeCostCenter(costCenter))}
+                    onSelect={(event) => event.preventDefault()}
+                    onCheckedChange={() => toggleCostCenterFilter(costCenter)}
+                  >
+                    {costCenter}
+                  </DropdownMenuCheckboxItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        )}
+
         {/* Conditionally render the main views */}
         {activeTab === "routing" && (
           <div className="space-y-4">
@@ -4803,15 +4923,19 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
         )}
 
         {activeTab === "video-alerts" && (
-          <VideoAlertsDashboardTab onOpenAlertDetail={openAlertDetailRealtime} suspendBackgroundWork={alertDetailModalOpen} />
+          <VideoAlertsDashboardTab
+            onOpenAlertDetail={openAlertDetailRealtime}
+            suspendBackgroundWork={alertDetailModalOpen}
+            selectedCostCenters={selectedCostCenters}
+          />
         )}
 
         {activeTab === "screenshots" && (
-          <ScreenshotsDashboardTab />
+          <ScreenshotsDashboardTab selectedCostCenters={selectedCostCenters} />
         )}
 
         {activeTab === "playback" && (
-          <PlaybackDashboardTab />
+          <PlaybackDashboardTab selectedCostCenters={selectedCostCenters} />
         )}
 
         {activeTab === "reports" && (
@@ -4827,7 +4951,7 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
         )}
 
         {activeTab === "live-stream" && (
-          <LiveStreamTab />
+          <LiveStreamTab selectedCostCenters={selectedCostCenters} />
         )}
 
         {activeTab === "financials" && (

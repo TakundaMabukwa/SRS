@@ -41,7 +41,7 @@ export async function GET(req: NextRequest) {
 
       const { data, error } = await supabase
         .from('vehiclesc')
-        .select('registration_number, fleet_number, make, model, camera_serial, camera_sim_id')
+        .select('registration_number, fleet_number, make, model, camera_serial, camera_sim_id, cost_center')
         .or(
           `camera_sim_id.in.(${deviceIds.join(',')}),camera_serial.in.(${deviceIds.join(',')})`
         );
@@ -61,27 +61,30 @@ export async function GET(req: NextRequest) {
           fleetNumber: string | null;
           make: string | null;
           model: string | null;
+          costCenter: string | null;
         }> = [];
 
         if (vehicle.camera_sim_id && deviceIds.includes(String(vehicle.camera_sim_id))) {
-          rows.push({
-            deviceId: String(vehicle.camera_sim_id),
-            plate: cleanText(vehicle.registration_number),
-            fleetNumber: cleanText(vehicle.fleet_number),
-            make: cleanText(vehicle.make),
-            model: cleanText(vehicle.model),
-          });
-        }
+            rows.push({
+              deviceId: String(vehicle.camera_sim_id),
+              plate: cleanText(vehicle.registration_number),
+              fleetNumber: cleanText(vehicle.fleet_number),
+              make: cleanText(vehicle.make),
+              model: cleanText(vehicle.model),
+              costCenter: cleanText(vehicle.cost_center),
+            });
+          }
 
         if (vehicle.camera_serial && deviceIds.includes(String(vehicle.camera_serial))) {
-          rows.push({
-            deviceId: String(vehicle.camera_serial),
-            plate: cleanText(vehicle.registration_number),
-            fleetNumber: cleanText(vehicle.fleet_number),
-            make: cleanText(vehicle.make),
-            model: cleanText(vehicle.model),
-          });
-        }
+            rows.push({
+              deviceId: String(vehicle.camera_serial),
+              plate: cleanText(vehicle.registration_number),
+              fleetNumber: cleanText(vehicle.fleet_number),
+              make: cleanText(vehicle.make),
+              model: cleanText(vehicle.model),
+              costCenter: cleanText(vehicle.cost_center),
+            });
+          }
 
         return rows;
       });
@@ -111,7 +114,7 @@ export async function GET(req: NextRequest) {
     
     const { data: vehicle, error } = await supabase
       .from('vehiclesc')
-      .select('registration_number, fleet_number, make, model, camera_serial, camera_sim_id')
+      .select('registration_number, fleet_number, make, model, camera_serial, camera_sim_id, cost_center')
       .or(`camera_sim_id.eq.${deviceId},camera_serial.eq.${deviceId}`)
       .limit(1)
       .maybeSingle();
@@ -129,7 +132,8 @@ export async function GET(req: NextRequest) {
       plate: cleanText(vehicle.registration_number),
       fleetNumber: cleanText(vehicle.fleet_number),
       make: cleanText(vehicle.make),
-      model: cleanText(vehicle.model)
+      model: cleanText(vehicle.model),
+      costCenter: cleanText(vehicle.cost_center)
     });
 
   } catch (error: any) {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import HLSPlayer from "@/components/video/HLSPlayer";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -35,6 +35,7 @@ interface ConnectedVehicle {
   channels: VehicleChannel[];
   registration?: string;
   fleetNumber?: string;
+  costCenter?: string;
   displayLabel?: string;
   connected?: boolean;
   activeStreams?: number[];
@@ -45,6 +46,7 @@ type VehicleCatalogRow = {
   fleet_number?: string | null;
   camera_sim_id?: string | null;
   camera_serial?: string | null;
+  cost_center?: string | null;
 };
 
 type RuntimeRecord = Record<string, unknown>;
@@ -71,6 +73,23 @@ type StreamEntry = {
 
 const RUNTIME_HEARTBEAT_GRACE_MS = 3 * 60 * 1000;
 const RUNTIME_SNAPSHOT_GRACE_MS = 2 * 60 * 1000;
+
+function normalizeCostCenter(value: unknown): string {
+  return String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function matchesCostCenterFilter(costCenter: string | undefined, selectedCostCenters: Set<string>) {
+  if (selectedCostCenters.size === 0) return true;
+  const normalized = normalizeCostCenter(costCenter);
+  if (!normalized) {
+    return selectedCostCenters.has("unassigned");
+  }
+  return selectedCostCenters.has(normalized);
+}
+
+type LiveStreamTabProps = {
+  selectedCostCenters?: string[];
+};
 
 function normalizeVehicleIdentifier(value: string): string {
   const trimmed = String(value || "").trim();
@@ -427,7 +446,7 @@ function getVehicleStatusRank(vehicle: ConnectedVehicle): number {
   return isVehicleOnline(vehicle) ? 0 : 1;
 }
 
-export default function LiveStreamTab() {
+export default function LiveStreamTab({ selectedCostCenters = [] }: LiveStreamTabProps) {
   const [vehicles, setVehicles] = useState<ConnectedVehicle[]>([]);
   const [selectedVehicles, setSelectedVehicles] = useState<Set<string>>(new Set());
   const [searchTerm, setSearchTerm] = useState("");
@@ -447,7 +466,7 @@ export default function LiveStreamTab() {
   const fetchCatalogVehicles = useCallback(async () => {
     const { data: vehicleRows, error: vehiclesError } = await supabase
       .from("vehiclesc")
-      .select("registration_number, fleet_number, camera_sim_id, camera_serial");
+      .select("registration_number, fleet_number, camera_sim_id, camera_serial, cost_center");
 
     if (vehiclesError) {
       throw new Error("Failed to load vehicle catalog");
@@ -478,6 +497,7 @@ export default function LiveStreamTab() {
         channels: [],
         registration: registration || undefined,
         fleetNumber: fleetNumber || undefined,
+        costCenter: String(row.cost_center || "").trim() || undefined,
         displayLabel: displayLabel || primaryKey,
         connected: false,
         activeStreams: [],
@@ -646,10 +666,29 @@ export default function LiveStreamTab() {
   // Intentionally no background polling:
   // load once on page open, then only refresh when user clicks Refresh.
 
+  const selectedCostCenterSet = useMemo(
+    () =>
+      new Set(
+        selectedCostCenters
+          .map((value) => normalizeCostCenter(value))
+          .filter(Boolean)
+      ),
+    [selectedCostCenters]
+  );
+
+  const scopedVehicles = useMemo(
+    () => vehicles.filter((vehicle) => matchesCostCenterFilter(vehicle.costCenter, selectedCostCenterSet)),
+    [selectedCostCenterSet, vehicles]
+  );
+
   useEffect(() => {
+    const scopedVehiclesById = new Set(
+      scopedVehicles.map((entry) => String(entry.id || "").trim()).filter(Boolean)
+    );
+
     setSelectedVehicles((previous) => {
       const nextIds = Array.from(previous).filter((vehicleId) => {
-        const vehicle = vehicles.find((entry) => entry.id === vehicleId);
+        const vehicle = scopedVehicles.find((entry) => entry.id === vehicleId);
         return !!vehicle && getWarmChannelNumbers(vehicle).length > 0;
       });
 
@@ -661,17 +700,21 @@ export default function LiveStreamTab() {
         return previous;
       }
 
-      const vehicle = vehicles.find((entry) => entry.id === previous.vehicleId);
+      if (!scopedVehiclesById.has(String(previous.vehicleId || "").trim())) {
+        return null;
+      }
+
+      const vehicle = scopedVehicles.find((entry) => entry.id === previous.vehicleId);
       if (!vehicle || !getWarmChannelNumbers(vehicle).includes(previous.channel)) {
         return null;
       }
 
       return previous;
     });
-  }, [vehicles]);
+  }, [scopedVehicles]);
 
   const toggleVehicle = async (vehicleId: string) => {
-    const vehicle = vehicles.find((entry) => entry.id === vehicleId);
+    const vehicle = scopedVehicles.find((entry) => entry.id === vehicleId);
     if (!vehicle) return;
 
     const next = new Set(selectedVehicles);
@@ -689,7 +732,7 @@ export default function LiveStreamTab() {
     setSelectedVehicles(next);
   };
 
-  const filteredVehicles = vehicles
+  const filteredVehicles = scopedVehicles
     .filter((v) =>
       v.id?.toLowerCase().includes(searchTerm.toLowerCase()) ||
       v.displayLabel?.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -713,7 +756,7 @@ export default function LiveStreamTab() {
   );
 
   const streamEntries: StreamEntry[] = Array.from(selectedVehicles).flatMap((vehicleId) => {
-    const vehicle = vehicles.find((v) => v.id === vehicleId);
+    const vehicle = scopedVehicles.find((v) => v.id === vehicleId);
     if (!vehicle) return [];
 
     const channels = getWarmChannelNumbers(vehicle);

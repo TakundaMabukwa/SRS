@@ -51,11 +51,13 @@ type VideoAlertsDashboardTabProps = {
   standaloneSeverity?: "critical" | "high" | "medium" | "low" | "all" | null;
   standaloneMode?: boolean;
   suspendBackgroundWork?: boolean;
+  selectedCostCenters?: string[];
 };
 
 type VehicleIdentity = {
   plate: string;
   fleetNumber: string;
+  costCenter: string;
 };
 
 type StructuredAlertDomain = "ADAS" | "DMS";
@@ -74,7 +76,11 @@ function areVehicleIdentityMapsEqual(
   for (const [key, value] of a.entries()) {
     const other = b.get(key);
     if (!other) return false;
-    if (other.plate !== value.plate || other.fleetNumber !== value.fleetNumber) {
+    if (
+      other.plate !== value.plate ||
+      other.fleetNumber !== value.fleetNumber ||
+      other.costCenter !== value.costCenter
+    ) {
       return false;
     }
   }
@@ -202,11 +208,16 @@ function shouldSilenceAlertValue(value: unknown) {
   return !!normalized && SILENCED_ALERT_LABELS.some((matcher) => normalized.includes(matcher));
 }
 
+function normalizeCostCenter(value: unknown): string {
+  return String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
+}
+
 export default function VideoAlertsDashboardTab({
   onOpenAlertDetail,
   standaloneSeverity = null,
   standaloneMode = false,
   suspendBackgroundWork = false,
+  selectedCostCenters = [],
 }: VideoAlertsDashboardTabProps) {
   const router = useRouter();
   const { filters, loading } = useVideoAlerts();
@@ -446,6 +457,14 @@ export default function VideoAlertsDashboardTab({
     const registration = String(resolvedIdentity.details?.plate || "").trim();
     const fleetNumber = String(resolvedIdentity.details?.fleetNumber || "").trim();
     const fallbackVehicleId = String(resolvedIdentity.vehicleId || "").trim();
+    const costCenter = String(
+      resolvedIdentity.details?.costCenter ||
+      incoming?.cost_center ||
+      incoming?.costCenter ||
+      incoming?.metadata?.cost_center ||
+      incoming?.metadata?.costCenter ||
+      ""
+    ).trim();
 
     return {
       ...incoming,
@@ -461,6 +480,8 @@ export default function VideoAlertsDashboardTab({
       codeLabel: presentation.codeLabel,
       vehicleId: String(incoming.vehicleId || incoming.device_id || incoming.vehicle_id || vehicleMeta.vehicleId || fallbackVehicleId || "").trim(),
       device_id: String(incoming.device_id || incoming.vehicleId || incoming.vehicle_id || vehicleMeta.vehicleId || fallbackVehicleId || "").trim(),
+      cost_center: costCenter,
+      costCenter,
       driver_name: incoming.driver_name || incoming.driver || incoming?.metadata?.driverName || "Unknown",
       timestamp: displayTimestamp || sourceTimestamp,
       lastOccurrenceTimestamp,
@@ -982,6 +1003,7 @@ export default function VideoAlertsDashboardTab({
           nextLookup.set(deviceId, {
             plate: String(row?.plate || "").trim(),
             fleetNumber: String(row?.fleetNumber || "").trim(),
+            costCenter: String(row?.costCenter || "").trim(),
           });
         }
 
@@ -1135,15 +1157,49 @@ export default function VideoAlertsDashboardTab({
     showRawAlerts ? mergedAlerts : groupedAlerts
   ), [groupedAlerts, mergedAlerts, showRawAlerts]);
 
-  useEffect(() => {
-    if (suspendBackgroundWork) return;
-    void refreshVideoAvailability(alertCollection);
-  }, [alertCollection, refreshVideoAvailability, suspendBackgroundWork]);
+  const selectedCostCenterSet = useMemo(
+    () =>
+      new Set(
+        selectedCostCenters
+          .map((value) => normalizeCostCenter(value))
+          .filter(Boolean)
+      ),
+    [selectedCostCenters]
+  );
+
+  const alertMatchesCostCenter = useCallback((alert: any) => {
+    if (selectedCostCenterSet.size === 0) return true;
+
+    const candidates = [
+      alert?.cost_center,
+      alert?.costCenter,
+      alert?.metadata?.cost_center,
+      alert?.metadata?.costCenter,
+    ]
+      .map((value) => normalizeCostCenter(value))
+      .filter(Boolean);
+
+    if (candidates.length === 0) {
+      return selectedCostCenterSet.has("unassigned");
+    }
+
+    return candidates.some((value) => selectedCostCenterSet.has(value));
+  }, [selectedCostCenterSet]);
+
+  const costCenterScopedAlertCollection = useMemo(
+    () => alertCollection.filter((alert) => alertMatchesCostCenter(alert)),
+    [alertCollection, alertMatchesCostCenter]
+  );
 
   useEffect(() => {
     if (suspendBackgroundWork) return;
-    void refreshExactVideoReady(alertCollection);
-  }, [alertCollection, refreshExactVideoReady, suspendBackgroundWork]);
+    void refreshVideoAvailability(costCenterScopedAlertCollection);
+  }, [costCenterScopedAlertCollection, refreshVideoAvailability, suspendBackgroundWork]);
+
+  useEffect(() => {
+    if (suspendBackgroundWork) return;
+    void refreshExactVideoReady(costCenterScopedAlertCollection);
+  }, [costCenterScopedAlertCollection, refreshExactVideoReady, suspendBackgroundWork]);
 
   const passesVideoReadyGate = useCallback((alert: any) => {
     const status = String(alert?.status || "").toLowerCase();
@@ -1166,7 +1222,7 @@ export default function VideoAlertsDashboardTab({
     const result: Record<string, string> = {};
 
     keys.forEach((key) => {
-      const closedAlerts = alertCollection.filter((alert: any) => {
+      const closedAlerts = costCenterScopedAlertCollection.filter((alert: any) => {
         if (getAlertLevel(alert) !== key) return false;
         return ["closed", "resolved"].includes(String(alert?.status || "").toLowerCase());
       });
@@ -1188,16 +1244,16 @@ export default function VideoAlertsDashboardTab({
     });
 
     return result;
-  }, [alertCollection, formatAverageHandlingTime]);
+  }, [costCenterScopedAlertCollection, formatAverageHandlingTime]);
 
   // Calculate statistics from alerts
   const calculatedStats = {
-    critical_alerts: alertCollection.filter(a => getAlertLevel(a) === 'critical' && !['closed', 'resolved'].includes(a.status) && passesVideoReadyGate(a)).length,
-    high_alerts: alertCollection.filter(a => getAlertLevel(a) === 'high' && !['closed', 'resolved'].includes(a.status) && passesVideoReadyGate(a)).length,
-    medium_alerts: alertCollection.filter(a => getAlertLevel(a) === 'medium' && !['closed', 'resolved'].includes(a.status) && passesVideoReadyGate(a)).length,
-    low_alerts: alertCollection.filter(a => getAlertLevel(a) === 'low' && !['closed', 'resolved'].includes(a.status) && passesVideoReadyGate(a)).length,
-    total_alerts: alertCollection.filter(a => !['closed', 'resolved'].includes(a.status) && passesVideoReadyGate(a)).length,
-    resolved_today: alertCollection.filter(a => {
+    critical_alerts: costCenterScopedAlertCollection.filter(a => getAlertLevel(a) === 'critical' && !['closed', 'resolved'].includes(a.status) && passesVideoReadyGate(a)).length,
+    high_alerts: costCenterScopedAlertCollection.filter(a => getAlertLevel(a) === 'high' && !['closed', 'resolved'].includes(a.status) && passesVideoReadyGate(a)).length,
+    medium_alerts: costCenterScopedAlertCollection.filter(a => getAlertLevel(a) === 'medium' && !['closed', 'resolved'].includes(a.status) && passesVideoReadyGate(a)).length,
+    low_alerts: costCenterScopedAlertCollection.filter(a => getAlertLevel(a) === 'low' && !['closed', 'resolved'].includes(a.status) && passesVideoReadyGate(a)).length,
+    total_alerts: costCenterScopedAlertCollection.filter(a => !['closed', 'resolved'].includes(a.status) && passesVideoReadyGate(a)).length,
+    resolved_today: costCenterScopedAlertCollection.filter(a => {
       if (!['closed', 'resolved'].includes(a.status)) return false;
       const today = new Date().toDateString();
       const resolvedDate = new Date(a.resolved_at || a.closed_at || a.updated_at).toDateString();
@@ -1244,7 +1300,7 @@ export default function VideoAlertsDashboardTab({
 
   // Filtering
   const filteredAlerts = (() => {
-    const baseFilteredAlerts = alertCollection.filter((alert: any) => {
+    const baseFilteredAlerts = costCenterScopedAlertCollection.filter((alert: any) => {
       const status = String(alert?.status || "").toLowerCase();
       const isClosedAlert = ["closed", "resolved"].includes(status);
 
@@ -1304,13 +1360,13 @@ export default function VideoAlertsDashboardTab({
   const mediumCount = calculatedStats.medium_alerts || 0;
   const lowCount = calculatedStats.low_alerts || 0;
   const allOpenCount = displayStats?.total_alerts || 0;
-  const closedAlertsCount = alertCollection.filter((alert: any) => ["closed", "resolved"].includes(String(alert?.status || "").toLowerCase())).length;
-  const videoReadyCount = alertCollection.filter((alert: any) => {
+  const closedAlertsCount = costCenterScopedAlertCollection.filter((alert: any) => ["closed", "resolved"].includes(String(alert?.status || "").toLowerCase())).length;
+  const videoReadyCount = costCenterScopedAlertCollection.filter((alert: any) => {
     const status = String(alert?.status || "").toLowerCase();
     if (["closed", "resolved"].includes(status)) return false;
     return exactVideoReady[String(alert.id)];
   }).length;
-  const pendingVideoCount = alertCollection.filter((alert: any) => {
+  const pendingVideoCount = costCenterScopedAlertCollection.filter((alert: any) => {
     const status = String(alert?.status || "").toLowerCase();
     if (["closed", "resolved"].includes(status)) return false;
     return !exactVideoReady[String(alert.id)];

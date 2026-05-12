@@ -20,6 +20,7 @@ type ConnectedVehicle = {
   connected?: boolean;
   registration?: string;
   fleetNumber?: string;
+  costCenter?: string;
   displayLabel?: string;
 };
 
@@ -50,7 +51,21 @@ type VehicleCatalogRow = {
   fleet_number?: string | null;
   camera_sim_id?: string | null;
   camera_serial?: string | null;
+  cost_center?: string | null;
 };
+
+function normalizeCostCenter(value: unknown): string {
+  return String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function matchesCostCenterFilter(costCenter: string | undefined, selectedCostCenters: Set<string>) {
+  if (selectedCostCenters.size === 0) return true;
+  const normalized = normalizeCostCenter(costCenter);
+  if (!normalized) {
+    return selectedCostCenters.has("unassigned");
+  }
+  return selectedCostCenters.has(normalized);
+}
 
 function toVehicleKey(vehicle: ConnectedVehicle): string {
   return String(vehicle.id || vehicle.phone || "").trim();
@@ -126,9 +141,13 @@ function parseLivePreviewFeed(payload: unknown): LivePreviewRow[] {
 
 type ScreenshotsDashboardTabProps = {
   detachable?: boolean;
+  selectedCostCenters?: string[];
 };
 
-export default function ScreenshotsDashboardTab({ detachable = true }: ScreenshotsDashboardTabProps) {
+export default function ScreenshotsDashboardTab({
+  detachable = true,
+  selectedCostCenters = [],
+}: ScreenshotsDashboardTabProps) {
   const supabase = createClient();
   const [vehicles, setVehicles] = useState<ConnectedVehicle[]>([]);
   const [loading, setLoading] = useState(true);
@@ -160,7 +179,7 @@ export default function ScreenshotsDashboardTab({ detachable = true }: Screensho
 
     const { data: vehicleRows, error: vehiclesError } = await supabase
       .from("vehiclesc")
-      .select("registration_number, fleet_number, camera_sim_id, camera_serial");
+      .select("registration_number, fleet_number, camera_sim_id, camera_serial, cost_center");
 
     if (vehiclesError) {
       throw new Error("Failed to load vehicle catalog");
@@ -207,6 +226,7 @@ export default function ScreenshotsDashboardTab({ detachable = true }: Screensho
         connected: uniqueChannelRows.length > 0,
         registration: registration || undefined,
         fleetNumber: fleetNumber || undefined,
+        costCenter: String(row.cost_center || "").trim() || undefined,
         displayLabel: displayLabel || primaryKey,
       };
 
@@ -279,13 +299,28 @@ export default function ScreenshotsDashboardTab({ detachable = true }: Screensho
     return () => clearInterval(pollingInterval);
   }, [refreshAll]);
 
+  const selectedCostCenterSet = useMemo(
+    () =>
+      new Set(
+        selectedCostCenters
+          .map((value) => normalizeCostCenter(value))
+          .filter(Boolean)
+      ),
+    [selectedCostCenters]
+  );
+
+  const scopedVehicles = useMemo(
+    () => vehicles.filter((vehicle) => matchesCostCenterFilter(vehicle.costCenter, selectedCostCenterSet)),
+    [selectedCostCenterSet, vehicles]
+  );
+
   const connectedVehicles = useMemo(
-    () => vehicles.filter((vehicle) => vehicle.connected === true),
-    [vehicles]
+    () => scopedVehicles.filter((vehicle) => vehicle.connected === true),
+    [scopedVehicles]
   );
 
   const cards = useMemo<VehicleGroupCard[]>(() => {
-    return vehicles
+    return scopedVehicles
       .map((vehicle) => {
         const vehicleId = toVehicleKey(vehicle);
         if (!vehicleId) return null;
@@ -326,7 +361,7 @@ export default function ScreenshotsDashboardTab({ detachable = true }: Screensho
         if (aLatest !== bLatest) return bLatest - aLatest;
         return a.displayLabel.localeCompare(b.displayLabel);
       });
-  }, [refreshToken, vehicles]);
+  }, [refreshToken, scopedVehicles]);
 
   const liveCount = useMemo(() => {
     const now = Date.now();
@@ -377,7 +412,7 @@ export default function ScreenshotsDashboardTab({ detachable = true }: Screensho
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
               <div className="rounded-lg border border-slate-700 bg-slate-900/70 px-4 py-3">
                 <p className="text-[11px] uppercase tracking-wide text-slate-400">Vehicles</p>
-                <p className="mt-1 text-2xl font-bold text-emerald-300">{vehicles.length}</p>
+                <p className="mt-1 text-2xl font-bold text-emerald-300">{scopedVehicles.length}</p>
                 <p className="mt-1 text-[11px] text-slate-400">{connectedVehicles.length} connected</p>
               </div>
               <div className="rounded-lg border border-slate-700 bg-slate-900/70 px-4 py-3">
