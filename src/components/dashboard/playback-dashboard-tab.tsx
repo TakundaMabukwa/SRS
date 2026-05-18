@@ -360,6 +360,17 @@ function errorMessage(error: unknown, fallback: string) {
   return message || fallback;
 }
 
+function isTimeoutLikeMessage(value: unknown) {
+  const message = String(value || "").toLowerCase();
+  return (
+    message.includes("timed out") ||
+    message.includes("timeout") ||
+    message.includes("signal timed out") ||
+    message.includes("aborted") ||
+    message.includes("aborterror")
+  );
+}
+
 function parseAvailableRangeFromMessage(value: unknown): ParsedAvailableRange | null {
   const raw = String(value || "").trim();
   if (!raw) return null;
@@ -1308,34 +1319,59 @@ export default function PlaybackDashboardTab({ selectedCostCenters = [] }: Playb
       input: "auto",
     });
     const playbackUrl = `${videoProxyBase}/playback/mp4?${query.toString()}`;
-    try {
-      const probe = await fetch(playbackUrl, {
-        method: "GET",
-        headers: {
-          range: "bytes=0-1",
-        },
-        cache: "no-store",
-        signal: AbortSignal.timeout(12000),
-      });
+    const probeTimeoutMs = 30000;
+    const probeAttempts = 2;
+    let probeBypassedOnTimeout = false;
+    let lastProbeError: unknown = null;
 
-      const contentType = String(probe.headers.get("content-type") || "").toLowerCase();
-      if (!probe.ok) {
-        let message = `Playback probe failed for CH${channel} (HTTP ${probe.status}).`;
+    for (let attempt = 0; attempt < probeAttempts; attempt += 1) {
+      try {
+        const probe = await fetch(playbackUrl, {
+          method: "GET",
+          headers: {
+            range: "bytes=0-1",
+          },
+          cache: "no-store",
+          signal: AbortSignal.timeout(probeTimeoutMs),
+        });
+
+        const contentType = String(probe.headers.get("content-type") || "").toLowerCase();
+        if (!probe.ok) {
+          let message = `Playback probe failed for CH${channel} (HTTP ${probe.status}).`;
+          if (contentType.includes("application/json")) {
+            const payload = await probe.json().catch(() => ({}));
+            message = String(payload?.message || payload?.error || message).trim() || message;
+          }
+          throw new Error(message);
+        }
+
         if (contentType.includes("application/json")) {
           const payload = await probe.json().catch(() => ({}));
-          message = String(payload?.message || payload?.error || message).trim() || message;
+          throw new Error(
+            String(payload?.message || payload?.error || `No playable video for CH${channel} in selected range.`)
+          );
         }
-        throw new Error(message);
-      }
 
-      if (contentType.includes("application/json")) {
-        const payload = await probe.json().catch(() => ({}));
-        throw new Error(
-          String(payload?.message || payload?.error || `No playable video for CH${channel} in selected range.`)
-        );
+        lastProbeError = null;
+        break;
+      } catch (error) {
+        lastProbeError = error;
+        const message = errorMessage(error, "");
+        if (isTimeoutLikeMessage(message)) {
+          if (attempt < probeAttempts - 1) {
+            await new Promise((resolve) => setTimeout(resolve, 600 * (attempt + 1)));
+            continue;
+          }
+          probeBypassedOnTimeout = true;
+          console.warn(`[playback] probe timeout for CH${channel}; continuing with direct video load`);
+          break;
+        }
+        throw new Error(errorMessage(error, `No playable video for CH${channel} in selected range.`));
       }
-    } catch (error) {
-      throw new Error(errorMessage(error, `No playable video for CH${channel} in selected range.`));
+    }
+
+    if (lastProbeError && !probeBypassedOnTimeout) {
+      throw new Error(errorMessage(lastProbeError, `No playable video for CH${channel} in selected range.`));
     }
 
     setResolvedVehicleId(vehicleId);
