@@ -3434,6 +3434,19 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
     if (!value || value === "upload-failed" || value === "local-only") return "";
     return resolveMediaUrlForCurrentOrigin(value, videoProxyBase);
   }, [videoProxyBase]);
+  const isPlaceholderAlertVideoUrl = useCallback((raw?: string) => {
+    const value = String(raw || "").trim();
+    if (!value) return false;
+    let path = value;
+    if (/^https?:\/\//i.test(value)) {
+      try {
+        path = new URL(value).pathname;
+      } catch {
+        path = value;
+      }
+    }
+    return /^\/api\/(?:video-server\/)?alerts\/[^/]+\/video(?:\/(?:pre|post|camera))?$/i.test(path);
+  }, []);
   const toAbsoluteImageUrl = useCallback((raw?: string) => {
     return toAbsoluteVideoUrl(raw);
   }, [toAbsoluteVideoUrl]);
@@ -3543,6 +3556,7 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
       const normalized = toAbsoluteVideoUrl(url);
       if (!normalized) return;
       if (normalized === "upload-failed" || normalized === "local-only") return;
+      if (isPlaceholderAlertVideoUrl(normalized)) return;
       if (!entries.some((entry) => entry.url === normalized)) {
         entries.push({ key, label, url: normalized });
       }

@@ -541,6 +541,25 @@ function normalizeTimestamp(raw: AnyRecord): string {
   return d.toISOString();
 }
 
+function isPlaceholderAlertVideoUrl(rawValue: unknown): boolean {
+  const raw = String(rawValue || '').trim();
+  if (!raw) return false;
+
+  let path = raw;
+  if (/^https?:\/\//i.test(raw)) {
+    try {
+      path = new URL(raw).pathname;
+    } catch {
+      path = raw;
+    }
+  }
+
+  return (
+    /^\/api\/alerts\/[^/]+\/video(?:\/(?:pre|post|camera))?$/i.test(path) ||
+    /^\/api\/video-server\/alerts\/[^/]+\/video(?:\/(?:pre|post|camera))?$/i.test(path)
+  );
+}
+
 function toProxyMediaUrl(rawValue: unknown, baseUrl: string): string {
   const raw = String(rawValue || '').trim();
   if (!raw) return '';
@@ -556,14 +575,15 @@ function sortByLatest(a: AnyRecord, b: AnyRecord): number {
 
 function hasAlertVideoEvidence(raw: AnyRecord): boolean {
   const hasUrl = (value: unknown) => String(value || '').trim().length > 0;
-  if (
-    hasUrl(raw?.videoUrl) ||
-    hasUrl(raw?.video_url) ||
-    hasUrl(raw?.fileUrl) ||
-    hasUrl(raw?.file_url) ||
-    hasUrl(raw?.storage_url) ||
-    hasUrl(raw?.url)
-  ) {
+  const primaryUrls = [
+    raw?.videoUrl,
+    raw?.video_url,
+    raw?.fileUrl,
+    raw?.file_url,
+    raw?.storage_url,
+    raw?.url,
+  ];
+  if (primaryUrls.some((value) => hasUrl(value) && !isPlaceholderAlertVideoUrl(value))) {
     return true;
   }
 
@@ -598,12 +618,12 @@ function hasAlertVideoEvidence(raw: AnyRecord): boolean {
     for (const row of list) {
       if (!row || typeof row !== 'object') continue;
       if (
-        hasUrl((row as AnyRecord).fileUrl) ||
-        hasUrl((row as AnyRecord).file_url) ||
-        hasUrl((row as AnyRecord).storage_url) ||
-        hasUrl((row as AnyRecord).videoUrl) ||
-        hasUrl((row as AnyRecord).video_url) ||
-        hasUrl((row as AnyRecord).url)
+        (hasUrl((row as AnyRecord).fileUrl) && !isPlaceholderAlertVideoUrl((row as AnyRecord).fileUrl)) ||
+        (hasUrl((row as AnyRecord).file_url) && !isPlaceholderAlertVideoUrl((row as AnyRecord).file_url)) ||
+        (hasUrl((row as AnyRecord).storage_url) && !isPlaceholderAlertVideoUrl((row as AnyRecord).storage_url)) ||
+        (hasUrl((row as AnyRecord).videoUrl) && !isPlaceholderAlertVideoUrl((row as AnyRecord).videoUrl)) ||
+        (hasUrl((row as AnyRecord).video_url) && !isPlaceholderAlertVideoUrl((row as AnyRecord).video_url)) ||
+        (hasUrl((row as AnyRecord).url) && !isPlaceholderAlertVideoUrl((row as AnyRecord).url))
       ) {
         return true;
       }
@@ -633,7 +653,8 @@ function mapRecentAlert(raw: AnyRecord, baseUrl: string): AnyRecord {
   const status = normalizeAlertStatus(raw);
   const priority = normalizeAlertPriority(raw);
   const timestamp = normalizeTimestamp(raw);
-  const directVideo = toProxyMediaUrl(raw?.videoUrl || raw?.video_url, baseUrl);
+  const rawDirectVideo = toProxyMediaUrl(raw?.videoUrl || raw?.video_url, baseUrl);
+  const directVideo = isPlaceholderAlertVideoUrl(rawDirectVideo) ? '' : rawDirectVideo;
   const metadata = (raw?.metadata && typeof raw.metadata === 'object') ? { ...raw.metadata } : {};
   const existingVideoClips = (metadata?.videoClips && typeof metadata.videoClips === 'object')
     ? metadata.videoClips
@@ -722,7 +743,7 @@ function selectAlertVideoEntries(alert: AnyRecord, baseUrl: string) {
   const seen = new Set<string>();
   const push = (entry: AnyRecord, label: string) => {
     const url = toProxyMediaUrl(entry?.fileUrl || entry?.videoUrl || entry?.url || '', baseUrl);
-    if (!url || seen.has(url)) return;
+    if (!url || isPlaceholderAlertVideoUrl(url) || seen.has(url)) return;
     seen.add(url);
     out.push({
       id: entry?.id || `${label}-${out.length + 1}`,
@@ -749,7 +770,11 @@ function buildAlertDetail(alert: AnyRecord, baseUrl: string): AnyRecord {
   const id = String(alert?.id || '').trim();
   const mediaLinks = buildAlertMediaLinks(id);
   const entries = selectAlertVideoEntries(alert, baseUrl);
-  const primaryUrl = entries[0]?.url || toProxyMediaUrl(alert?.videoUrl, baseUrl) || '';
+  const directAlertVideo = toProxyMediaUrl(alert?.videoUrl, baseUrl);
+  const primaryUrl =
+    entries[0]?.url ||
+    (directAlertVideo && !isPlaceholderAlertVideoUrl(directAlertVideo) ? directAlertVideo : '') ||
+    '';
   const preUrl = primaryUrl || '';
   const postUrl = primaryUrl || '';
   const camUrl = primaryUrl || '';
@@ -996,17 +1021,108 @@ async function handleAlertHubCompatGet(request: NextRequest, pathArray: string[]
       clipType === 'post' ? detail.postIncidentRawUrl :
       clipType === 'camera' ? detail.cameraVideoUrl :
       '';
-    if (!candidate) {
+    const requestedPath = request.nextUrl.pathname;
+    const candidatePath = (() => {
+      const raw = String(candidate || '').trim();
+      if (!raw) return '';
+      if (/^https?:\/\//i.test(raw)) {
+        try {
+          return new URL(raw).pathname;
+        } catch {
+          return raw;
+        }
+      }
+      return raw;
+    })();
+    const candidateLooksUsable =
+      !!candidate &&
+      !isPlaceholderAlertVideoUrl(candidate) &&
+      candidatePath !== requestedPath;
+
+    if (candidateLooksUsable) {
+      const redirectUrl = String(candidate).startsWith('/')
+        ? new URL(String(candidate), request.nextUrl.origin).toString()
+        : String(candidate);
+      return Response.redirect(redirectUrl, 302);
+    }
+
+    // Fallback: redirect to nearest available playback window (last 5 minutes by default).
+    const vehicleId = String(detail?.vehicleId || detail?.device_id || '').trim();
+    if (!vehicleId) {
       return okJson({
         success: false,
         message: `No ${clipType || 'video'} clip available for alert ${alertId}`,
         target: baseUrl,
       }, 404);
     }
-    const redirectUrl = candidate.startsWith('/')
-      ? new URL(candidate, request.nextUrl.origin).toString()
-      : candidate;
-    return Response.redirect(redirectUrl, 302);
+
+    const refRaw = String(
+      detail?.last_occurrence ||
+      detail?.timestamp ||
+      detail?.created_at ||
+      new Date().toISOString()
+    ).trim();
+    const refDate = new Date(refRaw);
+    if (Number.isNaN(refDate.getTime())) {
+      return okJson({
+        success: false,
+        message: `No ${clipType || 'video'} clip available for alert ${alertId}`,
+        target: baseUrl,
+      }, 404);
+    }
+
+    const dayStart = new Date(Date.UTC(refDate.getUTCFullYear(), refDate.getUTCMonth(), refDate.getUTCDate(), 0, 0, 0, 0));
+    const dayEnd = new Date(Date.UTC(refDate.getUTCFullYear(), refDate.getUTCMonth(), refDate.getUTCDate(), 23, 59, 59, 999));
+    const availabilityUrl = `${baseUrl}/api/storage/availability?sim=${encodeURIComponent(vehicleId)}&from=${encodeURIComponent(dayStart.toISOString())}&to=${encodeURIComponent(dayEnd.toISOString())}`;
+
+    try {
+      const availabilityRes = await fetch(availabilityUrl, { method: 'GET', cache: 'no-store', next: { revalidate: 0 } });
+      const availabilityJson = await availabilityRes.json().catch(() => ({} as AnyRecord));
+      const channels = Array.isArray((availabilityJson as AnyRecord)?.channels)
+        ? ((availabilityJson as AnyRecord).channels as AnyRecord[])
+        : [];
+      const preferredChannel = Number(detail?.channel || 1) || 1;
+      const ordered = channels
+        .map((row) => ({
+          channel: Number(row?.channel || 0) || 0,
+          from: String(row?.from || '').trim(),
+          to: String(row?.to || '').trim(),
+        }))
+        .filter((row) => row.channel > 0 && row.from && row.to)
+        .sort((a, b) => {
+          if (a.channel === preferredChannel && b.channel !== preferredChannel) return -1;
+          if (b.channel === preferredChannel && a.channel !== preferredChannel) return 1;
+          return 0;
+        });
+
+      const best = ordered[0];
+      if (best) {
+        const endMs = new Date(best.to).getTime();
+        const startMs = new Date(best.from).getTime();
+        if (Number.isFinite(endMs) && Number.isFinite(startMs) && endMs > startMs) {
+          const targetDurationMs = 5 * 60 * 1000;
+          const clipStartMs = Math.max(startMs, endMs - targetDurationMs);
+          const playbackQuery = new URLSearchParams({
+            sim: vehicleId,
+            channel: String(best.channel),
+            from: new Date(clipStartMs).toISOString(),
+            to: new Date(endMs).toISOString(),
+            includeAudio: 'false',
+            input: 'auto',
+          });
+          const proxyPlaybackUrl = new URL(`/api/video-server/playback/mp4?${playbackQuery.toString()}`, request.nextUrl.origin).toString();
+          return Response.redirect(proxyPlaybackUrl, 302);
+        }
+      }
+    } catch {
+      // No fallback clip found.
+    }
+
+    return okJson({
+      success: false,
+      message: `No ${clipType || 'video'} clip available for alert ${alertId}`,
+      target: baseUrl,
+    }, 404);
   }
 
   return okJson({

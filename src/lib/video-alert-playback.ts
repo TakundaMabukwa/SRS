@@ -124,15 +124,47 @@ function getPlaybackRequestBases(videoProxyBase = DEFAULT_VIDEO_PROXY_BASE) {
   return base ? [base] : [];
 }
 
+function isPlaceholderAlertVideoPath(rawUrl: string, alertId?: string) {
+  const value = String(rawUrl || "").trim();
+  if (!value) return false;
+
+  let path = value;
+  if (/^https?:\/\//i.test(value)) {
+    try {
+      path = new URL(value).pathname;
+    } catch {
+      path = value;
+    }
+  }
+
+  const normalizedAlertId = String(alertId || "").trim();
+  if (normalizedAlertId) {
+    const encodedId = encodeURIComponent(normalizedAlertId);
+    if (
+      path === `/api/alerts/${encodedId}/video` ||
+      path === `/api/video-server/alerts/${encodedId}/video`
+    ) {
+      return true;
+    }
+  }
+
+  return (
+    /^\/api\/alerts\/[^/]+\/video(?:\/(?:pre|post|camera))?$/i.test(path) ||
+    /^\/api\/video-server\/alerts\/[^/]+\/video(?:\/(?:pre|post|camera))?$/i.test(path)
+  );
+}
+
 function addDirectPlaybackVideo(
   bucket: AlertPlaybackVideo[],
   seen: Set<string>,
   label: string,
   rawUrl: unknown,
   key: string,
-  videoProxyBase = DEFAULT_VIDEO_PROXY_BASE
+  videoProxyBase = DEFAULT_VIDEO_PROXY_BASE,
+  alertId = ""
 ) {
   const normalized = normalizeBackendMediaUrl(String(rawUrl || "").trim(), videoProxyBase);
+  if (isPlaceholderAlertVideoPath(normalized, alertId)) return;
   if (!normalized || seen.has(normalized)) return;
   seen.add(normalized);
   bucket.push({
@@ -196,7 +228,8 @@ function extractDirectAlertPlaybackVideos(
       `Stored Alert Video ${index + 1}`,
       value,
       `stored_primary_${alertId}_${index}`,
-      videoProxyBase
+      videoProxyBase,
+      alertId
     );
   });
 
@@ -222,7 +255,8 @@ function extractDirectAlertPlaybackVideos(
         `Stored Clip ${clipIndex + 1}`,
         value,
         `stored_clip_${alertId}_${sourceIndex}_${clipIndex}`,
-        videoProxyBase
+        videoProxyBase,
+        alertId
       );
     });
   });
@@ -253,7 +287,8 @@ function extractDirectAlertPlaybackVideos(
       label,
       url,
       `stored_list_${alertId}_${index}`,
-      videoProxyBase
+      videoProxyBase,
+      alertId
     );
   });
 
@@ -269,7 +304,8 @@ function extractDirectAlertPlaybackVideos(
         label,
         url,
         `stored_slot_${alertId}_${index}`,
-        videoProxyBase
+        videoProxyBase,
+        alertId
       );
     });
   }
@@ -688,7 +724,7 @@ function collectAlertDisplayTimestampCandidates(alert: PlaybackJsonRecord | null
     metadata?.resource_start_time,
     metadata?.sourceTimestamp,
     metadata?.source_timestamp,
-    metadata?.locationFix?.timestamp,
+    readPlaybackRecord(metadata?.locationFix).timestamp,
     ...vendorExtensions.map((entry) => entry.sourceTimestamp),
   ]
     .map(getRawAlertTimestampValue)
@@ -719,7 +755,7 @@ function collectAlertFirstOccurrenceCandidates(alert: PlaybackJsonRecord | null 
     metadata?.resource_start_time,
     metadata?.sourceTimestamp,
     metadata?.source_timestamp,
-    metadata?.locationFix?.timestamp,
+    readPlaybackRecord(metadata?.locationFix).timestamp,
     ...vendorExtensions.map((entry) => entry.sourceTimestamp),
   ]
     .map(getRawAlertTimestampValue)
