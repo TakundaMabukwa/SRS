@@ -12,17 +12,11 @@ interface HLSPlayerProps {
 }
 
 // Stability mode: allow older frames (up to ~15s) to avoid constant reconnect churn.
-const PREVIEW_WAIT_MS = 2500;
+const PREVIEW_WAIT_MS = 1800;
 const PREVIEW_MAX_AGE_MS = 15000;
-const PREVIEW_READY_TIMEOUT_MS = 7000;
-const PREVIEW_READY_POLL_MS = 800;
-const PREVIEW_RETRY_DELAY_MS = 5000;
+const PREVIEW_RETRY_DELAY_MS = 3500;
 const MJPEG_FIRST_FRAME_DEADLINE_MS = 15000;
-const SCREENSHOT_MAX_AGE_MS = 120000;
-const SCREENSHOT_REFRESH_MS = 30000;
-const START_LIVE_THROTTLE_MS = 12000;
-
-type PreviewMode = 'mjpeg' | 'screenshot';
+const START_LIVE_THROTTLE_MS = 45000;
 
 function normalizeVehicleAlias(value: string) {
   const trimmed = String(value || '').trim();
@@ -45,9 +39,7 @@ export default function HLSPlayer({
 
   const [status, setStatus] = useState('Connecting live preview...');
   const [error, setError] = useState(false);
-  const [reloadToken, setReloadToken] = useState(0);
-  const [mode, setMode] = useState<PreviewMode>('mjpeg');
-  const [snapshotUrl, setSnapshotUrl] = useState('');
+  const [reloadToken, setReloadToken] = useState(() => Date.now());
   const [mjpegAttached, setMjpegAttached] = useState(false);
   const [mjpegReady, setMjpegReady] = useState(false);
   const [candidateIndex, setCandidateIndex] = useState(0);
@@ -75,7 +67,7 @@ export default function HLSPlayer({
     }
 
     return candidates;
-  }, [vehicleId, fallbackVehicleIds]);
+  }, [vehicleId, fallbackVehicleIds.map((value) => String(value || '').trim()).join('|')]);
 
   const fallbackKey = useMemo(
     () => streamStartCandidates.filter((value, index, values) => values.indexOf(value) === index).join(','),
@@ -99,7 +91,7 @@ export default function HLSPlayer({
       videoOnly: 'true',
       input: 'auto',
       fps: '8',
-      _ts: String(reloadToken || Date.now()),
+      _ts: String(reloadToken),
     });
     return `/api/video-server/vehicles/${encodeURIComponent(activeCandidateId)}/live.mjpeg?${params.toString()}`;
   }, [activeCandidateId, channel, reloadToken]);
@@ -142,36 +134,13 @@ export default function HLSPlayer({
         return false;
       }
       setCandidateIndex(nextIndex);
-      setMode('mjpeg');
       setStatus(nextStatus);
       setMjpegAttached(false);
+      setMjpegReady(false);
       setError(false);
       return true;
     },
     [candidateIndex, streamStartCandidates.length]
-  );
-
-  const waitForReady = useCallback(
-    async (candidateId: string) => {
-      const deadline = Date.now() + PREVIEW_READY_TIMEOUT_MS;
-      while (Date.now() < deadline) {
-        try {
-          const url = `/api/video-server/live/ready?sim=${encodeURIComponent(candidateId)}&channel=${channel}&maxAgeMs=${PREVIEW_MAX_AGE_MS}`;
-          const response = await fetch(url, { cache: 'no-store' });
-          if (response.ok) {
-            const payload = await response.json().catch(() => ({}));
-            if (payload?.ready === true) {
-              return true;
-            }
-          }
-        } catch {
-          // Keep polling until timeout.
-        }
-        await new Promise((resolve) => setTimeout(resolve, PREVIEW_READY_POLL_MS));
-      }
-      return false;
-    },
-    [channel]
   );
 
   const captureFreezeFrame = useCallback((source?: HTMLImageElement | null): boolean => {
@@ -205,10 +174,8 @@ export default function HLSPlayer({
 
   useEffect(() => {
     let cancelled = false;
-    setMode('mjpeg');
     setError(false);
     setStatus('Starting listener stream...');
-    setSnapshotUrl('');
     setMjpegAttached(false);
     setMjpegReady(false);
 
@@ -216,73 +183,35 @@ export default function HLSPlayer({
       await startLive();
       if (cancelled) return;
 
-      setStatus('Waiting for live frames...');
-      const ready = await waitForReady(activeCandidateId);
-      if (cancelled) return;
-
+      setStatus('Connecting live stream...');
       setMjpegAttached(true);
       setMjpegReady(false);
-      if (ready) {
-        setStatus('Stream ready, connecting...');
-      } else {
-        setStatus('Connecting stream (fallback if delayed)...');
-      }
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [activeCandidateId, channel, mjpegUrl, startLive, tryNextCandidate, waitForReady]);
+  }, [activeCandidateId, channel, mjpegUrl, startLive]);
 
   useEffect(() => {
-    if (mode !== 'mjpeg' || !mjpegAttached || mjpegReady) return;
+    if (!mjpegAttached || mjpegReady) return;
     const timer = setTimeout(() => {
       if (tryNextCandidate('No live frames yet, trying alternate id...')) {
         return;
       }
-      setMode('screenshot');
-      setStatus('No live frames yet, using snapshots...');
-      setError(false);
+      setStatus('No live frames yet, retrying stream...');
+      setError(true);
     }, MJPEG_FIRST_FRAME_DEADLINE_MS);
     return () => clearTimeout(timer);
-  }, [mjpegAttached, mjpegReady, mode, tryNextCandidate]);
+  }, [mjpegAttached, mjpegReady, tryNextCandidate]);
 
   useEffect(() => {
-    if (mode !== 'mjpeg' || !mjpegReady) return;
+    if (!mjpegReady) return;
     const timer = setInterval(() => {
       void captureFreezeFrame();
     }, 1200);
     return () => clearInterval(timer);
-  }, [captureFreezeFrame, mjpegReady, mode]);
-
-  useEffect(() => {
-    if (mode !== 'screenshot') return;
-
-    const buildSnapshotUrl = () => {
-      const params = new URLSearchParams({
-        channel: String(channel),
-        maxAgeMs: String(SCREENSHOT_MAX_AGE_MS),
-        _ts: String(Date.now()),
-      });
-      return `/api/video-server/vehicles/${encodeURIComponent(activeCandidateId)}/screenshot?${params.toString()}`;
-    };
-
-    setSnapshotUrl(buildSnapshotUrl());
-    const timer = setInterval(() => {
-      setSnapshotUrl(buildSnapshotUrl());
-    }, SCREENSHOT_REFRESH_MS);
-
-    return () => clearInterval(timer);
-  }, [activeCandidateId, channel, mode]);
-
-  useEffect(() => {
-    if (mode !== 'screenshot') return;
-    // Keep requesting live start in the background without forcing UI reloads.
-    const keepAliveTimer = setInterval(() => {
-      void startLive();
-    }, START_LIVE_THROTTLE_MS);
-    return () => clearInterval(keepAliveTimer);
-  }, [mode, startLive]);
+  }, [captureFreezeFrame, mjpegReady]);
 
   const handleMjpegLoaded = () => {
     setStatus('Streaming live');
@@ -300,43 +229,23 @@ export default function HLSPlayer({
     if (tryNextCandidate('Trying alternate listener stream id...')) {
       return;
     }
-    setMode('screenshot');
-    setStatus('MJPEG unavailable, using snapshots...');
-    setError(false);
-  };
-
-  const handleSnapshotLoaded = () => {
-    setStatus('Streaming snapshots');
-    setError(false);
-    setShowFrozenFrame(false);
-    void captureFreezeFrame(previewImgRef.current);
-  };
-
-  const handleSnapshotError = () => {
-    const captured = captureFreezeFrame(previewImgRef.current);
-    const hasFrame = captured || !!frozenFrameUrl;
-    setShowFrozenFrame(true);
-    if (tryNextCandidate('Retrying listener stream with alternate id...')) {
-      return;
-    }
-    setStatus(hasFrame ? 'Waiting for frame... showing last frame' : 'Live preview unavailable');
-    setError(!hasFrame);
+    setStatus('Waiting for frame... showing last frame');
+    setError(true);
   };
 
   useEffect(() => {
     if (!error) return;
     const timer = setTimeout(() => {
       setError(false);
-      setMode('mjpeg');
       setMjpegAttached(false);
-      setStatus('Retrying listener live preview...');
+      setStatus('Reconnecting live stream...');
       setReloadToken((value) => value + 1);
       void startLive();
     }, PREVIEW_RETRY_DELAY_MS);
     return () => clearTimeout(timer);
   }, [error, startLive]);
 
-  const isStreaming = !error && (status.startsWith('Streaming') || status.includes('using snapshots'));
+  const isStreaming = !error && status.startsWith('Streaming');
   const hasFrozenFrame = showFrozenFrame && !!frozenFrameUrl;
 
   return (
@@ -367,7 +276,7 @@ export default function HLSPlayer({
           />
         )}
 
-        {mode === 'mjpeg' && mjpegAttached ? (
+        {mjpegAttached ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
             ref={previewImgRef}
@@ -376,16 +285,6 @@ export default function HLSPlayer({
             className={`relative z-10 w-full h-full object-cover bg-black ${error ? 'hidden' : 'block'}`}
             onLoad={handleMjpegLoaded}
             onError={handleMjpegError}
-          />
-        ) : mode === 'screenshot' && snapshotUrl ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            ref={previewImgRef}
-            src={snapshotUrl}
-            alt={`${vehicleName || vehicleId} CH${channel} live snapshot`}
-            className={`relative z-10 w-full h-full object-cover bg-black ${error ? 'hidden' : 'block'}`}
-            onLoad={handleSnapshotLoaded}
-            onError={handleSnapshotError}
           />
         ) : null
         }
@@ -416,8 +315,7 @@ export default function HLSPlayer({
         )}
       </div>
       <div className="text-xs text-gray-400 mt-2 font-mono">
-        {mode === 'mjpeg' ? 'Live MJPEG | CH ' : 'Live snapshot fallback | CH '}
-        {channel}
+        Live MJPEG | CH {channel}
       </div>
     </div>
   );

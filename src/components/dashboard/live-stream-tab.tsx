@@ -526,84 +526,29 @@ export default function LiveStreamTab({ selectedCostCenters = [] }: LiveStreamTa
 
   const fetchRuntimeVehicles = useCallback(async () => {
     const runtimeEndpoints = [
-      `/api/video-server/vehicles/connected`,
-      `/api/video-server/vehicles`,
-      `/api/video-server/live/vehicles`,
-      `/api/video-server/live/streams?maxAgeMs=15000`,
-    ];
-    const merged = new Map<string, ConnectedVehicle>();
+      { url: `/api/video-server/live/vehicles`, parser: parseRuntimeVehicles },
+      { url: `/api/video-server/vehicles/connected`, parser: parseConnectedVehicles },
+      { url: `/api/video-server/live/streams?maxAgeMs=15000`, parser: parseRuntimeVehicles },
+    ] as const;
 
     for (const endpoint of runtimeEndpoints) {
       try {
-        const response = await fetch(endpoint, {
+        const response = await fetch(endpoint.url, {
           cache: "no-store",
-          signal: AbortSignal.timeout(4000),
+          signal: AbortSignal.timeout(3200),
         });
         if (!response.ok) continue;
         const data = await response.json();
-        const parsed = endpoint.includes("/vehicles/connected")
-          ? parseConnectedVehicles(data)
-          : parseRuntimeVehicles(data);
-        for (const vehicle of parsed) {
-          const keys = vehicleKeyCandidates(vehicle.id, vehicle.phone);
-          if (keys.length === 0) continue;
-          const key = keys[0];
-          const existing = merged.get(key);
-          merged.set(key, existing ? mergeRuntimeVehicleRecords(existing, vehicle) : vehicle);
+        const parsed = endpoint.parser(data);
+        if (parsed.length > 0) {
+          return parsed;
         }
       } catch {
         // Try next runtime endpoint.
       }
     }
-    if (merged.size > 0) {
-      return Array.from(merged.values());
-    }
 
-    try {
-      const response = await fetch(`/api/video-server/vehicles/connected`, {
-        cache: "no-store",
-        signal: AbortSignal.timeout(4500),
-      });
-      if (!response.ok) {
-        return [] as ConnectedVehicle[];
-      }
-      const data = await response.json();
-      return parseConnectedVehicles(data);
-    } catch {
-      return [] as ConnectedVehicle[];
-    }
-  }, []);
-
-  const requestStreamStart = useCallback(async (vehicle: ConnectedVehicle) => {
-    const candidateIds = Array.from(
-      new Set(
-        [vehicle.id, vehicle.phone]
-          .map((value) => String(value || "").trim())
-          .filter(Boolean)
-      )
-    );
-    if (candidateIds.length === 0) return;
-
-    const warmChannels = getWarmChannelNumbers(vehicle);
-    const channel = Number(warmChannels[0] || 1) || 1;
-
-    for (const candidateId of candidateIds) {
-      try {
-        const response = await fetch(
-          `/api/video-server/vehicles/${encodeURIComponent(candidateId)}/start-live`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ channel }),
-          }
-        );
-        if (response.ok) {
-          return;
-        }
-      } catch {
-        // Try next candidate vehicle identifier.
-      }
-    }
+    return [] as ConnectedVehicle[];
   }, []);
 
   const fetchConnectedVehicles = useCallback(async (options?: { background?: boolean }) => {
@@ -726,7 +671,6 @@ export default function LiveStreamTab({ selectedCostCenters = [] }: LiveStreamTa
     } else if (!isVehicleOnline(vehicle)) {
       return;
     } else {
-      void requestStreamStart(vehicle);
       next.add(vehicleId);
     }
     setSelectedVehicles(next);
