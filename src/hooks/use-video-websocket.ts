@@ -14,8 +14,16 @@ const ALERT_HUB_BASE_URL =
 const ALERT_HUB_WS_URL =
   process.env.NEXT_PUBLIC_ALERT_HUB_WS_URL ||
   process.env.NEXT_PUBLIC_VIDEO_WS_URL
+const LISTENER_BASE_URL =
+  process.env.NEXT_PUBLIC_LISTENER_BASE_URL ||
+  process.env.NEXT_PUBLIC_VIDEO_BASE_URL ||
+  process.env.NEXT_PUBLIC_VIDEO_SERVER_BASE_URL
+const ALERT_WS_DISABLED =
+  /^(1|true|yes|on)$/i.test(String(process.env.NEXT_PUBLIC_DISABLE_ALERT_WS || '').trim())
 
 function getWsCandidates() {
+  if (ALERT_WS_DISABLED) return []
+
   const out: string[] = []
   const seen = new Set<string>()
   const isHttpsPage = typeof window !== 'undefined' && window.location.protocol === 'https:'
@@ -30,18 +38,28 @@ function getWsCandidates() {
   const rawWs = (ALERT_HUB_WS_URL || '').trim()
   if (rawWs) {
     try {
-      const parsed = new URL(rawWs.replace(/^ws:\/\//i, 'http://').replace(/^wss:\/\//i, 'https://'))
-      push(`${rawWs.startsWith('wss://') ? 'wss' : 'ws'}://${parsed.host}`)
+      const parsed = new URL(
+        rawWs.replace(/^ws:\/\//i, 'http://').replace(/^wss:\/\//i, 'https://'),
+      )
+      const protocol = rawWs.startsWith('wss://') ? 'wss' : 'ws'
+      const normalizedPath = String(parsed.pathname || '').replace(/\/+$/, '')
+      if (normalizedPath && normalizedPath !== '/') {
+        push(`${protocol}://${parsed.host}${normalizedPath}`)
+      } else {
+        push(`${protocol}://${parsed.host}/ws/alerts`)
+      }
     } catch {
-      push(rawWs.replace(/^https?:\/\//i, isHttpsPage ? 'wss://' : 'ws://'))
+      const normalized = rawWs.replace(/^https?:\/\//i, isHttpsPage ? 'wss://' : 'ws://')
+      push(/\/ws\//i.test(normalized) ? normalized : `${normalized.replace(/\/+$/, '')}/ws/alerts`)
     }
   }
 
-  if (ALERT_HUB_BASE_URL) {
-    const cleaned = ALERT_HUB_BASE_URL
+  const pushFromHttpBase = (rawBase: string | undefined) => {
+    const cleaned = String(rawBase || '')
       .replace(/\/api\/video-server\/?$/i, '')
       .replace(/\/api\/?$/i, '')
       .replace(/\/+$/, '')
+    if (!cleaned) return
     try {
       const parsed = new URL(cleaned)
       const hostOnly = parsed.host
@@ -56,6 +74,9 @@ function getWsCandidates() {
     }
   }
 
+  pushFromHttpBase(ALERT_HUB_BASE_URL)
+  pushFromHttpBase(LISTENER_BASE_URL)
+
   if (typeof window !== 'undefined' && !rawWs && !ALERT_HUB_BASE_URL) {
     const hostname = window.location.hostname
     const isLocal = hostname === 'localhost' || hostname === '127.0.0.1'
@@ -64,7 +85,7 @@ function getWsCandidates() {
     }
   }
 
-  return out.map((base) => `${base}/ws/alerts`)
+  return out.map((base) => (/\/ws\//i.test(base) ? base : `${base}/ws/alerts`))
 }
 
 export function useVideoWebSocket(onMessage?: (data: WebSocketMessage) => void) {
@@ -86,7 +107,9 @@ export function useVideoWebSocket(onMessage?: (data: WebSocketMessage) => void) 
     const connectTimeoutMs = 8000
 
     if (!urls.length) {
-      console.error('Alert hub base URL is not set. WebSocket disabled.')
+      if (!ALERT_WS_DISABLED) {
+        console.error('Alert hub websocket URL is not set or unreachable. WebSocket disabled.')
+      }
       return
     }
 

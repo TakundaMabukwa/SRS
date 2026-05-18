@@ -23,6 +23,9 @@ function normalizeProxiedMediaUrls(value: unknown, baseUrl: string): unknown {
       if (raw.startsWith('/media/') || raw.startsWith('/captures/')) {
         return `/api/video-server${raw}`;
       }
+      if (raw.startsWith('/api/video-server/')) {
+        return raw;
+      }
       if (raw.startsWith('/api/')) {
         return `/api/video-server${raw.slice(4)}`;
       }
@@ -32,6 +35,9 @@ function normalizeProxiedMediaUrls(value: unknown, baseUrl: string): unknown {
       if (/^https?:\/\//i.test(raw)) {
         try {
           const parsed = new URL(raw);
+          if (parsed.pathname.startsWith('/api/video-server/')) {
+            return `${parsed.pathname}${parsed.search || ''}`;
+          }
           const targetBase = new URL(baseUrl);
           if (
             parsed.origin === targetBase.origin &&
@@ -548,6 +554,65 @@ function sortByLatest(a: AnyRecord, b: AnyRecord): number {
   return tb - ta;
 }
 
+function hasAlertVideoEvidence(raw: AnyRecord): boolean {
+  const hasUrl = (value: unknown) => String(value || '').trim().length > 0;
+  if (
+    hasUrl(raw?.videoUrl) ||
+    hasUrl(raw?.video_url) ||
+    hasUrl(raw?.fileUrl) ||
+    hasUrl(raw?.file_url) ||
+    hasUrl(raw?.storage_url) ||
+    hasUrl(raw?.url)
+  ) {
+    return true;
+  }
+
+  const metadata = readRecord(raw?.metadata);
+  const clips = readRecord(metadata?.videoClips);
+  const clipKeys = [
+    'cameraVideo',
+    'cameraUrl',
+    'cameraStorageUrl',
+    'cameraPreVideo',
+    'cameraPostVideo',
+    'preStorageUrl',
+    'preUrl',
+    'postStorageUrl',
+    'postUrl',
+  ];
+  if (clipKeys.some((key) => hasUrl(clips?.[key]))) {
+    return true;
+  }
+
+  const candidateLists: unknown[] = [
+    raw?.videoCaptures,
+    raw?.videoCapturesAllChannels,
+    raw?.videos,
+    raw?.captures,
+    raw?.alertCaptures,
+    metadata?.captures,
+    metadata?.videos,
+  ];
+  for (const list of candidateLists) {
+    if (!Array.isArray(list)) continue;
+    for (const row of list) {
+      if (!row || typeof row !== 'object') continue;
+      if (
+        hasUrl((row as AnyRecord).fileUrl) ||
+        hasUrl((row as AnyRecord).file_url) ||
+        hasUrl((row as AnyRecord).storage_url) ||
+        hasUrl((row as AnyRecord).videoUrl) ||
+        hasUrl((row as AnyRecord).video_url) ||
+        hasUrl((row as AnyRecord).url)
+      ) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
 function buildAlertMediaLinks(alertId: string) {
   const id = encodeURIComponent(alertId);
   return {
@@ -573,6 +638,7 @@ function mapRecentAlert(raw: AnyRecord, baseUrl: string): AnyRecord {
   const existingVideoClips = (metadata?.videoClips && typeof metadata.videoClips === 'object')
     ? metadata.videoClips
     : {};
+  const hasVideoEvidence = hasAlertVideoEvidence(raw) || !!directVideo;
   const mediaLinks = buildAlertMediaLinks(id);
   return {
     ...raw,
@@ -589,6 +655,9 @@ function mapRecentAlert(raw: AnyRecord, baseUrl: string): AnyRecord {
     timestamp,
     created_at: raw?.created_at || raw?.loggedAt || timestamp,
     last_occurrence: raw?.last_occurrence || timestamp,
+    has_video: hasVideoEvidence,
+    hasVideo: hasVideoEvidence,
+    videoReady: hasVideoEvidence,
     videoUrl: directVideo || undefined,
     mediaLinks,
     metadata: {
@@ -634,7 +703,7 @@ function filterAlertsByStatus(alerts: AnyRecord[], statusFilter: string): AnyRec
 }
 
 async function fetchRecentAlertsFromGoHub(baseUrl: string, limit: number): Promise<AnyRecord[]> {
-  const boundedLimit = Math.max(1, Math.min(limit, 2000));
+  const boundedLimit = Math.max(1, Math.min(limit, 10000));
   const response = await fetch(`${baseUrl}/api/alerts/recent?limit=${boundedLimit}`, {
     method: 'GET',
     cache: 'no-store',
@@ -708,7 +777,7 @@ function buildAlertDetail(alert: AnyRecord, baseUrl: string): AnyRecord {
 }
 
 async function findAlertById(baseUrl: string, alertId: string): Promise<AnyRecord | null> {
-  const alerts = await fetchRecentAlertsFromGoHub(baseUrl, 2000);
+  const alerts = await fetchRecentAlertsFromGoHub(baseUrl, 6000);
   return alerts.find((alert) => String(alert?.id || '') === String(alertId)) || null;
 }
 
@@ -1003,6 +1072,78 @@ async function handleAlertHubCompatPost(pathArray: string[], baseUrl: string, bo
   }, 404);
 }
 
+async function handleVehicleVideoAvailabilityCompat(
+  request: NextRequest,
+  pathArray: string[],
+  baseUrl: string,
+): Promise<Response> {
+  const vehicleId = String(pathArray[1] || '').trim();
+  if (!vehicleId) {
+    return okJson({ success: false, message: 'vehicleId is required' }, 400);
+  }
+
+  const search = request.nextUrl.searchParams;
+  const dateRaw = String(search.get('date') || '').trim();
+  const fromRaw = String(search.get('from') || '').trim();
+  const toRaw = String(search.get('to') || '').trim();
+
+  let fromIso = fromRaw;
+  let toIso = toRaw;
+  if (!fromIso || !toIso) {
+    const date = dateRaw ? new Date(`${dateRaw}T00:00:00.000Z`) : new Date();
+    if (Number.isNaN(date.getTime())) {
+      return okJson({ success: false, message: 'Invalid date' }, 400);
+    }
+    const dayStart = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate(), 0, 0, 0, 0));
+    const dayEnd = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate(), 23, 59, 59, 999));
+    fromIso = dayStart.toISOString();
+    toIso = dayEnd.toISOString();
+  }
+
+  const upstreamUrl = `${baseUrl}/api/storage/availability?sim=${encodeURIComponent(vehicleId)}&from=${encodeURIComponent(fromIso)}&to=${encodeURIComponent(toIso)}`;
+
+  try {
+    const response = await fetch(upstreamUrl, { method: 'GET', cache: 'no-store', next: { revalidate: 0 } });
+    if (!response.ok) {
+      return okJson({
+        success: true,
+        vehicleId,
+        date: dateRaw || fromIso.slice(0, 10),
+        rows: [],
+      });
+    }
+
+    const payload = await response.json().catch(() => ({} as AnyRecord));
+    const channelRows = Array.isArray((payload as AnyRecord)?.channels) ? (payload as AnyRecord).channels as AnyRecord[] : [];
+    const rows = channelRows.map((row) => ({
+      channel: Number(row?.channel || 0) || 1,
+      approx_first_packet_time: row?.from || null,
+      approx_last_packet_time: row?.to || null,
+      segment_count: Number(row?.segmentCount || 0),
+    }));
+
+    return okJson({
+      success: true,
+      vehicleId,
+      date: dateRaw || fromIso.slice(0, 10),
+      rows,
+      data: { rows },
+      source: 'go-vid-hub',
+      target: baseUrl,
+    });
+  } catch {
+    return okJson({
+      success: true,
+      vehicleId,
+      date: dateRaw || fromIso.slice(0, 10),
+      rows: [],
+      data: { rows: [] },
+      source: 'go-vid-hub',
+      target: baseUrl,
+    });
+  }
+}
+
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ path: string[] }> }
@@ -1026,6 +1167,14 @@ export async function GET(
 
   if (firstSegment === 'vehicles' && thirdSegment === 'screenshot') {
     return handleVehicleScreenshotProxy(request, pathArray, target.baseUrl)
+  }
+
+  if (
+    firstSegment === 'vehicles' &&
+    String(pathArray[2] || '').toLowerCase() === 'video' &&
+    String(pathArray[3] || '').toLowerCase() === 'availability'
+  ) {
+    return handleVehicleVideoAvailabilityCompat(request, pathArray, target.baseUrl)
   }
 
   const upstreamPath = (firstSegment === 'media' || firstSegment === 'captures') ? `/${path}` : `/api/${path}`

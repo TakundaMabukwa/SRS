@@ -1,7 +1,7 @@
 /* eslint-disable @next/next/no-img-element */
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { RefreshCw, Download, MonitorPlay, Shield, RadioTower, ExternalLink } from "lucide-react";
@@ -35,8 +35,9 @@ type VehicleChannelCard = {
   channel: number;
   active: boolean;
   isLive: boolean;
-  imageUrl: string;
+  imageUrl?: string;
   timestamp?: string;
+  source?: "ws" | "stream";
 };
 
 type VehicleGroupCard = {
@@ -53,6 +54,35 @@ type VehicleCatalogRow = {
   camera_serial?: string | null;
   cost_center?: string | null;
 };
+
+type ScreenshotResult = {
+  vehicleId?: string;
+  channel?: number;
+  ok?: boolean;
+  fileUrl?: string;
+  sourceUrl?: string;
+};
+
+type ScreenshotWsMessage = {
+  type?: "snapshot" | "update";
+  results?: ScreenshotResult[];
+  result?: ScreenshotResult;
+};
+
+type ScreenshotEntry = {
+  url: string;
+  timestampMs: number;
+  ok: boolean;
+};
+
+const LIVE_PREVIEW_BASE_URL =
+  process.env.NEXT_PUBLIC_LIVE_PREVIEW_BASE_URL ||
+  process.env.NEXT_PUBLIC_PLAYBACK_HUB_BASE_URL ||
+  "";
+const LIVE_PREVIEW_WS_URL =
+  process.env.NEXT_PUBLIC_LIVE_PREVIEW_WS_URL ||
+  "";
+const LIVE_SCREENSHOT_WINDOW_MS = 10 * 60 * 1000;
 
 function normalizeCostCenter(value: unknown): string {
   return String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
@@ -71,6 +101,15 @@ function toVehicleKey(vehicle: ConnectedVehicle): string {
   return String(vehicle.id || vehicle.phone || "").trim();
 }
 
+function normalizeVehicleAlias(value: string): string {
+  const trimmed = String(value || "").trim();
+  if (!/^\d+$/.test(trimmed)) return trimmed;
+  if (trimmed.startsWith("862") && trimmed.length > 12) {
+    return trimmed.slice(3);
+  }
+  return trimmed;
+}
+
 function parseDate(value?: string): number {
   if (!value) return 0;
   const parsed = Date.parse(value);
@@ -85,23 +124,133 @@ function getScreenshotChannels(channels: ChannelInfo[] | undefined): number[] {
   return Array.from(new Set([1, 2, ...discovered])).sort((a, b) => a - b);
 }
 
-function buildFallbackIds(vehicle: ConnectedVehicle): string {
-  return Array.from(
-    new Set([vehicle.id, vehicle.phone].map((value) => String(value || "").trim()).filter(Boolean))
-  ).join(",");
+function screenshotKey(vehicleId: string, channel: number): string {
+  return `${String(vehicleId || "").trim()}|${Number(channel || 0)}`;
 }
 
-function buildScreenshotUrl(vehicle: ConnectedVehicle, channel: number, refreshToken: number) {
-  const params = new URLSearchParams({
-    channel: String(channel),
-    maxAgeMs: "45000",
-    _ts: String(refreshToken),
-  });
-  const fallbackIds = buildFallbackIds(vehicle);
-  if (fallbackIds) {
-    params.set("fallbackIds", fallbackIds);
+function buildVehicleCandidateIds(vehicle: ConnectedVehicle): string[] {
+  const values = [vehicle.id, vehicle.phone]
+    .map((value) => String(value || "").trim())
+    .filter(Boolean);
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const value of values) {
+    const alias = normalizeVehicleAlias(value);
+    if (!seen.has(value)) {
+      out.push(value);
+      seen.add(value);
+    }
+    if (alias && alias !== value && !seen.has(alias)) {
+      out.push(alias);
+      seen.add(alias);
+    }
   }
-  return `/api/live-preview/vehicles/${encodeURIComponent(vehicle.id)}/screenshot?${params.toString()}`;
+  return out;
+}
+
+function toProxiedScreenshotUrl(rawValue: unknown): string {
+  const raw = String(rawValue || "").trim();
+  if (!raw) return "";
+
+  if (raw.startsWith("/api/video-server/")) {
+    return raw;
+  }
+  if (raw.startsWith("/api/")) {
+    return `/api/video-server${raw.slice(4)}`;
+  }
+  if (raw.startsWith("/captures/") || raw.startsWith("/media/")) {
+    return `/api/video-server${raw}`;
+  }
+  if (raw.startsWith("captures/")) {
+    return `/api/video-server/${raw}`;
+  }
+  if (/^https?:\/\//i.test(raw)) {
+    try {
+      const parsed = new URL(raw);
+      if (parsed.pathname.startsWith("/api/video-server/")) {
+        return `${parsed.pathname}${parsed.search || ""}`;
+      }
+      if (parsed.pathname.startsWith("/api/")) {
+        return `/api/video-server${parsed.pathname.slice(4)}${parsed.search || ""}`;
+      }
+      if (parsed.pathname.startsWith("/captures/") || parsed.pathname.startsWith("/media/")) {
+        return `/api/video-server${parsed.pathname}${parsed.search || ""}`;
+      }
+    } catch {
+      return raw;
+    }
+  }
+  return raw;
+}
+
+function toScreenshotWsCandidates(): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const isHttps = typeof window !== "undefined" && window.location.protocol === "https:";
+
+  const push = (url: string) => {
+    const normalized = String(url || "").trim().replace(/\/+$/, "");
+    if (!normalized || seen.has(normalized)) return;
+    seen.add(normalized);
+    out.push(normalized);
+  };
+
+  const rawWs = String(LIVE_PREVIEW_WS_URL || "").trim();
+  if (rawWs) {
+    if (/^wss?:\/\//i.test(rawWs)) {
+      try {
+        const parsed = new URL(rawWs);
+        const path = String(parsed.pathname || "").replace(/\/+$/, "");
+        if (path && path !== "/") {
+          push(`${parsed.protocol}//${parsed.host}${path}`);
+        } else {
+          push(`${parsed.protocol}//${parsed.host}/ws/screenshots`);
+        }
+      } catch {
+        push(rawWs.replace(/\/+$/, "").replace(/\/ws\/screenshots$/i, "") + "/ws/screenshots");
+      }
+    } else if (/^https?:\/\//i.test(rawWs)) {
+      try {
+        const parsed = new URL(rawWs);
+        const proto = parsed.protocol === "https:" ? "wss" : "ws";
+        const path = String(parsed.pathname || "").replace(/\/+$/, "");
+        if (path && path !== "/") {
+          push(`${proto}://${parsed.host}${path}`);
+        } else {
+          push(`${proto}://${parsed.host}/ws/screenshots`);
+        }
+      } catch {
+        // ignore invalid URL and continue with other candidates
+      }
+    }
+  }
+
+  const rawHttp = String(LIVE_PREVIEW_BASE_URL || "").trim();
+  if (rawHttp) {
+    try {
+      const parsed = new URL(rawHttp);
+      const proto = parsed.protocol === "https:" ? "wss" : "ws";
+      if (isHttps) {
+        push(`wss://${parsed.host}/ws/screenshots`);
+      }
+      push(`${proto}://${parsed.host}/ws/screenshots`);
+      if (!isHttps && parsed.protocol !== "https:") {
+        push(`ws://${parsed.host}/ws/screenshots`);
+      }
+    } catch {
+      // ignore invalid URL
+    }
+  }
+
+  // Only fall back to current window host when no explicit screenshot endpoints are configured.
+  if (typeof window !== "undefined" && !rawWs && !rawHttp) {
+    const host = window.location.host;
+    if (host) {
+      push(`${isHttps ? "wss" : "ws"}://${host}/ws/screenshots`);
+    }
+  }
+
+  return out;
 }
 
 function readRecord(value: unknown): Record<string, unknown> {
@@ -149,14 +298,52 @@ export default function ScreenshotsDashboardTab({
   selectedCostCenters = [],
 }: ScreenshotsDashboardTabProps) {
   const supabase = createClient();
+  const wsRef = useRef<WebSocket | null>(null);
+  const wsReconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const wsUrlCursorRef = useRef(0);
   const [vehicles, setVehicles] = useState<ConnectedVehicle[]>([]);
+  const [screenshotMap, setScreenshotMap] = useState<Record<string, ScreenshotEntry>>({});
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [wsConnected, setWsConnected] = useState(false);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
+  const [lastScreenshotAt, setLastScreenshotAt] = useState<Date | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [gridColumns, setGridColumns] = useState(4);
-  const [refreshToken, setRefreshToken] = useState(Date.now());
-  const LIVE_SCREENSHOT_WINDOW_MS = 10 * 60 * 1000;
+
+  const ingestScreenshotResult = useCallback((result: ScreenshotResult) => {
+    const vehicleId = String(result.vehicleId || "").trim();
+    const channel = Number(result.channel || 0);
+    if (!vehicleId || !Number.isFinite(channel) || channel <= 0) return;
+
+    const rawUrl = String(result.fileUrl || "").trim();
+    if (!rawUrl) return;
+    const normalizedUrl = toProxiedScreenshotUrl(rawUrl);
+    if (!normalizedUrl) return;
+
+    const nowMs = Date.now();
+    const entries: Array<[string, ScreenshotEntry]> = [];
+    const ids = [vehicleId, normalizeVehicleAlias(vehicleId)].filter(Boolean);
+    for (const id of ids) {
+      entries.push([
+        screenshotKey(id, channel),
+        {
+          url: normalizedUrl,
+          timestampMs: nowMs,
+          ok: result.ok !== false,
+        },
+      ]);
+    }
+
+    setScreenshotMap((prev) => {
+      const next = { ...prev };
+      for (const [key, value] of entries) {
+        next[key] = value;
+      }
+      return next;
+    });
+    setLastScreenshotAt(new Date(nowMs));
+  }, []);
 
   const fetchConnectedVehicles = useCallback(async () => {
     const liveRowsResponse = await fetch("/api/live-preview/streams?maxAgeMs=45000", {
@@ -255,7 +442,6 @@ export default function ScreenshotsDashboardTab({
 
     setVehicles(enrichedVehicles);
     setLastRefresh(new Date());
-    setRefreshToken(Date.now());
     return enrichedVehicles;
   }, [supabase]);
 
@@ -292,12 +478,169 @@ export default function ScreenshotsDashboardTab({
   }, [refreshAll]);
 
   useEffect(() => {
-    const pollingInterval = setInterval(() => {
-      void refreshAll();
+    let active = true;
+    const urls = toScreenshotWsCandidates();
+    if (urls.length === 0) {
+      setError("No screenshot websocket URL configured.");
+      return () => {
+        active = false;
+      };
+    }
+
+    const clearReconnect = () => {
+      if (wsReconnectTimerRef.current) {
+        clearTimeout(wsReconnectTimerRef.current);
+        wsReconnectTimerRef.current = null;
+      }
+    };
+
+    const handleMessage = (event: MessageEvent<string>) => {
+      let payload: ScreenshotWsMessage | null = null;
+      try {
+        payload = JSON.parse(event.data) as ScreenshotWsMessage;
+      } catch {
+        return;
+      }
+      if (!payload) return;
+      if (payload.type === "snapshot" && Array.isArray(payload.results)) {
+        payload.results.forEach(ingestScreenshotResult);
+        return;
+      }
+      if (payload.type === "update" && payload.result) {
+        ingestScreenshotResult(payload.result);
+      }
+    };
+
+    const scheduleReconnect = () => {
+      if (!active || wsReconnectTimerRef.current) return;
+      wsReconnectTimerRef.current = setTimeout(() => {
+        wsReconnectTimerRef.current = null;
+        openSocket();
+      }, 2500);
+    };
+
+    const openSocket = () => {
+      if (!active || urls.length === 0) return;
+      clearReconnect();
+
+      const current = wsRef.current;
+      if (current) {
+        wsRef.current = null;
+        current.onopen = null;
+        current.onmessage = null;
+        current.onerror = null;
+        current.onclose = null;
+        current.close();
+      }
+
+      let attempts = 0;
+      const startIndex = wsUrlCursorRef.current % urls.length;
+
+      const tryNext = () => {
+        if (!active) return;
+        if (attempts >= urls.length) {
+          setWsConnected(false);
+          scheduleReconnect();
+          return;
+        }
+
+        const idx = (startIndex + attempts) % urls.length;
+        const wsUrl = urls[idx];
+        attempts += 1;
+
+        let socket: WebSocket;
+        try {
+          socket = new WebSocket(wsUrl);
+        } catch {
+          tryNext();
+          return;
+        }
+
+        wsRef.current = socket;
+        wsUrlCursorRef.current = idx + 1;
+
+        const openTimeout = setTimeout(() => {
+          if (socket.readyState === WebSocket.CONNECTING) {
+            socket.close();
+          }
+        }, 7000);
+
+        socket.onopen = () => {
+          clearTimeout(openTimeout);
+          if (!active || wsRef.current !== socket) return;
+          setWsConnected(true);
+          setError(null);
+          clearReconnect();
+        };
+
+        socket.onmessage = handleMessage;
+        socket.onerror = () => {
+          clearTimeout(openTimeout);
+        };
+        socket.onclose = () => {
+          clearTimeout(openTimeout);
+          if (wsRef.current === socket) {
+            wsRef.current = null;
+          }
+          if (!active) return;
+          setWsConnected(false);
+          if (attempts < urls.length) {
+            tryNext();
+            return;
+          }
+          scheduleReconnect();
+        };
+      };
+
+      tryNext();
+    };
+
+    openSocket();
+
+    return () => {
+      active = false;
+      clearReconnect();
+      const socket = wsRef.current;
+      wsRef.current = null;
+      if (socket) {
+        socket.onopen = null;
+        socket.onmessage = null;
+        socket.onerror = null;
+        socket.onclose = null;
+        socket.close();
+      }
+    };
+  }, [ingestScreenshotResult]);
+
+  useEffect(() => {
+    let active = true;
+
+    const refreshFromLatest = async () => {
+      try {
+        const response = await fetch(`/api/video-server/live/screenshots/latest?_ts=${Date.now()}`, {
+          cache: "no-store",
+          signal: AbortSignal.timeout(20000),
+        });
+        if (!response.ok) return;
+        const payload = await response.json().catch(() => ({} as Record<string, unknown>));
+        const rows = Array.isArray(payload.results) ? payload.results as ScreenshotResult[] : [];
+        if (!active || rows.length === 0) return;
+        rows.forEach(ingestScreenshotResult);
+      } catch {
+        // keep quiet; websocket reconnect flow continues in parallel
+      }
+    };
+
+    void refreshFromLatest();
+    const timer = setInterval(() => {
+      void refreshFromLatest();
     }, 30000);
 
-    return () => clearInterval(pollingInterval);
-  }, [refreshAll]);
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
+  }, [ingestScreenshotResult]);
 
   const selectedCostCenterSet = useMemo(
     () =>
@@ -324,6 +667,7 @@ export default function ScreenshotsDashboardTab({
       .map((vehicle) => {
         const vehicleId = toVehicleKey(vehicle);
         if (!vehicleId) return null;
+        const candidateIds = buildVehicleCandidateIds(vehicle);
 
         const channels = getScreenshotChannels(vehicle.channels)
           .filter((channel) => channel === 1 || channel === 2)
@@ -331,16 +675,31 @@ export default function ScreenshotsDashboardTab({
             const liveRow = (vehicle.channels || []).find(
               (entry) => Number(entry.logicalChannel ?? entry.channel ?? 0) === Number(channel)
             );
-            const timestamp = Number(liveRow?.updatedAtMs || 0) > 0
-              ? new Date(Number(liveRow?.updatedAtMs)).toISOString()
+            const streamTimestampMs = Number(liveRow?.updatedAtMs || 0);
+            let shot: ScreenshotEntry | undefined;
+            for (const id of candidateIds) {
+              const entry = screenshotMap[screenshotKey(id, channel)];
+              if (!entry) continue;
+              if (!shot || entry.timestampMs > shot.timestampMs) {
+                shot = entry;
+              }
+            }
+            const shotTimestampMs = Number(shot?.timestampMs || 0);
+            const timestampMs = Math.max(streamTimestampMs, shotTimestampMs);
+            const timestamp = timestampMs > 0
+              ? new Date(timestampMs).toISOString()
               : undefined;
+            const isLive = shotTimestampMs > 0
+              ? (Date.now() - shotTimestampMs) <= LIVE_SCREENSHOT_WINDOW_MS
+              : !!liveRow;
 
             return {
               channel,
-              active: vehicle.connected === true || !!liveRow,
-              isLive: !!liveRow,
-              imageUrl: buildScreenshotUrl(vehicle, channel, refreshToken),
+              active: vehicle.connected === true || !!liveRow || !!shot,
+              isLive,
+              imageUrl: shot?.url,
               timestamp,
+              source: shot ? "ws" : "stream",
             } satisfies VehicleChannelCard;
           });
 
@@ -361,7 +720,7 @@ export default function ScreenshotsDashboardTab({
         if (aLatest !== bLatest) return bLatest - aLatest;
         return a.displayLabel.localeCompare(b.displayLabel);
       });
-  }, [refreshToken, scopedVehicles]);
+  }, [scopedVehicles, screenshotMap]);
 
   const liveCount = useMemo(() => {
     const now = Date.now();
@@ -369,7 +728,7 @@ export default function ScreenshotsDashboardTab({
       const ts = parseDate(channelCard.timestamp);
       return ts > 0 && now - ts <= LIVE_SCREENSHOT_WINDOW_MS;
     }).length;
-  }, [cards, LIVE_SCREENSHOT_WINDOW_MS]);
+  }, [cards]);
 
   const gridClassName = useMemo(() => {
     switch (gridColumns) {
@@ -406,7 +765,7 @@ export default function ScreenshotsDashboardTab({
               </div>
               <h2 className="mt-3 text-3xl font-bold tracking-tight">Screenshot Control Room</h2>
               <p className="mt-1 text-sm text-slate-300">
-                Sandbox-backed screenshots for CH1 and CH2, refreshed every 30 seconds.
+                Websocket-backed screenshots for CH1 and CH2 from go-hub live feed.
               </p>
             </div>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
@@ -422,7 +781,7 @@ export default function ScreenshotsDashboardTab({
               <div className="rounded-lg border border-slate-700 bg-slate-900/70 px-4 py-3">
                 <p className="text-[11px] uppercase tracking-wide text-slate-400">Last Update</p>
                 <p className="mt-1 text-sm font-semibold text-slate-100">
-                  {lastRefresh ? lastRefresh.toLocaleTimeString() : "Waiting..."}
+                  {lastScreenshotAt ? lastScreenshotAt.toLocaleTimeString() : (lastRefresh ? lastRefresh.toLocaleTimeString() : "Waiting...")}
                 </p>
               </div>
             </div>
@@ -430,8 +789,17 @@ export default function ScreenshotsDashboardTab({
           <div className="mt-4 flex flex-wrap items-center gap-2">
             <Button onClick={() => void refreshAll()} disabled={refreshing} className="bg-cyan-600 hover:bg-cyan-700">
               <RefreshCw className={`mr-2 h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
-              Refresh
+              Refresh vehicles
             </Button>
+            <div
+              className={`rounded-full border px-3 py-1 text-xs font-medium ${
+                wsConnected
+                  ? "border-emerald-400/40 bg-emerald-500/10 text-emerald-300"
+                  : "border-amber-400/40 bg-amber-500/10 text-amber-300"
+              }`}
+            >
+              {wsConnected ? "WS Connected" : "WS Reconnecting"}
+            </div>
             {detachable && (
               <Button
                 variant="outline"
@@ -516,7 +884,7 @@ export default function ScreenshotsDashboardTab({
                         className="overflow-hidden rounded-md border border-slate-300 bg-slate-950 text-slate-100"
                       >
                         <div className="relative aspect-video bg-slate-900">
-                          {channelCard.active ? (
+                          {channelCard.imageUrl ? (
                             <img
                               src={channelCard.imageUrl}
                               alt={`Vehicle ${card.vehicleId} channel ${channelCard.channel}`}
@@ -530,21 +898,26 @@ export default function ScreenshotsDashboardTab({
                           <div className="absolute right-2 top-2 rounded bg-black/70 px-2 py-1 text-[11px] font-medium">
                             CH {channelCard.channel}
                           </div>
+                          {channelCard.source === "ws" && (
+                            <div className="absolute left-2 top-2 rounded bg-cyan-500/80 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-white">
+                              Live Shot
+                            </div>
+                          )}
                         </div>
                         <div className="flex items-start justify-between gap-3 border-t border-slate-800 px-3 py-2">
                           <div className="min-w-0">
                             <p className="text-[11px] text-slate-400">
                               {channelCard.timestamp
                                 ? `Refreshed ${new Date(channelCard.timestamp).toLocaleTimeString()}`
-                                : (channelCard.active ? "Awaiting screenshot" : "Channel idle")}
+                                : (channelCard.active ? "Awaiting websocket screenshot" : "Channel idle")}
                             </p>
                           </div>
-                          {channelCard.active && (
+                          {channelCard.imageUrl && (
                             <Button
                               size="icon"
                               variant="secondary"
                               className="h-7 w-7 shrink-0"
-                              onClick={() => window.open(channelCard.imageUrl, "_blank")}
+                              onClick={() => window.open(channelCard.imageUrl || "", "_blank")}
                               title="Open image"
                             >
                               <Download className="h-3 w-3" />
