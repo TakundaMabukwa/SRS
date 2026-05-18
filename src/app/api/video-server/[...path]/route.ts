@@ -1055,7 +1055,7 @@ async function handleAlertHubCompatPost(pathArray: string[], baseUrl: string, bo
     );
   }
 
-  if (action === 'acknowledge' || action === 'escalate' || action === 'collect-evidence' || action === 'request-report-video') {
+  if (action === 'acknowledge' || action === 'escalate') {
     return okJson({
       success: true,
       alertId,
@@ -1063,6 +1063,105 @@ async function handleAlertHubCompatPost(pathArray: string[], baseUrl: string, bo
       message: `Action ${action} accepted (compat mode on go-vid-hub)`,
       target: baseUrl,
     });
+  }
+
+  if (action === 'collect-evidence' || action === 'request-report-video') {
+    const postJson = async (url: string, payload: AnyRecord, headers?: Record<string, string>) => {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(headers || {}),
+        },
+        body: JSON.stringify(payload),
+        cache: 'no-store',
+      })
+      const body = await response.json().catch(() => ({}))
+      return { response, body }
+    }
+
+    const actionPayload: AnyRecord = {
+      ...(body || {}),
+      alertId,
+      ensureVideo: body?.ensureVideo !== false,
+      ensureScreenshots: body?.ensureScreenshots === true,
+    }
+
+    // 1) Try direct alert-action endpoints first (if upstream supports them).
+    const directCandidates = [
+      `${baseUrl}/api/alerts/${encodeURIComponent(alertId)}/${action}`,
+      action === 'request-report-video'
+        ? `${baseUrl}/api/alerts/${encodeURIComponent(alertId)}/request-report-video`
+        : `${baseUrl}/api/alerts/${encodeURIComponent(alertId)}/collect-evidence`,
+    ]
+    for (const candidate of directCandidates) {
+      try {
+        const { response, body: actionBody } = await postJson(candidate, actionPayload)
+        if (response.ok) {
+          return okJson({
+            success: true,
+            alertId,
+            action,
+            target: baseUrl,
+            upstream: candidate,
+            ...(typeof actionBody === 'object' && actionBody ? actionBody : {}),
+          }, response.status)
+        }
+      } catch {
+        // Try next candidate
+      }
+    }
+
+    // 2) Fallback: trigger capture job directly on go-hub internal endpoint.
+    try {
+      const alert = await findAlertById(baseUrl, alertId)
+      const vehicleId = String(alert?.vehicleId || alert?.device_id || alert?.vehicle_id || '').trim()
+      const channel = Number(alert?.channel || 1) || 1
+      const timestamp = String(
+        alert?.playbackTimestamp ||
+        alert?.last_occurrence ||
+        alert?.timestamp ||
+        alert?.created_at ||
+        new Date().toISOString()
+      ).trim()
+      const internalPayload: AnyRecord = {
+        alertId,
+        vehicleId,
+        channel,
+        channels: [1, 2],
+        timestamp,
+        preRollMs: 30 * 1000,
+        postRollMs: 30 * 1000,
+        maxWaitMs: 180 * 1000,
+        retryIntervalMs: 5 * 1000,
+        type: String(alert?.alert_type || alert?.type || 'Alert'),
+        priority: String(alert?.priority || 'medium'),
+        metadata: (alert?.metadata && typeof alert.metadata === 'object') ? alert.metadata : {},
+      }
+      const internalToken = String(process.env.INTERNAL_WORKER_TOKEN || process.env.VIDEO_SERVER_INTERNAL_TOKEN || '').trim()
+      const headers = internalToken ? { 'X-Internal-Token': internalToken } : undefined
+      const { response, body: internalBody } = await postJson(`${baseUrl}/api/internal/alerts/capture`, internalPayload, headers)
+      if (response.ok) {
+        return okJson({
+          success: true,
+          alertId,
+          action,
+          target: baseUrl,
+          upstream: `${baseUrl}/api/internal/alerts/capture`,
+          ...(typeof internalBody === 'object' && internalBody ? internalBody : {}),
+        }, response.status)
+      }
+    } catch {
+      // handled below
+    }
+
+    return okJson({
+      success: false,
+      alertId,
+      action,
+      message: `Failed to trigger ${action} on go-vid-hub`,
+      target: baseUrl,
+    }, 502)
   }
 
   return okJson({

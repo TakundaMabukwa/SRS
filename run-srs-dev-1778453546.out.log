@@ -1,0 +1,28 @@
+
+> breakdown-dashboard@0.1.0 dev C:\Users\mabuk\Desktop\Dashboards\SRS
+> cross-env NODE_OPTIONS=--max-old-space-size=1536 UV_THREADPOOL_SIZE=1 NEXT_DISABLE_ESLINT=1 next dev "--port" "4121"
+
+   ▲ Next.js 15.5.14
+   - Local:        http://localhost:4121
+   - Network:      http://192.168.0.129:4121
+   - Environments: .env.local
+   - Experiments (use with caution):
+     ⨯ webpackBuildWorker
+
+ ✓ Starting...
+ ✓ Ready in 3s
+ ○ Compiling /api/live-preview/streams ...
+ ✓ Compiled /api/live-preview/streams in 522ms (298 modules)
+ GET /api/live-preview/streams?maxAgeMs=45000 200 in 833ms
+ ✓ Compiled /api/live-preview/vehicles/[vehicleId]/screenshot in 151ms (300 modules)
+ GET /api/live-preview/vehicles/221085863941/screenshot?channel=1&maxAgeMs=45000 404 in 1132ms
+ GET /api/live-preview/vehicles/221085863941/screenshot?channel=2&maxAgeMs=45000 404 in 520ms
+ GET /api/live-preview/vehicles/221087884028/screenshot?channel=1&maxAgeMs=45000 404 in 108ms
+ GET /api/live-preview/vehicles/221087884028/screenshot?channel=2&maxAgeMs=45000 404 in 98ms
+ GET /api/live-preview/vehicles/221087866173/screenshot?channel=1&maxAgeMs=45000 404 in 78ms
+ GET /api/live-preview/vehicles/221087866173/screenshot?channel=2&maxAgeMs=45000 404 in 381ms
+ GET /api/live-preview/vehicles/221083721646/screenshot?channel=1&maxAgeMs=45000 404 in 91ms
+ GET /api/live-preview/vehicles/221083721646/screenshot?channel=2&maxAgeMs=45000 404 in 94ms
+ GET /api/live-preview/vehicles/221087875570/screenshot?channel=1&maxAgeMs=45000 200 in 156ms
+ GET /api/live-preview/vehicles/221087875570/screenshot?channel=2&maxAgeMs=45000 200 in 474ms
+[?25h

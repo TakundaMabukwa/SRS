@@ -30,7 +30,8 @@ type PlaybackReadyCacheEntry = {
 const DEFAULT_VIDEO_PROXY_BASE = "/api/video-server";
 const ALERT_PLAYBACK_WINDOW_BEFORE_MS = 60 * 1000;
 const ALERT_PLAYBACK_WINDOW_AFTER_MS = 60 * 1000;
-const ALERT_LAST_AVAILABLE_FALLBACK_MS = 339 * 1000;
+const ALERT_LAST_AVAILABLE_FALLBACK_MS = 300 * 1000;
+const ALERT_MEDIA_REQUEST_COOLDOWN_MS = 20 * 1000;
 const ALERT_READY_FALSE_TTL_MS = 15 * 1000;
 const ALERT_AVAILABILITY_ROWS_TTL_MS = 20 * 1000;
 const PLAYBACK_CACHE_PREFIX = "alert-playback:";
@@ -45,8 +46,9 @@ export const ALERT_READY_WINDOW_OPTIONS: AlertPlaybackWindowOptions = {
   beforeMs: 30 * 1000,
   afterMs: 30 * 1000,
   preferLatestAvailable: true,
-  latestAvailableDurationMs: 339 * 1000,
+  latestAvailableDurationMs: 300 * 1000,
 };
+const alertMediaRequestCache = new Map<string, number>();
 
 function resolvePlaybackWindowOptions(options?: AlertPlaybackWindowOptions) {
   const beforeCandidate = Number(options?.beforeMs);
@@ -1036,6 +1038,49 @@ async function fetchDetailedAlertForPlayback(
   return null;
 }
 
+async function requestAlertMediaGeneration(
+  alertId: string,
+  videoProxyBase = DEFAULT_VIDEO_PROXY_BASE
+) {
+  const normalizedAlertId = String(alertId || "").trim();
+  if (!normalizedAlertId) return false;
+
+  const now = Date.now();
+  const lastRequestedAt = Number(alertMediaRequestCache.get(normalizedAlertId) || 0);
+  if (lastRequestedAt > 0 && now - lastRequestedAt < ALERT_MEDIA_REQUEST_COOLDOWN_MS) {
+    return false;
+  }
+  alertMediaRequestCache.set(normalizedAlertId, now);
+
+  const payload = JSON.stringify({
+    ensureVideo: true,
+    ensureScreenshots: false,
+  });
+
+  let accepted = false;
+  for (const action of ["collect-evidence", "request-report-video"]) {
+    try {
+      const response = await fetch(
+        `${videoProxyBase}/alerts/${encodeURIComponent(normalizedAlertId)}/${action}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: payload,
+          cache: "no-store",
+          signal: timeoutSignal(8000),
+        }
+      );
+      if (response.ok) {
+        accepted = true;
+      }
+    } catch {
+      // Try next action endpoint.
+    }
+  }
+
+  return accepted;
+}
+
 async function resolvePlaybackWindowForAlert(
   alert: PlaybackJsonRecord,
   videoProxyBase = DEFAULT_VIDEO_PROXY_BASE,
@@ -1147,7 +1192,7 @@ async function resolvePlaybackWindowForAlert(
         return requestChannelPlaybackForRange(
           targetChannel,
           fallbackRange,
-          "Nearest Available Playback (last 339s)",
+          "Nearest Available Playback (last 300s)",
           "alert_window_latest",
           preferred.channel
         );
@@ -1264,6 +1309,19 @@ export async function resolveAlertPlaybackVideos(
       const directFromDetail = extractDirectAlertPlaybackVideos(detailedAlert, videoProxyBase);
       if (directFromDetail.length > 0) {
         return directFromDetail;
+      }
+    }
+  }
+
+  const mediaRequested = await requestAlertMediaGeneration(id, videoProxyBase);
+  if (mediaRequested) {
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+    const refreshedAlert = await fetchDetailedAlertForPlayback(detailedAlert || alert, videoProxyBase);
+    if (refreshedAlert) {
+      detailedAlert = refreshedAlert;
+      const directAfterRequest = extractDirectAlertPlaybackVideos(detailedAlert, videoProxyBase);
+      if (directAfterRequest.length > 0) {
+        return directAfterRequest;
       }
     }
   }

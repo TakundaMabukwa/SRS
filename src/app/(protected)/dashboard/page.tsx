@@ -3313,8 +3313,9 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
               {
                 beforeMs: 60 * 1000,
                 afterMs: 0,
-                preferLatestAvailable: true,
-                latestAvailableDurationMs: 339 * 1000,
+                fetchAlertDetail: true,
+                preferLatestAvailable: false,
+                latestAvailableDurationMs: 300 * 1000,
               }
             );
           } catch (videoError) {
@@ -3506,8 +3507,9 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
         {
           beforeMs: 30 * 1000,
           afterMs: 30 * 1000,
-          preferLatestAvailable: true,
-          latestAvailableDurationMs: 339 * 1000,
+          fetchAlertDetail: true,
+          preferLatestAvailable: false,
+          latestAvailableDurationMs: 300 * 1000,
         }
       );
       const seen = new Set<string>();
@@ -3545,6 +3547,32 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
         entries.push({ key, label, url: normalized });
       }
     };
+
+    // 1) Prefer stored clip links captured for this alert.
+    const storedMediaVideos = Array.isArray(selectedAlert?.media?.videos)
+      ? selectedAlert.media.videos
+      : [];
+    for (const video of storedMediaVideos) {
+      pushIf(
+        String(video?.key || video?.video_type || video?.type || "stored_clip"),
+        String(video?.label || video?.title || "Stored Alert Clip"),
+        video?.url ||
+          video?.storage_url ||
+          video?.signed_url ||
+          video?.signedUrl ||
+          video?.playback_url ||
+          video?.download_url ||
+          video?.video_url ||
+          video?.path
+      );
+    }
+
+    // 2) Include direct clip-url fields if present.
+    pushIf("clip_pre", "Stored Alert Clip CH1", selectedAlert?.videos?.pre_event);
+    pushIf("clip_post", "Stored Alert Clip CH2", selectedAlert?.videos?.post_event);
+    pushIf("clip_camera", "Stored Camera Clip", selectedAlert?.videos?.camera_sd);
+
+    // 3) Fallback to reconstructed playback URLs.
     selectedAlertPlaybackVideos.forEach((video) => {
       pushIf(video.key, video.label, video.url);
     });
@@ -3703,6 +3731,10 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
   const visibleAlertScreenshots = alertScreenshotsExpanded
     ? selectedAlertScreenshotsWithFallback
     : (selectedAlertPrimaryScreenshotsWithFallback.length > 0 ? selectedAlertPrimaryScreenshotsWithFallback : selectedAlertScreenshotsWithFallback.slice(0, 4));
+  const currentIncidentScreenshot =
+    selectedAlertPrimaryScreenshotsWithFallback[0] ||
+    selectedAlertScreenshotsWithFallback[0] ||
+    null;
   const selectedAlertTimeline = Array.isArray((selectedAlert as any)?.resolution_timeline)
     ? (selectedAlert as any).resolution_timeline
     : [];
@@ -3793,6 +3825,186 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
     selectedAlertFleetNumber !== selectedAlertRegistration
       ? `${selectedAlertFleetNumber} - ${selectedAlertRegistration}`
       : selectedAlertFleetNumber || selectedAlertRegistration || "N/A";
+  const selectedAlertSpeedDisplay = useMemo(() => {
+    const speedValue = Number(
+      selectedAlert?.metadata?.speed ??
+      selectedAlert?.speed ??
+      selectedAlert?.vehicle_speed ??
+      selectedAlert?.metadata?.vehicle_speed ??
+      NaN
+    );
+    if (!Number.isFinite(speedValue) || speedValue < 0) return "N/A";
+    return `${Math.round(speedValue)} km/h`;
+  }, [
+    selectedAlert?.metadata?.speed,
+    selectedAlert?.metadata?.vehicle_speed,
+    selectedAlert?.speed,
+    selectedAlert?.vehicle_speed,
+  ]);
+  const normalizeAlertTypeToken = useCallback((value: unknown) => {
+    const raw = String(value || "").trim().toLowerCase();
+    if (!raw) return "";
+    return raw
+      .replace(/adas\s*:/g, "adas ")
+      .replace(/dms\s*:/g, "dms ")
+      .replace(/[^a-z0-9]+/g, "_")
+      .replace(/^_+|_+$/g, "");
+  }, []);
+  const humanizeAlertTypeLabel = useCallback((value: unknown) => {
+    const text = String(value || "").trim();
+    if (!text) return "Alert";
+    return text
+      .replace(/_/g, " ")
+      .replace(/\b\w/g, (c: string) => c.toUpperCase());
+  }, []);
+  const selectedAlertTypeToken = useMemo(() => {
+    return normalizeAlertTypeToken(
+      selectedAlert?.alert_type ||
+      selectedAlert?.type ||
+      selectedAlertTitle
+    );
+  }, [
+    normalizeAlertTypeToken,
+    selectedAlert?.alert_type,
+    selectedAlert?.type,
+    selectedAlertTitle,
+  ]);
+  const selectedAlertSimilarIncidentFeed = useMemo(() => {
+    const rowsByKey = new Map<string, any>();
+    const addIncident = (entry: any, source: "current" | "recent" | "timeline") => {
+      if (!entry) return;
+      const timestampRaw =
+        entry?.lastOccurrenceTimestamp ||
+        entry?.timestamp ||
+        entry?.created_at ||
+        entry?.updated_at ||
+        entry?.resolved_at ||
+        entry?.closed_at ||
+        null;
+      const tsMs = new Date(timestampRaw || 0).getTime();
+      const ts = Number.isFinite(tsMs) && tsMs > 0 ? tsMs : 0;
+      const rawType = entry?.alert_type || entry?.type || entry?.title || selectedAlertTitle || "Alert";
+      const typeToken = normalizeAlertTypeToken(rawType);
+      const status = String(entry?.status || "").toLowerCase();
+      const isClosed =
+        source === "timeline" ||
+        !!entry?.resolved ||
+        ["resolved", "closed"].includes(status) ||
+        !!entry?.resolved_at ||
+        !!entry?.closed_at;
+      const severity = String(entry?.severity || entry?.priority || selectedAlertSeverity || "info").toLowerCase();
+      const item = {
+        id: String(entry?.id || "").trim(),
+        raw: entry,
+        source,
+        title: humanizeAlertTypeLabel(rawType),
+        rawType,
+        typeToken,
+        timestampRaw,
+        ts,
+        severity,
+        isClosed,
+        status: isClosed ? "Closed" : "Open",
+        vehicleDisplay:
+          String(entry?.fleet_number || entry?.fleetNumber || "").trim() ||
+          String(entry?.vehicle_registration || entry?.vehicleRegistration || "").trim() ||
+          selectedAlertVehicleDisplay,
+        notes:
+          String(
+            entry?.notes ||
+            entry?.closing_notes ||
+            entry?.status_reason ||
+            entry?.reason ||
+            ""
+          ).trim(),
+      };
+      const keyBase =
+        item.id ||
+        `${item.typeToken || "alert"}-${String(item.timestampRaw || "")}-${String(item.status || "")}-${String(item.vehicleDisplay || "")}`;
+      const key = `${source}:${keyBase}`;
+      const prev = rowsByKey.get(key);
+      if (!prev || item.ts > prev.ts) {
+        rowsByKey.set(key, item);
+      }
+    };
+
+    addIncident(selectedAlert, "current");
+    selectedAlertRecentVehicleHistory.forEach((entry: any) => addIncident(entry, "recent"));
+    selectedAlertTimeline.forEach((entry: any) =>
+      addIncident(
+        {
+          ...entry,
+          alert_type: entry?.alert_type || entry?.type || entry?.title,
+          timestamp: entry?.timestamp,
+          status: entry?.resolutionType ? "resolved" : entry?.status,
+          resolved: !!entry?.resolutionType,
+        },
+        "timeline"
+      )
+    );
+
+    const rows = Array.from(rowsByKey.values());
+    rows.sort((a, b) => b.ts - a.ts);
+
+    const groupedByType = new Map<string, any>();
+    for (const row of rows) {
+      const key = String(row?.typeToken || normalizeAlertTypeToken(row?.title || "alert"));
+      const existing = groupedByType.get(key);
+      if (!existing) {
+        groupedByType.set(key, {
+          typeToken: key,
+          title: row?.title || "Alert",
+          count: 1,
+          latestTs: row?.ts || 0,
+          latestTimestampRaw: row?.timestampRaw || null,
+          latestEntry: row,
+          isClosed: !!row?.isClosed,
+          status: row?.status || "Open",
+          openCount: row?.isClosed ? 0 : 1,
+          closedCount: row?.isClosed ? 1 : 0,
+          entries: [row],
+        });
+        continue;
+      }
+
+      existing.count += 1;
+      if (row?.isClosed) {
+        existing.closedCount += 1;
+      } else {
+        existing.openCount += 1;
+      }
+      existing.entries.push(row);
+      if ((row?.ts || 0) >= (existing.latestTs || 0)) {
+        existing.latestTs = row?.ts || 0;
+        existing.latestTimestampRaw = row?.timestampRaw || null;
+        existing.latestEntry = row;
+        existing.isClosed = !!row?.isClosed;
+        existing.status = row?.status || "Open";
+      }
+    }
+
+    const groups = Array.from(groupedByType.values()).sort((a, b) => {
+      if ((b.latestTs || 0) !== (a.latestTs || 0)) return (b.latestTs || 0) - (a.latestTs || 0);
+      return (b.count || 0) - (a.count || 0);
+    });
+
+    return {
+      latest: rows[0] || null,
+      others: rows.slice(1),
+      all: rows,
+      groups,
+      totalEvents: rows.length,
+    };
+  }, [
+    humanizeAlertTypeLabel,
+    normalizeAlertTypeToken,
+    selectedAlert,
+    selectedAlertRecentVehicleHistory,
+    selectedAlertSeverity,
+    selectedAlertTimeline,
+    selectedAlertTitle,
+    selectedAlertVehicleDisplay,
+  ]);
   const selectedAlertReportDetails = useMemo(
     () => ({
       id: selectedAlert?.id,
@@ -4049,8 +4261,9 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
           {
             beforeMs: 30 * 1000,
             afterMs: 30 * 1000,
-            preferLatestAvailable: true,
-            latestAvailableDurationMs: 339 * 1000,
+            fetchAlertDetail: true,
+            preferLatestAvailable: false,
+            latestAvailableDurationMs: 300 * 1000,
           }
         );
         if (!cancelled) {
@@ -4221,8 +4434,10 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
       const vehicleDeviceKey = getVehicleDeviceKeyLocal(baseAlert);
       const vehicleDeviceKeyParam = encodeURIComponent(vehicleDeviceKey || "");
 
-      const detailJson = await fetchJsonWithTimeout(`${videoProxyBase}/alerts/${alertId}`, 5000);
-      const mediaJson = null;
+      const [detailJson, mediaJson] = await Promise.all([
+        fetchJsonWithTimeout(`${videoProxyBase}/alerts/${alertId}`, 5000),
+        fetchJsonWithTimeout(`${videoProxyBase}/alerts/${alertId}/media?ensureMedia=true`, 6500).catch(() => null),
+      ]);
       const videosJson = null;
       const screenshotsJson = null;
 
@@ -4498,15 +4713,27 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
             if (baseVehicleIdentityTokens.has(token)) return true;
           }
           return false;
+        }).sort((a: any, b: any) => {
+          const aTs = new Date(a?.timestamp || a?.updated_at || a?.created_at || 0).getTime();
+          const bTs = new Date(b?.timestamp || b?.updated_at || b?.created_at || 0).getTime();
+          return bTs - aTs;
         });
         const fastRecentAlerts = sameVehicleAlerts
-          .slice(0, 10)
+          .slice(0, 200)
           .map((a: any) => ({
             id: a?.id,
             alert_type: a?.alert_type || a?.type,
-            timestamp: a?.timestamp,
+            type: a?.type || a?.alert_type,
+            title: a?.title || a?.alert_type || a?.type,
+            timestamp: a?.timestamp || a?.created_at || a?.updated_at,
             severity: a?.severity || a?.priority || "info",
             vehicle_registration: a?.vehicle_registration || a?.vehicleId || a?.fleet_number || "N/A",
+            fleet_number: a?.fleet_number || a?.fleetNumber || "",
+            status: a?.status || (a?.resolved ? "resolved" : "open"),
+            resolved_at: a?.resolved_at || a?.closed_at || null,
+            closed_at: a?.closed_at || null,
+            notes: a?.closing_notes || a?.notes || a?.status_reason || a?.reason || "",
+            resolution_type: a?.resolution_type || null,
             resolved: !!a?.resolved,
           }));
         const fastResolvedTimeline = sameVehicleAlerts
@@ -6494,33 +6721,38 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
         <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/70 backdrop-blur-sm p-2 sm:p-4 md:items-center md:p-6">
           <div className="flex w-full max-w-[1200px] max-h-[92vh] min-h-0 flex-col overflow-hidden rounded-2xl border border-slate-300 bg-slate-50 shadow-2xl">
             {/* Header */}
-            <div className="border-b border-slate-200 bg-gradient-to-r from-slate-950 via-slate-900 to-red-950 px-3 md:px-4 py-1.5 flex-shrink-0">
-              <div className="flex items-center justify-between gap-3">
-                <div className="flex min-w-0 items-center gap-2">
-                  <Button variant="outline" size="sm" className="h-7 border-white/20 bg-white/10 px-2.5 text-white hover:bg-white/20 hover:text-white" onClick={() => {
-                    setAlertDetailModalOpen(false);
-                    setAlertRealtimeLoading(false);
-                    setAlertReason("");
-                    setSelectedNcrForm('');
-                    setSelectedReportForm('');
-                    setShowNCRModal(false);
-                    setShowReportModal(false);
-                    setAlertNotesDraft("");
-                    setAlertActionError("");
-                    setAlertActionSuccess("");
-                    setSelectedAlert(null);
-                  }}>
-                    <ArrowLeft className="w-3.5 h-3.5 mr-1.5" />
-                    Back
-                  </Button>
-                  <div className="h-4 w-px bg-white/20" />
+            <div className="flex-shrink-0 border-b border-slate-200 bg-gradient-to-r from-slate-950 via-slate-900 to-red-950 px-3 py-3 md:px-4">
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <Button variant="outline" size="sm" className="h-7 border-white/20 bg-white/10 px-2.5 text-white hover:bg-white/20 hover:text-white" onClick={() => {
+                  setAlertDetailModalOpen(false);
+                  setAlertRealtimeLoading(false);
+                  setAlertReason("");
+                  setSelectedNcrForm('');
+                  setSelectedReportForm('');
+                  setShowNCRModal(false);
+                  setShowReportModal(false);
+                  setAlertNotesDraft("");
+                  setAlertActionError("");
+                  setAlertActionSuccess("");
+                  setSelectedAlert(null);
+                }}>
+                  <ArrowLeft className="w-3.5 h-3.5 mr-1.5" />
+                  Back
+                </Button>
+                <p className="text-[11px] text-slate-300">
+                  {alertRealtimeLoading ? "Refreshing incident..." : "Control room incident view"}
+                </p>
+              </div>
+
+              <div className="rounded-xl border border-white/10 bg-white/[0.05] p-3">
+                <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <div className="flex items-center gap-1.5">
-                      <h1 className="truncate text-base font-semibold leading-tight text-white">
-                        {selectedAlertTitle}
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h1 className="truncate text-lg font-bold tracking-tight text-white md:text-xl">
+                        {selectedAlertVehicleDisplay}
                       </h1>
                       <Badge variant="outline" className={cn(
-                        "flex items-center gap-1 text-[10px] px-1.5 py-0.5",
+                        "flex items-center gap-1 border text-[10px] px-2 py-0",
                         selectedAlertSeverity === 'critical' ? 'bg-red-100 text-red-800 border-red-300' :
                         selectedAlertSeverity === 'high' ? 'bg-orange-100 text-orange-800 border-orange-300' :
                         selectedAlertSeverity === 'medium' ? 'bg-yellow-100 text-yellow-800 border-yellow-300' :
@@ -6530,24 +6762,24 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
                         {selectedAlertSeverity.toUpperCase()}
                       </Badge>
                     </div>
-                    <p className="text-[11px] text-slate-300 truncate">
-                      Alert ID: {selectedAlert.id} | Last Occurrence: {selectedAlertLastOccurrenceTs ? formatRawAlertTimestamp(selectedAlertLastOccurrenceTs, "datetime") : 'N/A'}
-                    </p>
-                    {alertRealtimeLoading && (
-                      <p className="text-[10px] text-amber-300">Refreshing latest alert details...</p>
-                    )}
+                    <p className="mt-1 truncate text-sm font-semibold text-slate-100">{selectedAlertTitle}</p>
+                    <p className="mt-1 truncate font-mono text-[11px] text-slate-300">ID: {String(selectedAlert?.id || "N/A").trim()}</p>
+                    <div className="mt-2 grid grid-cols-2 gap-1.5 text-[11px] text-slate-200 md:grid-cols-4">
+                      <span className="rounded border border-white/10 bg-white/5 px-2 py-1">Driver: {selectedAlertDriverInfo.name || "Unknown"}</span>
+                      <span className="rounded border border-white/10 bg-white/5 px-2 py-1">Speed: {selectedAlertSpeedDisplay}</span>
+                      <span className="rounded border border-white/10 bg-white/5 px-2 py-1">Last: {selectedAlertLastOccurrenceTs ? formatRawAlertTimestamp(selectedAlertLastOccurrenceTs, "datetime") : "N/A"}</span>
+                      <span className="rounded border border-white/10 bg-white/5 px-2 py-1">State: {selectedAlert?.resolved ? "Closed" : "Open"}</span>
+                    </div>
                   </div>
                 </div>
 
-                {/* Action Buttons */}
-                <div className="flex flex-wrap items-center justify-end gap-1.5 pb-0.5">
+                <div className="mt-3 flex flex-wrap items-center gap-1.5 border-t border-white/10 pt-2.5">
                   <select
-                    className="h-7 min-w-[160px] rounded-md border border-white/20 bg-white/10 px-2 text-xs text-white outline-none focus:border-white/40"
+                    className="h-7 min-w-[145px] rounded-md border border-white/20 bg-white/10 px-2 text-xs text-white outline-none focus:border-white/40"
                     value={alertReason}
                     onChange={(e) => {
                       const nextReason = e.target.value;
                       setAlertReason(nextReason);
-                      // Reason dropdown is treated as notes source for closure.
                       if (nextReason) {
                         setAlertNotesDraft(nextReason);
                       }
@@ -6560,10 +6792,10 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
                       </option>
                     ))}
                   </select>
-                  {!selectedAlert.resolved && (
+                  {!selectedAlert.resolved ? (
                     <>
-                      <Button 
-                        variant="outline" 
+                      <Button
+                        variant="outline"
                         className="h-7 border-red-300/70 bg-white px-2.5 text-xs text-red-700 hover:bg-red-50"
                         disabled={alertActionLoading}
                         onClick={async () => {
@@ -6582,10 +6814,10 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
                           await closeSelectedAlert("resolved");
                         }}
                       >
-                        {alertActionLoading ? "Saving..." : "Close Alert"}
+                        {alertActionLoading ? "Saving..." : "Resolve"}
                       </Button>
                       <select
-                        className="h-7 min-w-[170px] rounded-md border border-white/20 bg-white/10 px-2 text-xs text-white outline-none focus:border-white/40"
+                        className="h-7 min-w-[155px] rounded-md border border-white/20 bg-white/10 px-2 text-xs text-white outline-none focus:border-white/40"
                         value={selectedNcrForm}
                         onChange={(e) => {
                           const formType = (e.target.value || '') as '' | 'nrc-camera-covered';
@@ -6601,7 +6833,7 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
                         ))}
                       </select>
                       <select
-                        className="h-7 min-w-[150px] rounded-md border border-white/20 bg-white/10 px-2 text-xs text-white outline-none focus:border-white/40"
+                        className="h-7 min-w-[130px] rounded-md border border-white/20 bg-white/10 px-2 text-xs text-white outline-none focus:border-white/40"
                         value={selectedReportForm}
                         onChange={(e) => {
                           const formType = (e.target.value || '') as '' | 'incident-report' | 'accident-report' | 'criminal-report' | 'dispatch-report';
@@ -6617,6 +6849,8 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
                         ))}
                       </select>
                     </>
+                  ) : (
+                    <Badge className="border border-emerald-300 bg-emerald-100 text-emerald-800">Resolved</Badge>
                   )}
                 </div>
               </div>
@@ -6729,6 +6963,27 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
                             </div>
                           ) : null}
                         </div>
+                        {currentIncidentScreenshot ? (
+                          <div className="mb-4 overflow-hidden rounded-xl border border-slate-200 bg-slate-950 shadow-sm">
+                            <div className="flex items-center justify-between border-b border-slate-800 px-3 py-2">
+                              <p className="text-xs font-semibold uppercase tracking-wide text-slate-300">
+                                Current Incident Snapshot
+                              </p>
+                              <p className="text-[11px] text-slate-400">
+                                {currentIncidentScreenshot?.timestamp
+                                  ? formatRawAlertTimestamp(currentIncidentScreenshot.timestamp, "datetime")
+                                  : (selectedAlertLastOccurrenceTs
+                                    ? formatRawAlertTimestamp(selectedAlertLastOccurrenceTs, "datetime")
+                                    : "N/A")}
+                              </p>
+                            </div>
+                            <img
+                              src={String(currentIncidentScreenshot.url)}
+                              alt="Current incident screenshot"
+                              className="h-[260px] w-full object-cover"
+                            />
+                          </div>
+                        ) : null}
                         <div className="space-y-4">
                           {selectedAlertPlaybackLoading && !primaryAlertVideo ? (
                             <div className="text-center py-12 text-slate-500">
@@ -6775,255 +7030,289 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
 
                     {/* Timeline Tab */}
                     <TabsContent value="timeline" className="mt-4">
-                      <Card className="p-4 border-slate-200 bg-white shadow-sm">
-                        <h3 className="text-lg font-semibold text-slate-900 mb-4">Resolved Alert Timeline</h3>
-                        <p className="text-xs text-slate-500 mb-4">
-                          This vehicle only. Ordered by latest resolution.
-                        </p>
-                        {selectedAlertTimeline.length > 0 ? (
-                          <div className="relative space-y-3">
-                            <div className="absolute left-3 top-0 bottom-0 w-px bg-slate-200" />
-                            {selectedAlertTimeline.map((entry: any) => (
-                              <div key={entry.id || `${entry.timestamp}-${entry.title}`} className="relative pl-8">
-                                <span className="absolute left-[7px] top-3 h-2.5 w-2.5 rounded-full bg-slate-500" />
-                                <Card className="border-slate-200 bg-slate-50 p-3">
-                                  <div className="flex flex-wrap items-center justify-between gap-2">
-                                    <p className="font-medium text-slate-900 text-sm">{entry.title}</p>
-                                    <div className="flex items-center gap-2">
-                                      <Badge className={cn(
-                                        "text-[10px] px-2 py-0.5",
-                                        entry.resolutionType === "false_alert"
-                                          ? "bg-rose-100 text-rose-700 border border-rose-200"
-                                          : entry.resolutionType === "ncr"
-                                            ? "bg-amber-100 text-amber-700 border border-amber-200"
-                                            : entry.resolutionType === "report"
-                                              ? "bg-blue-100 text-blue-700 border border-blue-200"
-                                              : "bg-emerald-100 text-emerald-700 border border-emerald-200"
-                                      )}>
-                                        {entry.resolutionLabel}
-                                      </Badge>
-                                      <Badge variant="outline" className="text-[10px]">
-                                        {String(entry.severity || "info").toUpperCase()}
-                                      </Badge>
-                                    </div>
-                                  </div>
-                                  <p className="text-xs text-slate-500 mt-1">
-                                    {entry.timestamp ? new Date(entry.timestamp).toLocaleString() : "Unknown time"}
-                                  </p>
-                                  {entry.notes ? (
-                                    <p className="text-xs text-slate-700 mt-2 line-clamp-2">{entry.notes}</p>
-                                  ) : null}
-                                  <div className="mt-3 flex flex-wrap items-center gap-2">
-                                    <Button
-                                      size="sm"
-                                      variant="outline"
-                                      className="border-cyan-300 bg-white text-cyan-700 hover:bg-cyan-50"
-                                      onClick={() => void loadTimelineAlertPlayback(entry)}
-                                      disabled={timelinePlaybackLoading[String(entry?.id || "").trim()]}
-                                    >
-                                      <Video className="mr-2 h-4 w-4" />
-                                      {timelinePlaybackLoading[String(entry?.id || "").trim()] ? "Loading video..." : "Load Playback"}
-                                    </Button>
-                                    {Array.isArray(timelinePlaybackByAlert[String(entry?.id || "").trim()]) &&
-                                    timelinePlaybackByAlert[String(entry?.id || "").trim()].length > 0 ? (
-                                      <Badge variant="outline" className="text-[10px]">
-                                        {timelinePlaybackByAlert[String(entry?.id || "").trim()].length} clip(s)
-                                      </Badge>
-                                    ) : null}
-                                  </div>
-                                  {Array.isArray(timelinePlaybackByAlert[String(entry?.id || "").trim()]) &&
-                                  timelinePlaybackByAlert[String(entry?.id || "").trim()].length > 0 ? (
-                                    <div className="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-2">
-                                      {timelinePlaybackByAlert[String(entry?.id || "").trim()].map((video: any, idx: number) => (
-                                        <Card key={`${entry.id}-${video.url}-${idx}`} className="p-3 border-slate-200 shadow-sm bg-slate-950 text-slate-100">
-                                          <UniversalVideoPlayer
-                                            url={video.url}
-                                            autoPlay={idx === 0}
-                                            className="w-full rounded mb-3 border border-slate-700"
-                                          />
-                                          <div className="flex items-center justify-between gap-2">
-                                            <div>
-                                              <p className="text-sm font-medium text-white">{video.label || `Video ${idx + 1}`}</p>
-                                              <p className="text-xs text-slate-300">Alert-time playback</p>
-                                            </div>
-                                            <div className="flex items-center gap-2">
-                                      <Button
-                                        variant="outline"
-                                        size="sm"
-                                        className="border-cyan-400/40 bg-slate-900 text-cyan-200 hover:bg-slate-800"
-                                        onClick={() => window.open(resolveMediaUrlForCurrentOrigin(video.url), "_blank")}
-                                      >
-                                        Preview
-                                      </Button>
-                                              <Button
-                                                variant="outline"
-                                                size="sm"
-                                                onClick={() => window.open(resolveMediaUrlForCurrentOrigin(video.url), "_blank")}
-                                              >
-                                                <Download className="mr-2 h-4 w-4" />
-                                                Download
-                                              </Button>
-                                            </div>
-                                          </div>
-                                        </Card>
-                                      ))}
-                                    </div>
-                                  ) : null}
-                                </Card>
-                              </div>
-                            ))}
-                          </div>
-                        ) : selectedAlertRecentVehicleHistory.length > 0 ? (
-                          <div className="space-y-3">
-                            <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-                              <p className="text-sm font-medium text-slate-900">Vehicle Alert History</p>
-                              <p className="text-xs text-slate-500 mt-1">
-                                No resolved entries yet. Showing recent alerts for this vehicle.
+                      <div className="space-y-4">
+                        <Card className="p-4 border-slate-200 bg-white shadow-sm">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div>
+                              <h3 className="text-lg font-semibold text-slate-900">Incident Feed</h3>
+                              <p className="text-xs text-slate-500">
+                                All incidents for this vehicle grouped by incident type.
                               </p>
                             </div>
-                            {selectedAlertRecentVehicleHistory.slice(0, 20).map((entry: any, idx: number) => {
-                              const status = String(entry?.status || (entry?.resolved ? "resolved" : "open")).toLowerCase();
-                              const isClosed = ["resolved", "closed"].includes(status) || !!entry?.resolved;
-                              const severity = String(entry?.severity || entry?.priority || "info").toUpperCase();
-                              const timestamp = entry?.timestamp || entry?.created_at || entry?.updated_at;
-                              return (
-                                <Card
-                                  key={entry?.id || `${timestamp}-${entry?.alert_type || entry?.type}-${idx}`}
-                                  className="border-slate-200 bg-white p-3"
-                                >
-                                  <div className="flex items-center justify-between gap-2">
-                                    <p className="text-sm font-medium text-slate-900">
-                                      {String(entry?.alert_type || entry?.type || "Alert")
-                                        .replace(/_/g, " ")
-                                        .replace(/\b\w/g, (c: string) => c.toUpperCase())}
-                                    </p>
+                            <Badge variant="secondary" className="text-xs">
+                              {selectedAlertSimilarIncidentFeed.groups.length} incident type(s)
+                            </Badge>
+                          </div>
+
+                          {selectedAlertSimilarIncidentFeed.groups.length > 0 ? (
+                            <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-4">
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <div>
+                                  <p className="text-xs font-semibold uppercase tracking-wide text-red-700">Most Recent Incident Type</p>
+                                  <p className="mt-1 text-base font-semibold text-slate-900">
+                                    {selectedAlertSimilarIncidentFeed.groups[0]?.title || "Alert"}
+                                  </p>
+                                  <p className="mt-1 text-xs text-slate-600">
+                                    {selectedAlertSimilarIncidentFeed.groups[0]?.latestTimestampRaw
+                                      ? formatRawAlertTimestamp(selectedAlertSimilarIncidentFeed.groups[0].latestTimestampRaw, "datetime")
+                                      : "Unknown time"}
+                                  </p>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <Badge variant="outline" className="text-[10px] uppercase">
+                                    {selectedAlertSimilarIncidentFeed.groups[0]?.count || 0} alerts
+                                  </Badge>
+                                </div>
+                              </div>
+                              {selectedAlertSimilarIncidentFeed.groups[0]?.latestEntry?.notes ? (
+                                <p className="mt-2 text-xs text-slate-700 line-clamp-2">{selectedAlertSimilarIncidentFeed.groups[0].latestEntry.notes}</p>
+                              ) : null}
+                            </div>
+                          ) : (
+                            <div className="mt-4 rounded-xl border border-dashed border-slate-300 bg-slate-50 p-4 text-center text-sm text-slate-500">
+                              No incidents found yet for this vehicle.
+                            </div>
+                          )}
+
+                          <div className="mt-4 space-y-2">
+                            {selectedAlertSimilarIncidentFeed.groups.length > 0 ? (
+                              selectedAlertSimilarIncidentFeed.groups.map((group: any, idx: number) => (
+                                <Card key={`incident-group-${group.typeToken || idx}`} className="border-slate-200 bg-slate-50 p-3">
+                                  <div className="flex flex-wrap items-start justify-between gap-2">
+                                    <div>
+                                      <p className="text-sm font-medium text-slate-900">{group.title}</p>
+                                      <p className="text-xs text-slate-500 mt-1">
+                                        {group.latestTimestampRaw
+                                          ? formatRawAlertTimestamp(group.latestTimestampRaw, "datetime")
+                                          : "Unknown time"}
+                                      </p>
+                                    </div>
                                     <div className="flex items-center gap-2">
-                                      <Badge
-                                        variant="outline"
-                                        className={cn(
-                                          "text-[10px]",
-                                          isClosed
-                                            ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                                            : "border-amber-200 bg-amber-50 text-amber-700"
-                                        )}
-                                      >
-                                        {isClosed ? "Closed" : "Open"}
+                                      <Badge variant="outline" className="text-[10px] uppercase">
+                                        {group.count} total
                                       </Badge>
-                                      <Badge variant="outline" className="text-[10px]">
-                                        {severity}
-                                      </Badge>
+                                      {group?.latestEntry?.id && String(group.latestEntry.id) !== String(selectedAlert?.id || "") ? (
+                                        <Button
+                                          size="sm"
+                                          variant="outline"
+                                          className="h-7 border-slate-300 bg-white text-[11px]"
+                                          onClick={() => {
+                                            if (!group?.latestEntry?.raw) return;
+                                            void openAlertDetailRealtime(group.latestEntry.raw, null, { silent: false });
+                                          }}
+                                        >
+                                          Open
+                                        </Button>
+                                      ) : null}
                                     </div>
                                   </div>
-                                  <p className="text-xs text-slate-500 mt-1">
-                                    {timestamp ? new Date(timestamp).toLocaleString() : "Unknown time"}
-                                  </p>
+                                  {group?.latestEntry?.notes ? (
+                                    <p className="mt-2 text-xs text-slate-700 line-clamp-2">{group.latestEntry.notes}</p>
+                                  ) : null}
                                 </Card>
-                              );
-                            })}
+                              ))
+                            ) : (
+                              <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 p-4 text-center text-sm text-slate-500">
+                                No grouped incidents available.
+                              </div>
+                            )}
                           </div>
-                        ) : (
-                          <div className="text-center py-12 text-slate-500">
-                            No resolved history available for this vehicle yet
-                          </div>
-                        )}
-                      </Card>
+                        </Card>
+
+                        <Card className="p-4 border-slate-200 bg-white shadow-sm">
+                          <h3 className="text-lg font-semibold text-slate-900 mb-4">Resolved Alert Timeline</h3>
+                          <p className="text-xs text-slate-500 mb-4">
+                            This vehicle only. Ordered by latest resolution.
+                          </p>
+                          {selectedAlertTimeline.length > 0 ? (
+                            <div className="relative space-y-3">
+                              <div className="absolute left-3 top-0 bottom-0 w-px bg-slate-200" />
+                              {selectedAlertTimeline.map((entry: any) => (
+                                <div key={entry.id || `${entry.timestamp}-${entry.title}`} className="relative pl-8">
+                                  <span className="absolute left-[7px] top-3 h-2.5 w-2.5 rounded-full bg-slate-500" />
+                                  <Card className="border-slate-200 bg-slate-50 p-3">
+                                    <div className="flex flex-wrap items-center justify-between gap-2">
+                                      <p className="font-medium text-slate-900 text-sm">{entry.title}</p>
+                                      <div className="flex items-center gap-2">
+                                        <Badge className={cn(
+                                          "text-[10px] px-2 py-0.5",
+                                          entry.resolutionType === "false_alert"
+                                            ? "bg-rose-100 text-rose-700 border border-rose-200"
+                                            : entry.resolutionType === "ncr"
+                                              ? "bg-amber-100 text-amber-700 border border-amber-200"
+                                              : entry.resolutionType === "report"
+                                                ? "bg-blue-100 text-blue-700 border border-blue-200"
+                                                : "bg-emerald-100 text-emerald-700 border border-emerald-200"
+                                        )}>
+                                          {entry.resolutionLabel}
+                                        </Badge>
+                                        <Badge variant="outline" className="text-[10px]">
+                                          {String(entry.severity || "info").toUpperCase()}
+                                        </Badge>
+                                      </div>
+                                    </div>
+                                    <p className="text-xs text-slate-500 mt-1">
+                                      {entry.timestamp ? new Date(entry.timestamp).toLocaleString() : "Unknown time"}
+                                    </p>
+                                    {entry.notes ? (
+                                      <p className="text-xs text-slate-700 mt-2 line-clamp-2">{entry.notes}</p>
+                                    ) : null}
+                                    <div className="mt-3 flex flex-wrap items-center gap-2">
+                                      <Button
+                                        size="sm"
+                                        variant="outline"
+                                        className="border-cyan-300 bg-white text-cyan-700 hover:bg-cyan-50"
+                                        onClick={() => void loadTimelineAlertPlayback(entry)}
+                                        disabled={timelinePlaybackLoading[String(entry?.id || "").trim()]}
+                                      >
+                                        <Video className="mr-2 h-4 w-4" />
+                                        {timelinePlaybackLoading[String(entry?.id || "").trim()] ? "Loading video..." : "Load Playback"}
+                                      </Button>
+                                      {Array.isArray(timelinePlaybackByAlert[String(entry?.id || "").trim()]) &&
+                                      timelinePlaybackByAlert[String(entry?.id || "").trim()].length > 0 ? (
+                                        <Badge variant="outline" className="text-[10px]">
+                                          {timelinePlaybackByAlert[String(entry?.id || "").trim()].length} clip(s)
+                                        </Badge>
+                                      ) : null}
+                                    </div>
+                                    {Array.isArray(timelinePlaybackByAlert[String(entry?.id || "").trim()]) &&
+                                    timelinePlaybackByAlert[String(entry?.id || "").trim()].length > 0 ? (
+                                      <div className="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-2">
+                                        {timelinePlaybackByAlert[String(entry?.id || "").trim()].map((video: any, idx: number) => (
+                                          <Card key={`${entry.id}-${video.url}-${idx}`} className="p-3 border-slate-200 shadow-sm bg-slate-950 text-slate-100">
+                                            <UniversalVideoPlayer
+                                              url={video.url}
+                                              autoPlay={idx === 0}
+                                              className="w-full rounded mb-3 border border-slate-700"
+                                            />
+                                            <div className="flex items-center justify-between gap-2">
+                                              <div>
+                                                <p className="text-sm font-medium text-white">{video.label || `Video ${idx + 1}`}</p>
+                                                <p className="text-xs text-slate-300">Alert-time playback</p>
+                                              </div>
+                                              <div className="flex items-center gap-2">
+                                        <Button
+                                          variant="outline"
+                                          size="sm"
+                                          className="border-cyan-400/40 bg-slate-900 text-cyan-200 hover:bg-slate-800"
+                                          onClick={() => window.open(resolveMediaUrlForCurrentOrigin(video.url), "_blank")}
+                                        >
+                                          Preview
+                                        </Button>
+                                                <Button
+                                                  variant="outline"
+                                                  size="sm"
+                                                  onClick={() => window.open(resolveMediaUrlForCurrentOrigin(video.url), "_blank")}
+                                                >
+                                                  <Download className="mr-2 h-4 w-4" />
+                                                  Download
+                                                </Button>
+                                              </div>
+                                            </div>
+                                          </Card>
+                                        ))}
+                                      </div>
+                                    ) : null}
+                                  </Card>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <div className="text-center py-12 text-slate-500">
+                              No resolved history available for this vehicle yet
+                            </div>
+                          )}
+                        </Card>
+                      </div>
                     </TabsContent>
                   </Tabs>
                 </div>
 
                 {/* Sidebar */}
                 <div className="xl:col-span-4 grid grid-cols-1 gap-4">
-                  {/* Alert Details */}
-                  <Card className="p-4 border-slate-200 bg-white shadow-sm">
-                    <h3 className="font-semibold text-slate-900 mb-4">Alert Details</h3>
-                    <div className="space-y-3 text-sm">
-                      <div className="flex items-start gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
-                        <Car className="w-4 h-4 text-slate-500 mt-0.5" />
-                        <div>
-                          <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Vehicle</p>
-                          <p className="mt-1 font-semibold text-slate-900">
-                            {selectedAlertVehicleDisplay}
-                          </p>
-                          {(selectedAlertFleetNumber || selectedAlertRegistration) ? (
-                            <p className="mt-1 text-xs text-slate-600">
-                              {selectedAlertFleetNumber ? `Fleet: ${selectedAlertFleetNumber}` : ""}
-                              {selectedAlertFleetNumber && selectedAlertRegistration ? " | " : ""}
-                              {selectedAlertRegistration ? `Reg: ${selectedAlertRegistration}` : ""}
-                            </p>
-                          ) : null}
-                        </div>
-                      </div>
-                      <div className="hidden border-t border-slate-200" />
-                      <div className="flex items-start gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
-                        <User className="w-4 h-4 text-slate-500 mt-0.5" />
-                        <div>
-                          <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Driver</p>
-                          <p className="mt-1 font-semibold text-slate-900">
-                            {selectedAlert.driver_name || "N/A"}
-                          </p>
-                        </div>
-                      </div>
-                      <div className="hidden border-t border-slate-200" />
-                      <div className="flex items-start gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
-                        <MapPin className="w-4 h-4 text-slate-500 mt-0.5" />
-                        <div>
-                          <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Location</p>
-                          <p className="mt-1 font-semibold text-slate-900">
-                            {selectedAlertCoordinates
-                              ? `${selectedAlertCoordinates.longitude.toFixed(6)}, ${selectedAlertCoordinates.latitude.toFixed(6)}`
-                              : "No location data"}
-                          </p>
-                          {selectedAlertCoordinates ? (
-                            <p className="text-xs text-slate-600 mt-1 leading-relaxed">
-                              {selectedAlertPlaceLoading
-                                ? "Resolving place name..."
-                                : selectedAlertPlaceName || "Place name unavailable"}
-                            </p>
-                          ) : null}
-                        </div>
-                      </div>
-                      <div className="hidden border-t border-slate-200" />
-                      <div className="flex items-start gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
-                        <AlertTriangle className="w-4 h-4 text-slate-500 mt-0.5" />
-                        <div>
-                          <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Alert Type</p>
-                          <p className="mt-1 font-semibold text-slate-900">{selectedAlertTitle || "N/A"}</p>
-                        </div>
-                      </div>
-                      <div className="flex items-start gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
-                        <Clock className="w-4 h-4 text-slate-500 mt-0.5" />
-                        <div>
-                          <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Last Occurrence</p>
-                          <p className="mt-1 font-semibold text-slate-900">
-                            {selectedAlertLastOccurrenceTs ? formatRawAlertTimestamp(selectedAlertLastOccurrenceTs, "datetime") : "N/A"}
-                          </p>
-                        </div>
-                      </div>
-                      {selectedAlert.metadata && (
-                        <>
-                          <div className="border-t border-slate-200" />
-                          <div className="space-y-2">
-                            <p className="text-slate-600 font-medium text-xs">Additional Information</p>
-                            {selectedAlert.metadata.speed !== undefined && (
-                              <div className="flex justify-between text-xs">
-                                <span className="text-slate-600">Speed:</span>
-                                <span className="font-medium">{selectedAlert.metadata.speed} km/h</span>
+                  <Card className="border-slate-200 bg-white p-4 shadow-sm">
+                    <div className="mb-3">
+                      <h3 className="font-semibold text-slate-900">Vehicle Incident Timeline</h3>
+                      <p className="text-xs text-slate-500">Time + incident with quick actions</p>
+                    </div>
+                    <div className="max-h-[52vh] space-y-2 overflow-auto pr-1">
+                      {selectedAlertSimilarIncidentFeed.groups.length > 0 ? (
+                        selectedAlertSimilarIncidentFeed.groups.map((group: any, idx: number) => {
+                          const latestEntry = group?.latestEntry || null;
+                          const isCurrent =
+                            String(group?.typeToken || "") ===
+                            String(
+                              normalizeAlertTypeToken(
+                                selectedAlert?.alert_type || selectedAlert?.type || selectedAlertTitle
+                              )
+                            );
+                          return (
+                            <div
+                              key={`sidebar-incident-group-${group?.typeToken || idx}`}
+                              className={cn(
+                                "rounded-md border p-2",
+                                isCurrent ? "border-slate-300 bg-slate-100" : "border-slate-200 bg-slate-50"
+                              )}
+                            >
+                              <p className="truncate text-xs font-semibold text-slate-900">{group?.title || "Alert"}</p>
+                              <p className="mt-0.5 text-[11px] text-slate-600">
+                                {group?.latestTimestampRaw
+                                  ? formatRawAlertTimestamp(group.latestTimestampRaw, "datetime")
+                                  : "Unknown time"}
+                              </p>
+                              <div className="mt-2 flex flex-wrap items-center gap-1">
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-6 px-2 text-[10px]"
+                                  onClick={() => {
+                                    const row = latestEntry?.raw || latestEntry;
+                                    if (!row) return;
+                                    void openAlertDetailRealtime(row, null, { silent: false });
+                                  }}
+                                >
+                                  Open
+                                </Button>
+                                <span className="text-[10px] font-medium text-slate-500">
+                                  {group?.count || 0}
+                                </span>
+                                {isCurrent && !selectedAlert?.resolved ? (
+                                  <>
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      className="h-6 px-2 text-[10px] border-emerald-300 text-emerald-700 hover:bg-emerald-50"
+                                      disabled={alertActionLoading}
+                                      onClick={() => closeSelectedAlert("resolved")}
+                                    >
+                                      Resolve
+                                    </Button>
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      className="h-6 px-2 text-[10px] border-red-300 text-red-700 hover:bg-red-50"
+                                      disabled={alertActionLoading}
+                                      onClick={async () => {
+                                        if (!confirm('Mark this alert as a false alarm and close it?')) return;
+                                        await closeSelectedAlert("false_alert");
+                                      }}
+                                    >
+                                      False
+                                    </Button>
+                                  </>
+                                ) : (
+                                  <span className="text-[10px] font-medium text-slate-500">
+                                    {group?.openCount > 0 ? "Open" : "Closed"}
+                                  </span>
+                                )}
                               </div>
-                            )}
-                            {selectedAlert.metadata.direction !== undefined && (
-                              <div className="flex justify-between text-xs">
-                                <span className="text-slate-600">Direction:</span>
-                                <span className="font-medium">{selectedAlert.metadata.direction}Â°</span>
-                              </div>
-                            )}
-                            {selectedAlert.metadata.altitude !== undefined && (
-                              <div className="flex justify-between text-xs">
-                                <span className="text-slate-600">Altitude:</span>
-                                <span className="font-medium">{selectedAlert.metadata.altitude}m</span>
-                              </div>
-                            )}
-                          </div>
-                        </>
+                            </div>
+                          );
+                        })
+                      ) : (
+                        <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-4 text-center text-sm text-slate-500">
+                          No incidents found for this vehicle.
+                        </div>
                       )}
                     </div>
                   </Card>
@@ -7099,62 +7388,6 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
                     )}
                   </Card>
 
-                  {/* Notes Section */}
-                  <Card className="p-4 border-slate-200 bg-white shadow-sm">
-                    <h3 className="font-semibold text-slate-900 mb-4">Notes</h3>
-                    <div className="space-y-4">
-                      <textarea
-                        value={alertNotesDraft}
-                        onChange={(e) => {
-                          setAlertNotesDraft(e.target.value);
-                          if (alertActionError) setAlertActionError("");
-                          if (alertActionSuccess) setAlertActionSuccess("");
-                        }}
-                        className="w-full min-h-36 rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
-                        placeholder="Add investigation/resolution notes for this alert..."
-                      />
-                      <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                        <p className="text-xs leading-5 text-slate-600">
-                          Close options: Reason, NCR form, or Report type. Selection is saved to DB with this alert.
-                        </p>
-                        <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="w-full justify-center"
-                            disabled={alertActionLoading || !selectedAlert?.id}
-                            onClick={() => closeSelectedAlert("resolved")}
-                          >
-                            {alertActionLoading ? "Closing..." : "Close Alert"}
-                          </Button>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="w-full justify-center"
-                            disabled={alertActionLoading || !selectedAlert?.id || !String(selectedNcrForm || "").trim()}
-                            onClick={() => closeSelectedAlert("ncr")}
-                          >
-                            {alertActionLoading ? "Closing..." : "Close as NCR"}
-                          </Button>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="w-full justify-center"
-                            disabled={alertActionLoading || !selectedAlert?.id || !String(selectedReportForm || "").trim()}
-                            onClick={() => closeSelectedAlert("report")}
-                          >
-                            {alertActionLoading ? "Closing..." : "Close as Report"}
-                          </Button>
-                        </div>
-                      </div>
-                      {alertActionError ? (
-                        <p className="text-xs text-red-600">{alertActionError}</p>
-                      ) : null}
-                      {alertActionSuccess ? (
-                        <p className="text-xs text-emerald-600">{alertActionSuccess}</p>
-                      ) : null}
-                    </div>
-                  </Card>
                 </div>
               </div>
             </div>
@@ -7299,6 +7532,8 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
     </>
   );
 }
+
+
 
 
 

@@ -1,9 +1,107 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 
+type VehicleLookupEntry = {
+  deviceId: string;
+  plate: string | null;
+  fleetNumber: string | null;
+  make: string | null;
+  model: string | null;
+  costCenter: string | null;
+};
+
+const VEHICLE_LOOKUP_CACHE_TTL_MS = 10 * 60 * 1000;
+const vehicleLookupCache: {
+  rows: VehicleLookupEntry[];
+  byDevice: Map<string, VehicleLookupEntry>;
+  expiresAt: number;
+} = {
+  rows: [],
+  byDevice: new Map(),
+  expiresAt: 0,
+};
+
 function cleanText(value: unknown) {
   const text = String(value ?? '').trim();
   return text || null;
+}
+
+function isVehicleLookupCacheFresh() {
+  return vehicleLookupCache.rows.length > 0 && Date.now() < vehicleLookupCache.expiresAt;
+}
+
+function buildLookupCache(rows: VehicleLookupEntry[]) {
+  const byDevice = new Map<string, VehicleLookupEntry>();
+  for (const row of rows) {
+    const deviceId = String(row?.deviceId || '').trim();
+    if (!deviceId) continue;
+    byDevice.set(deviceId, row);
+  }
+  vehicleLookupCache.rows = rows;
+  vehicleLookupCache.byDevice = byDevice;
+  vehicleLookupCache.expiresAt = Date.now() + VEHICLE_LOOKUP_CACHE_TTL_MS;
+}
+
+async function fetchAllVehicleLookupRowsFromSupabase() {
+  const supabase = await createClient();
+  if (!supabase) {
+    return {
+      ok: false as const,
+      status: 500,
+      error: 'Supabase client unavailable',
+      rows: [] as VehicleLookupEntry[],
+    };
+  }
+
+  const { data, error } = await supabase
+    .from('vehiclesc')
+    .select('registration_number, fleet_number, make, model, camera_serial, camera_sim_id, cost_center');
+
+  if (error) {
+    return {
+      ok: false as const,
+      status: 500,
+      error: error.message,
+      rows: [] as VehicleLookupEntry[],
+    };
+  }
+
+  const byDevice = new Map<string, VehicleLookupEntry>();
+  for (const row of data || []) {
+    const rowValues = {
+      plate: cleanText(row.registration_number),
+      fleetNumber: cleanText(row.fleet_number),
+      make: cleanText(row.make),
+      model: cleanText(row.model),
+      costCenter: cleanText(row.cost_center),
+    };
+
+    const simId = String(row.camera_sim_id ?? '').trim();
+    if (simId) {
+      byDevice.set(simId, {
+        deviceId: simId,
+        ...rowValues,
+      });
+    }
+
+    const serialId = String(row.camera_serial ?? '').trim();
+    if (serialId) {
+      byDevice.set(serialId, {
+        deviceId: serialId,
+        ...rowValues,
+      });
+    }
+  }
+
+  const rows = Array.from(byDevice.values());
+  buildLookupCache(rows);
+
+  return {
+    ok: true as const,
+    status: 200,
+    error: '',
+    rows,
+  };
 }
 
 export async function GET(req: NextRequest) {
@@ -11,6 +109,34 @@ export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url);
     const deviceId = searchParams.get('deviceId');
     const deviceIdsRaw = searchParams.get('deviceIds');
+    const fetchAll = ['1', 'true', 'yes', 'on'].includes(
+      String(searchParams.get('all') ?? '').trim().toLowerCase()
+    );
+
+    if (fetchAll) {
+      if (isVehicleLookupCacheFresh()) {
+        return NextResponse.json({
+          success: true,
+          cached: true,
+          vehicles: vehicleLookupCache.rows,
+        });
+      }
+
+      const fetched = await fetchAllVehicleLookupRowsFromSupabase();
+      if (!fetched.ok) {
+        return NextResponse.json({
+          success: false,
+          vehicles: [],
+          message: fetched.error,
+        }, { status: fetched.status });
+      }
+
+      return NextResponse.json({
+        success: true,
+        cached: false,
+        vehicles: fetched.rows
+      });
+    }
 
     if (deviceIdsRaw) {
       const deviceIds = Array.from(
@@ -28,6 +154,17 @@ export async function GET(req: NextRequest) {
           vehicles: [],
           message: 'Invalid or missing deviceIds'
         }, { status: 400 });
+      }
+
+      if (isVehicleLookupCacheFresh()) {
+        const vehicles = deviceIds
+          .map((deviceId) => vehicleLookupCache.byDevice.get(deviceId))
+          .filter((row): row is VehicleLookupEntry => Boolean(row));
+        return NextResponse.json({
+          success: true,
+          cached: true,
+          vehicles
+        });
       }
 
       const supabase = await createClient();
@@ -101,6 +238,21 @@ export async function GET(req: NextRequest) {
         plate: null,
         message: 'Invalid or missing deviceId' 
       }, { status: 400 });
+    }
+
+    if (isVehicleLookupCacheFresh()) {
+      const vehicle = vehicleLookupCache.byDevice.get(String(deviceId).trim());
+      if (vehicle) {
+        return NextResponse.json({
+          success: true,
+          cached: true,
+          plate: vehicle.plate,
+          fleetNumber: vehicle.fleetNumber,
+          make: vehicle.make,
+          model: vehicle.model,
+          costCenter: vehicle.costCenter,
+        });
+      }
     }
 
     const supabase = await createClient();

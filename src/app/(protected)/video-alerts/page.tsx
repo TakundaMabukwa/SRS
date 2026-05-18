@@ -89,8 +89,9 @@ export default function VideoAlertsPage() {
       '/api/video-server',
       {
         ...ALERT_READY_WINDOW_OPTIONS,
-        preferLatestAvailable: true,
-        latestAvailableDurationMs: 339 * 1000,
+        fetchAlertDetail: true,
+        preferLatestAvailable: false,
+        latestAvailableDurationMs: 300 * 1000,
       }
     )
     return videos[0] || null
@@ -317,8 +318,9 @@ export default function VideoAlertsPage() {
             {
               beforeMs: 30 * 1000,
               afterMs: 30 * 1000,
-              preferLatestAvailable: true,
-              latestAvailableDurationMs: 339 * 1000,
+              fetchAlertDetail: true,
+              preferLatestAvailable: false,
+              latestAvailableDurationMs: 300 * 1000,
             }
           )
           if (playbackVideos.length > 0) {
@@ -490,8 +492,9 @@ export default function VideoAlertsPage() {
               {
                 beforeMs: 60 * 1000,
                 afterMs: 0,
-                preferLatestAvailable: true,
-                latestAvailableDurationMs: 339 * 1000,
+                fetchAlertDetail: true,
+                preferLatestAvailable: false,
+                latestAvailableDurationMs: 300 * 1000,
               }
             )
           } catch (playbackErr) {
@@ -950,3 +953,4 @@ export default function VideoAlertsPage() {
     </div>
   )
 }
+

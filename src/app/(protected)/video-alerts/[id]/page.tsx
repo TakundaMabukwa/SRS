@@ -482,8 +482,9 @@ export default function AlertDetailPage({ params }) {
             {
               beforeMs: 30 * 1000,
               afterMs: 30 * 1000,
-              preferLatestAvailable: true,
-              latestAvailableDurationMs: 339 * 1000,
+              fetchAlertDetail: true,
+              preferLatestAvailable: false,
+              latestAvailableDurationMs: 300 * 1000,
             }
           );
         }
@@ -1054,3 +1055,4 @@ export default function AlertDetailPage({ params }) {
     </div>
   );
 }
+

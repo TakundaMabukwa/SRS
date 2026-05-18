@@ -60,6 +60,17 @@ type VehicleIdentity = {
   costCenter: string;
 };
 
+type ControlRoomVehicleCard = {
+  deviceId: string;
+  plate: string;
+  fleetNumber: string;
+  costCenter: string;
+  hasAlert: boolean;
+  alert: any | null;
+  severity: "critical" | "high" | "medium" | "low";
+  updatedAtMs: number;
+};
+
 type StructuredAlertDomain = "ADAS" | "DMS";
 
 type AlertNameMapping = {
@@ -203,6 +214,10 @@ const SILENCED_ALERT_SIGNALS = new Set([
   "dms_10104_forward_invisible_too_long",
 ]);
 
+const VEHICLE_LOOKUP_STORAGE_KEY = "video_alerts_vehicle_lookup_v1";
+const VEHICLE_LOOKUP_STORAGE_TTL_MS = 20 * 60 * 1000;
+const ACTIVE_ALERTS_FETCH_MIN_INTERVAL_MS = 4000;
+
 function shouldSilenceAlertValue(value: unknown) {
   const normalized = String(value || "").trim().toLowerCase();
   return !!normalized && SILENCED_ALERT_LABELS.some((matcher) => normalized.includes(matcher));
@@ -210,6 +225,19 @@ function shouldSilenceAlertValue(value: unknown) {
 
 function normalizeCostCenter(value: unknown): string {
   return String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function parseVehicleLookupCache(raw: string | null): { savedAt: number; vehicles: any[] } | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    const savedAt = Number(parsed?.savedAt || 0);
+    const vehicles = Array.isArray(parsed?.vehicles) ? parsed.vehicles : [];
+    if (!Number.isFinite(savedAt) || vehicles.length === 0) return null;
+    return { savedAt, vehicles };
+  } catch {
+    return null;
+  }
 }
 
 export default function VideoAlertsDashboardTab({
@@ -224,14 +252,14 @@ export default function VideoAlertsDashboardTab({
   const videoProxyBase = "/api/video-server";
   const [searchTerm, setSearchTerm] = useState("");
   const [activeTab, setActiveTab] = useState("all"); 
-  const [showVideoOnly, setShowVideoOnly] = useState(false);
-  const [showRawAlerts, setShowRawAlerts] = useState(true);
+  const [showVideoOnly, setShowVideoOnly] = useState(true);
+  const [showRawAlerts] = useState(false);
   const [pinnedVehicleIds, setPinnedVehicleIds] = useState<string[]>([]);
   const [levelFilter, setLevelFilter] = useState<"all" | "critical" | "high" | "medium" | "low">(
     standaloneSeverity && standaloneSeverity !== "all" ? standaloneSeverity : "all"
   );
-  const [boardLevelFilter, setBoardLevelFilter] = useState<"all" | "critical" | "high" | "medium" | "low" | null>(
-    standaloneMode ? null : standaloneSeverity
+  const [boardLevelFilter, setBoardLevelFilter] = useState<"all" | "critical" | "high" | "medium" | "low">(
+    standaloneSeverity ?? "all"
   );
   const [sourceAlerts, setSourceAlerts] = useState<any[]>([]);
   const [realtimeAlerts, setRealtimeAlerts] = useState<any[]>([]);
@@ -240,12 +268,15 @@ export default function VideoAlertsDashboardTab({
   const [videoAvailability, setVideoAvailability] = useState<Record<string, boolean>>({});
   const [exactVideoReady, setExactVideoReady] = useState<Record<string, boolean>>({});
   const [vehicleIdentityLookup, setVehicleIdentityLookup] = useState<Map<string, VehicleIdentity>>(new Map());
+  const [vehicleIdentityLookupReady, setVehicleIdentityLookupReady] = useState(false);
   const [popoutTargets, setPopoutTargets] = useState<Record<string, HTMLElement | null>>({});
   const popoutTargetsRef = useRef<Record<string, HTMLElement | null>>({});
   const availabilityCacheRef = useRef<Map<string, any[]>>(new Map());
   const pendingAvailabilityKeysRef = useRef<Set<string>>(new Set());
   const exactReadyCacheRef = useRef<Map<string, boolean>>(new Map());
   const closedAlertSuppressUntilRef = useRef<Map<string, number>>(new Map());
+  const activeAlertsFetchInFlightRef = useRef(false);
+  const lastActiveAlertsFetchAtRef = useRef(0);
 
   const getAlertIdentityIds = useCallback((alert: any) => {
     const ids = new Set<string>();
@@ -491,6 +522,68 @@ export default function VideoAlertsDashboardTab({
       repeated_count: Number(incoming.repeated_count || incoming.repeatedCount || 1) || 1,
     };
   }, [getAlertPresentation, resolveVehicleIdentity]);
+
+  const hasInlineVideoEvidence = useCallback((alert: any) => {
+    if (!alert || typeof alert !== "object") return false;
+    const hasUrl = (value: unknown) => String(value || "").trim().length > 0;
+
+    if (
+      hasUrl(alert?.videoUrl) ||
+      hasUrl(alert?.video_url) ||
+      hasUrl(alert?.fileUrl) ||
+      hasUrl(alert?.file_url) ||
+      hasUrl(alert?.storage_url) ||
+      hasUrl(alert?.url) ||
+      hasUrl(alert?.videos?.pre_event) ||
+      hasUrl(alert?.videos?.post_event) ||
+      hasUrl(alert?.videos?.camera_sd)
+    ) {
+      return true;
+    }
+
+    const clips = alert?.metadata?.videoClips || {};
+    const clipKeys = [
+      "cameraVideo",
+      "cameraUrl",
+      "cameraStorageUrl",
+      "cameraPreVideo",
+      "cameraPostVideo",
+      "preStorageUrl",
+      "preUrl",
+      "postStorageUrl",
+      "postUrl",
+    ];
+    if (clipKeys.some((key) => hasUrl(clips?.[key]))) return true;
+
+    const candidateLists = [
+      alert?.media?.videos,
+      alert?.videoCaptures,
+      alert?.videoCapturesAllChannels,
+      alert?.captures,
+      alert?.alertCaptures,
+      alert?.videos,
+      alert?.metadata?.captures,
+      alert?.metadata?.videos,
+    ];
+
+    for (const list of candidateLists) {
+      if (!Array.isArray(list)) continue;
+      for (const row of list) {
+        if (
+          hasUrl((row as any)?.fileUrl) ||
+          hasUrl((row as any)?.file_url) ||
+          hasUrl((row as any)?.storage_url) ||
+          hasUrl((row as any)?.videoUrl) ||
+          hasUrl((row as any)?.video_url) ||
+          hasUrl((row as any)?.url)
+        ) {
+          return true;
+        }
+      }
+    }
+
+    return !!(alert?.has_video || alert?.hasVideo || alert?.videoReady);
+  }, []);
 
   const getAlertVehicleDisplayLabel = useCallback((alert: any) => {
     const registration = String(
@@ -822,10 +915,19 @@ export default function VideoAlertsDashboardTab({
     }
   }, [getGroupedAlertTimestamp, isPinnedVehicle, normalizeAlert, videoAvailability, videoProxyBase]);
 
-  const fetchTripRoutingStyleAlerts = useCallback(async () => {
-    if (suspendBackgroundWork) return;
+  const fetchTripRoutingStyleAlerts = useCallback(async (force: boolean = false) => {
+    if (suspendBackgroundWork || !vehicleIdentityLookupReady) return;
+    const now = Date.now();
+    if (!force && now - lastActiveAlertsFetchAtRef.current < ACTIVE_ALERTS_FETCH_MIN_INTERVAL_MS) {
+      return;
+    }
+    if (activeAlertsFetchInFlightRef.current) {
+      return;
+    }
+    activeAlertsFetchInFlightRef.current = true;
+    lastActiveAlertsFetchAtRef.current = now;
     try {
-      const activeLimit = 2000;
+      const activeLimit = 1500;
       const res = await fetch(`${videoProxyBase}/alerts/active?limit=${activeLimit}`, { cache: "no-store" });
       if (!res.ok) return;
 
@@ -842,8 +944,10 @@ export default function VideoAlertsDashboardTab({
       setSourceAlerts(deduped);
     } catch (error) {
       console.error("Failed to fetch video alerts board data:", error);
+    } finally {
+      activeAlertsFetchInFlightRef.current = false;
     }
-  }, [dedupeByIdAndSort, isSuppressedAlert, readJsonSafely, suspendBackgroundWork, videoProxyBase]);
+  }, [dedupeByIdAndSort, isSuppressedAlert, readJsonSafely, suspendBackgroundWork, vehicleIdentityLookupReady, videoProxyBase]);
 
   const fetchPinnedVehicleHistoryAlerts = useCallback(async () => {
     const vehicleIds = pinnedVehicleIds.filter(Boolean);
@@ -957,85 +1061,122 @@ export default function VideoAlertsDashboardTab({
   }, [fetchClosedHistoryAlerts, removeClosedAlertFromBoard]);
 
   useEffect(() => {
+    if (!vehicleIdentityLookupReady) return;
     fetchTripRoutingStyleAlerts();
-  }, [fetchTripRoutingStyleAlerts, filters]);
+  }, [fetchTripRoutingStyleAlerts, filters, vehicleIdentityLookupReady]);
 
   useEffect(() => {
     void fetchPinnedVehicleHistoryAlerts();
   }, [fetchPinnedVehicleHistoryAlerts]);
 
   useEffect(() => {
+    if (activeTab !== "history") return;
     void fetchClosedHistoryAlerts();
-  }, [fetchClosedHistoryAlerts]);
+  }, [activeTab, fetchClosedHistoryAlerts]);
 
   useEffect(() => {
-    const identifiers = Array.from(
-      new Set(
-        [...sourceAlerts, ...realtimeAlerts, ...pinnedHistoryAlerts, ...closedHistoryAlerts]
-          .flatMap((alert) => getAlertVehicleIdentifiers(alert))
-          .filter(Boolean)
-      )
-    );
-
-    if (identifiers.length === 0) {
-      setVehicleIdentityLookup((prev) => (prev.size === 0 ? prev : new Map()));
-      return;
-    }
-
     let cancelled = false;
 
-    const fetchVehicleLookup = async () => {
+    const toLookupMap = (rows: any[]) => {
+      const nextLookup = new Map<string, VehicleIdentity>();
+      for (const row of rows) {
+        const deviceId = String(row?.deviceId || "").trim();
+        if (!deviceId) continue;
+        nextLookup.set(deviceId, {
+          plate: String(row?.plate || "").trim(),
+          fleetNumber: String(row?.fleetNumber || "").trim(),
+          costCenter: String(row?.costCenter || "").trim(),
+        });
+      }
+      return nextLookup;
+    };
+
+    const hydrateFromStorage = () => {
+      if (typeof window === "undefined") return null;
+      const cache = parseVehicleLookupCache(window.localStorage.getItem(VEHICLE_LOOKUP_STORAGE_KEY));
+      if (!cache) return null;
+      return cache;
+    };
+
+    const persistStorageCache = (rows: any[]) => {
+      if (typeof window === "undefined") return;
       try {
-        const res = await fetch(
-          `/api/vehicle-lookup?deviceIds=${encodeURIComponent(identifiers.join(","))}`,
-          {
-            cache: "no-store",
-            signal: AbortSignal.timeout(15000),
-          }
+        window.localStorage.setItem(
+          VEHICLE_LOOKUP_STORAGE_KEY,
+          JSON.stringify({
+            savedAt: Date.now(),
+            vehicles: rows,
+          })
         );
+      } catch {
+        // Ignore storage quota/storage access failures.
+      }
+    };
+
+    const preloadVehicleLookup = async () => {
+      try {
+        const res = await fetch("/api/vehicle-lookup?all=1", {
+          cache: "no-store",
+          signal: AbortSignal.timeout(30000),
+        });
         const json = await readJsonSafely(res);
         const rows = Array.isArray(json?.vehicles) ? json.vehicles : [];
-        const nextLookup = new Map<string, VehicleIdentity>();
-
-        for (const row of rows) {
-          const deviceId = String(row?.deviceId || "").trim();
-          if (!deviceId) continue;
-          nextLookup.set(deviceId, {
-            plate: String(row?.plate || "").trim(),
-            fleetNumber: String(row?.fleetNumber || "").trim(),
-            costCenter: String(row?.costCenter || "").trim(),
-          });
-        }
+        const nextLookup = toLookupMap(rows);
 
         if (!cancelled) {
           setVehicleIdentityLookup((prev) => (
             areVehicleIdentityMapsEqual(prev, nextLookup) ? prev : nextLookup
           ));
+          if (rows.length > 0) {
+            persistStorageCache(rows);
+          }
         }
       } catch (error) {
-        console.warn("Alert vehicle registration lookup failed:", error);
+        console.warn("Vehicle lookup preload failed:", error);
+      } finally {
         if (!cancelled) {
-          setVehicleIdentityLookup((prev) => (prev.size === 0 ? prev : new Map()));
+          setVehicleIdentityLookupReady(true);
         }
       }
     };
 
-    void fetchVehicleLookup();
+    const cached = hydrateFromStorage();
+    const now = Date.now();
+    const hasFreshCache = !!cached && now - cached.savedAt <= VEHICLE_LOOKUP_STORAGE_TTL_MS;
+    const hasAnyCache = !!cached && Array.isArray(cached.vehicles) && cached.vehicles.length > 0;
+
+    if (hasAnyCache && cached) {
+      const cachedLookup = toLookupMap(cached.vehicles);
+      setVehicleIdentityLookup((prev) => (
+        areVehicleIdentityMapsEqual(prev, cachedLookup) ? prev : cachedLookup
+      ));
+      setVehicleIdentityLookupReady(true);
+    }
+
+    if (hasFreshCache) {
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    void preloadVehicleLookup();
 
     return () => {
       cancelled = true;
     };
-  }, [closedHistoryAlerts, getAlertVehicleIdentifiers, pinnedHistoryAlerts, readJsonSafely, realtimeAlerts, sourceAlerts]);
+  }, [readJsonSafely]);
 
   useEffect(() => {
     if (suspendBackgroundWork) return;
     const interval = setInterval(() => {
       fetchTripRoutingStyleAlerts();
-      void fetchClosedHistoryAlerts();
+      if (activeTab === "history") {
+        void fetchClosedHistoryAlerts();
+      }
     }, 30000);
 
     return () => clearInterval(interval);
-  }, [fetchClosedHistoryAlerts, fetchTripRoutingStyleAlerts, suspendBackgroundWork]);
+  }, [activeTab, fetchClosedHistoryAlerts, fetchTripRoutingStyleAlerts, suspendBackgroundWork]);
 
   useEffect(() => {
     const handleClosed = (event: Event) => {
@@ -1192,21 +1333,27 @@ export default function VideoAlertsDashboardTab({
   );
 
   useEffect(() => {
-    if (suspendBackgroundWork) return;
-    void refreshVideoAvailability(costCenterScopedAlertCollection);
-  }, [costCenterScopedAlertCollection, refreshVideoAvailability, suspendBackgroundWork]);
-
-  useEffect(() => {
-    if (suspendBackgroundWork) return;
-    void refreshExactVideoReady(costCenterScopedAlertCollection);
-  }, [costCenterScopedAlertCollection, refreshExactVideoReady, suspendBackgroundWork]);
+    // Use existing alert payload hints instead of per-alert availability/probe calls.
+    // This keeps the board fast and avoids endpoint floods.
+    const next: Record<string, boolean> = {};
+    for (const alert of costCenterScopedAlertCollection) {
+      const id = String(alert?.id || "").trim();
+      if (!id) continue;
+      next[id] = hasInlineVideoEvidence(alert);
+    }
+    setVideoAvailability((prev) => ({ ...prev, ...next }));
+    setExactVideoReady((prev) => ({ ...prev, ...next }));
+  }, [costCenterScopedAlertCollection, hasInlineVideoEvidence]);
 
   const passesVideoReadyGate = useCallback((alert: any) => {
     const status = String(alert?.status || "").toLowerCase();
     if (["closed", "resolved"].includes(status)) return true;
-    if (!showVideoOnly) return true;
-    return !!exactVideoReady[String(alert?.id || "")];
-  }, [exactVideoReady, showVideoOnly]);
+    const id = String(alert?.id || "");
+    const mapReady = !!exactVideoReady[id];
+    const inlineReady = hasInlineVideoEvidence(alert);
+    if (!showVideoOnly) return mapReady || inlineReady;
+    return mapReady || inlineReady;
+  }, [exactVideoReady, hasInlineVideoEvidence, showVideoOnly]);
 
   const formatAverageHandlingTime = useCallback((minutes: number | null) => {
     if (minutes === null || !Number.isFinite(minutes) || minutes < 0) return "n/a";
@@ -1375,6 +1522,164 @@ export default function VideoAlertsDashboardTab({
   const searchCanPin = /^\d{6,}$/.test(normalizedSearchVehicle);
   const searchPinned = searchCanPin && pinnedVehicleIds.includes(normalizedSearchVehicle);
 
+  const controlRoomBoard = useMemo(() => {
+    const vehicleCards = new Map<string, ControlRoomVehicleCard>();
+
+    const includeCostCenter = (value: string) => {
+      if (selectedCostCenterSet.size === 0) return true;
+      const normalized = normalizeCostCenter(value);
+      if (!normalized) return selectedCostCenterSet.has("unassigned");
+      return selectedCostCenterSet.has(normalized);
+    };
+
+    for (const [deviceId, details] of vehicleIdentityLookup.entries()) {
+      if (!deviceId) continue;
+      if (!includeCostCenter(details?.costCenter || "")) continue;
+      vehicleCards.set(deviceId, {
+        deviceId,
+        plate: String(details?.plate || "").trim(),
+        fleetNumber: String(details?.fleetNumber || "").trim(),
+        costCenter: String(details?.costCenter || "").trim(),
+        hasAlert: false,
+        alert: null,
+        severity: "low",
+        updatedAtMs: 0,
+      });
+    }
+
+    const openAlerts = costCenterScopedAlertCollection
+      .filter((alert: any) => !["closed", "resolved"].includes(String(alert?.status || "").toLowerCase()))
+      .sort((a: any, b: any) => {
+        const aTs = new Date(getGroupedAlertTimestamp(a) || a?.timestamp || 0).getTime();
+        const bTs = new Date(getGroupedAlertTimestamp(b) || b?.timestamp || 0).getTime();
+        return bTs - aTs;
+      });
+
+    for (const alert of openAlerts) {
+      const identifiers = getAlertVehicleIdentifiers(alert);
+      const fallback = String(alert?.vehicleId || alert?.device_id || "").trim();
+      const ids = identifiers.length > 0 ? identifiers : (fallback ? [fallback] : []);
+      if (ids.length === 0) continue;
+      const severity = getAlertLevel(alert);
+      const updatedAtMs = new Date(getGroupedAlertTimestamp(alert) || alert?.timestamp || 0).getTime() || Date.now();
+
+      for (const id of ids) {
+        const existing = vehicleCards.get(id);
+        const alertCostCenter = String(
+          alert?.cost_center ||
+          alert?.costCenter ||
+          alert?.metadata?.cost_center ||
+          alert?.metadata?.costCenter ||
+          existing?.costCenter ||
+          ""
+        ).trim();
+        if (!includeCostCenter(alertCostCenter)) continue;
+
+        const nextCard: ControlRoomVehicleCard = existing || {
+          deviceId: id,
+          plate: String(alert?.vehicle_registration || "").trim(),
+          fleetNumber: String(alert?.fleet_number || "").trim(),
+          costCenter: alertCostCenter,
+          hasAlert: false,
+          alert: null,
+          severity: "low",
+          updatedAtMs: 0,
+        };
+
+        if (updatedAtMs >= nextCard.updatedAtMs) {
+          nextCard.hasAlert = true;
+          nextCard.alert = alert;
+          nextCard.severity = severity;
+          nextCard.updatedAtMs = updatedAtMs;
+          if (!nextCard.plate) {
+            nextCard.plate = String(alert?.vehicle_registration || "").trim();
+          }
+          if (!nextCard.fleetNumber) {
+            nextCard.fleetNumber = String(alert?.fleet_number || "").trim();
+          }
+          if (!nextCard.costCenter) {
+            nextCard.costCenter = alertCostCenter;
+          }
+        }
+
+        vehicleCards.set(id, nextCard);
+      }
+    }
+
+    const unassigned: ControlRoomVehicleCard[] = [];
+    const recentBySeverity: Record<"critical" | "high" | "medium" | "low", ControlRoomVehicleCard[]> = {
+      critical: [],
+      high: [],
+      medium: [],
+      low: [],
+    };
+
+    for (const card of vehicleCards.values()) {
+      if (card.hasAlert) {
+        recentBySeverity[card.severity].push(card);
+      } else {
+        unassigned.push(card);
+      }
+    }
+
+    const labelSort = (a: ControlRoomVehicleCard, b: ControlRoomVehicleCard) => {
+      const aLabel = `${a.fleetNumber} ${a.plate} ${a.deviceId}`.toLowerCase();
+      const bLabel = `${b.fleetNumber} ${b.plate} ${b.deviceId}`.toLowerCase();
+      return aLabel.localeCompare(bLabel);
+    };
+
+    unassigned.sort(labelSort);
+    recentBySeverity.critical.sort((a, b) => b.updatedAtMs - a.updatedAtMs);
+    recentBySeverity.high.sort((a, b) => b.updatedAtMs - a.updatedAtMs);
+    recentBySeverity.medium.sort((a, b) => b.updatedAtMs - a.updatedAtMs);
+    recentBySeverity.low.sort((a, b) => b.updatedAtMs - a.updatedAtMs);
+
+    const searchQuery = searchTerm.trim().toLowerCase();
+    if (searchQuery) {
+      const matchesCard = (card: ControlRoomVehicleCard) => {
+        const alertLabel = String(card.alert?.title || card.alert?.alert_type || card.alert?.type || "").toLowerCase();
+        const label = `${card.fleetNumber} ${card.plate} ${card.deviceId} ${card.costCenter} ${alertLabel}`.toLowerCase();
+        return label.includes(searchQuery);
+      };
+
+      const filteredUnassigned = unassigned.filter(matchesCard);
+      const filteredRecentBySeverity = {
+        critical: recentBySeverity.critical.filter(matchesCard),
+        high: recentBySeverity.high.filter(matchesCard),
+        medium: recentBySeverity.medium.filter(matchesCard),
+        low: recentBySeverity.low.filter(matchesCard),
+      };
+
+      return {
+        unassigned: filteredUnassigned,
+        recentBySeverity: filteredRecentBySeverity,
+        recentCount:
+          filteredRecentBySeverity.critical.length +
+          filteredRecentBySeverity.high.length +
+          filteredRecentBySeverity.medium.length +
+          filteredRecentBySeverity.low.length,
+      };
+    }
+
+    return {
+      unassigned,
+      recentBySeverity,
+      recentCount:
+        recentBySeverity.critical.length +
+        recentBySeverity.high.length +
+        recentBySeverity.medium.length +
+        recentBySeverity.low.length,
+    };
+  }, [
+    costCenterScopedAlertCollection,
+    getAlertLevel,
+    getAlertVehicleIdentifiers,
+    getGroupedAlertTimestamp,
+    selectedCostCenterSet,
+    searchTerm,
+    vehicleIdentityLookup,
+  ]);
+
   // Render Helpers
   const getSeverityColor = (severity: string) => {
     switch (severity.toLowerCase()) {
@@ -1383,6 +1688,125 @@ export default function VideoAlertsDashboardTab({
       case 'medium': return 'text-yellow-600 bg-yellow-100 border-yellow-200';
       default: return 'text-blue-600 bg-blue-100 border-blue-200';
     }
+  };
+
+  const getControlRoomLaneStyle = (severity: "critical" | "high" | "medium" | "low") => {
+    switch (severity) {
+      case "critical":
+        return {
+          lane: "border-rose-200 bg-gradient-to-b from-rose-50/70 to-white",
+          accent: "border-l-rose-500",
+          flash: "bg-rose-500",
+          headerText: "text-rose-800",
+          laneBadge: "border-rose-200 bg-rose-100 text-rose-700",
+          countBadge: "border-rose-200 bg-rose-100/90 text-rose-700",
+          title: "Critical",
+        };
+      case "high":
+        return {
+          lane: "border-red-200 bg-gradient-to-b from-red-50/65 to-white",
+          accent: "border-l-red-500",
+          flash: "bg-red-500",
+          headerText: "text-red-800",
+          laneBadge: "border-red-200 bg-red-100 text-red-700",
+          countBadge: "border-red-200 bg-red-100/90 text-red-700",
+          title: "High",
+        };
+      case "medium":
+        return {
+          lane: "border-amber-200 bg-gradient-to-b from-amber-50/70 to-white",
+          accent: "border-l-amber-500",
+          flash: "bg-amber-500",
+          headerText: "text-amber-800",
+          laneBadge: "border-amber-200 bg-amber-100 text-amber-700",
+          countBadge: "border-amber-200 bg-amber-100/90 text-amber-700",
+          title: "Medium",
+        };
+      default:
+        return {
+          lane: "border-blue-200 bg-gradient-to-b from-blue-50/70 to-white",
+          accent: "border-l-blue-500",
+          flash: "bg-blue-500",
+          headerText: "text-blue-800",
+          laneBadge: "border-blue-200 bg-blue-100 text-blue-700",
+          countBadge: "border-blue-200 bg-blue-100/90 text-blue-700",
+          title: "Low",
+        };
+    }
+  };
+
+  const renderControlRoomVehicleCard = (card: ControlRoomVehicleCard, mode: "unassigned" | "alert") => {
+    const alert = card.alert;
+    const severity = card.severity;
+    const laneStyle = getControlRoomLaneStyle(severity);
+    const vehicleLabel = [card.fleetNumber, card.plate].filter(Boolean).join(" - ") || card.deviceId;
+    const lastAlertAt = alert ? formatRawAlertTimestamp(getGroupedAlertTimestamp(alert), "datetime") : "";
+    const alertLabel = String(alert?.title || alert?.alert_type || alert?.type || "").trim();
+    const alertCount = Math.max(1, Number(alert?.count || alert?.repeated_count || 1) || 1);
+
+    return (
+      <div
+        key={`control-room-${card.deviceId}`}
+        className={cn(
+          "relative overflow-hidden rounded-md border bg-white/95 px-2 py-1.5 shadow-[0_1px_2px_rgba(15,23,42,0.10)] ring-1 ring-slate-200/60 transition-all hover:bg-white hover:shadow-[0_4px_14px_rgba(15,23,42,0.08)]",
+          mode === "alert" ? cn("border-l-4", laneStyle.accent) : "border-slate-200"
+        )}
+      >
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <div className="truncate text-[12px] font-semibold leading-4 text-slate-900">{vehicleLabel}</div>
+            <div className="truncate text-[10px] leading-4 text-slate-500">
+              {card.costCenter ? `Cost center: ${card.costCenter}` : "Cost center: Unassigned"}
+            </div>
+          </div>
+          {mode !== "alert" ? (
+            <Badge variant="outline" className="h-5 rounded-full border-slate-300 bg-slate-50 px-1.5 py-0 text-[10px] font-semibold text-slate-600">
+              Unassigned
+            </Badge>
+          ) : null}
+        </div>
+
+        {mode === "alert" ? (
+          <div className="mt-1.5 space-y-0.5">
+            <div className="flex items-center gap-1.5">
+              <div className="truncate text-[11px] font-semibold leading-4 text-slate-800">{alertLabel || "Recent alert"}</div>
+              {alertCount > 1 ? (
+                <Badge variant="outline" className={cn("h-5 rounded-full px-1.5 py-0 text-[10px] font-semibold", laneStyle.countBadge)}>
+                  x{alertCount}
+                </Badge>
+              ) : null}
+            </div>
+            <div className="text-[10px] text-slate-500">{lastAlertAt || "Just now"}</div>
+          </div>
+        ) : (
+          <div className="mt-1.5 text-[11px] text-slate-500">Waiting for live alerts</div>
+        )}
+
+        <div className="mt-1.5 flex items-center justify-between text-[10px] text-slate-500">
+          <span>{mode === "alert" ? `${alertCount} occurrence${alertCount === 1 ? "" : "s"}` : "Monitoring"}</span>
+          {mode === "alert" && alert ? (
+            <button
+              type="button"
+              className="h-5 rounded-md border border-slate-300 bg-white px-1.5 text-[10px] font-semibold text-slate-700 transition-colors hover:border-slate-400 hover:bg-slate-50 hover:text-slate-900"
+              onClick={() => void handleViewAlert(alert)}
+            >
+              Open
+            </button>
+          ) : (
+            <span>Monitoring</span>
+          )}
+        </div>
+
+        {mode === "alert" ? (
+          <div className="pointer-events-none absolute right-1.5 top-1.5">
+            <span className="relative flex h-2 w-2">
+              <span className={cn("absolute inline-flex h-full w-full animate-ping rounded-full opacity-75", laneStyle.flash)} />
+              <span className={cn("relative inline-flex h-2 w-2 rounded-full", laneStyle.flash)} />
+            </span>
+          </div>
+        ) : null}
+      </div>
+    );
   };
 
   const getLevelMeta = (level: "all" | "critical" | "high" | "medium" | "low") => {
@@ -1504,6 +1928,11 @@ export default function VideoAlertsDashboardTab({
       className: "border-t-blue-400",
     },
   ];
+
+  const controlRoomSeverityLanes: Array<"critical" | "high" | "medium" | "low"> =
+    boardLevelFilter && boardLevelFilter !== "all"
+      ? [boardLevelFilter]
+      : ["critical", "high", "medium", "low"];
 
   const severityTableColumns = [
     {
@@ -1896,7 +2325,7 @@ export default function VideoAlertsDashboardTab({
               )}
               onClick={() => {
                 if (boardLevelFilter === key) {
-                  setBoardLevelFilter(null);
+                  setBoardLevelFilter("all");
                   setLevelFilter("all");
                   return;
                 }
@@ -1926,7 +2355,8 @@ export default function VideoAlertsDashboardTab({
               isStatusCardActive(card.key) && "ring-2 ring-slate-300 bg-slate-50"
             )}
             onClick={() => {
-              setBoardLevelFilter(null);
+              setBoardLevelFilter("all");
+              setLevelFilter("all");
               if (card.key === "closed") {
                 setActiveTab("history");
               } else {
@@ -1973,15 +2403,6 @@ export default function VideoAlertsDashboardTab({
             {showVideoOnly ? `Video-ready only (${videoReadyCount})` : `Show all alerts`}
           </Button>
 
-          <Button
-            variant={showRawAlerts ? "default" : "outline"}
-            size="sm"
-            onClick={() => setShowRawAlerts((prev) => !prev)}
-            title="Toggle between grouped alert cards and every raw alert"
-          >
-            {showRawAlerts ? "Grouped view" : "Show raw alerts"}
-          </Button>
-
           {searchCanPin ? (
             <Button
               variant={searchPinned ? "default" : "outline"}
@@ -2008,7 +2429,89 @@ export default function VideoAlertsDashboardTab({
       </div>
 
       {/* Main Content Area */}
-      {filteredAlerts.length === 0 ? (
+      {!vehicleIdentityLookupReady ? (
+        <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-8 text-center text-slate-500">
+          Loading vehicle registry for control-room cards...
+        </div>
+      ) : boardLevelFilter !== null ? (
+          <div className="space-y-3">
+            <div className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+              <div>
+                <div className="text-sm font-semibold text-slate-900">
+                  {getLevelMeta(boardLevelFilter).label} board
+                </div>
+                <div className="text-xs text-slate-500">
+                  Control-room board fed by websocket + API for all vehicles
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 gap-2.5 xl:grid-cols-[320px_minmax(0,1fr)]">
+              <div className="rounded-xl border border-slate-200 bg-white/95 p-2 shadow-sm">
+                <div className="mb-1.5 flex items-center justify-between">
+                  <div>
+                    <div className="text-[13px] font-semibold text-slate-900">Unassigned Bucket</div>
+                    <div className="text-[10px] text-slate-500">Vehicles waiting for active alerts</div>
+                  </div>
+                  <Badge variant="secondary" className="rounded-full px-2 py-0.5 text-xs">
+                    {controlRoomBoard.unassigned.length}
+                  </Badge>
+                </div>
+                <div className="max-h-[72vh] space-y-1.5 overflow-auto pr-1">
+                  {controlRoomBoard.unassigned.length > 0 ? (
+                    controlRoomBoard.unassigned.map((card) => renderControlRoomVehicleCard(card, "unassigned"))
+                  ) : (
+                    <div className="rounded-md border border-dashed border-slate-200 bg-slate-50 px-2 py-4 text-center text-[11px] text-slate-400">
+                      All tracked vehicles currently have alerts
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 gap-2.5 lg:grid-cols-2 xl:grid-cols-4">
+                {controlRoomSeverityLanes.map((severityKey) => {
+                  const laneStyle = getControlRoomLaneStyle(severityKey);
+                  const cards = controlRoomBoard.recentBySeverity[severityKey];
+                  return (
+                    <div key={`lane-${severityKey}`} className={cn("rounded-xl border p-2 shadow-sm", laneStyle.lane)}>
+                      <div className="mb-1.5 flex items-start justify-between gap-2">
+                        <div>
+                          <div className={cn("text-[13px] font-semibold", laneStyle.headerText)}>{laneStyle.title}</div>
+                          <div className="text-[10px] text-slate-500">Recent active alerts</div>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <Badge variant="outline" className={cn("h-5 rounded-full px-1.5 py-0 text-[10px] font-semibold", laneStyle.laneBadge)}>
+                            {cards.length}
+                          </Badge>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-5 rounded-md border border-slate-300 bg-white/80 px-1.5 text-[10px] text-slate-600 hover:bg-white hover:text-slate-900"
+                            onClick={() => openSeverityPopout(severityKey)}
+                            title={`Pop out ${laneStyle.title} alerts`}
+                          >
+                            <ExternalLink className="mr-1 h-3 w-3" />
+                            Pop out
+                          </Button>
+                        </div>
+                      </div>
+
+                      <div className="max-h-[72vh] space-y-1.5 overflow-auto pr-1">
+                        {cards.length > 0 ? (
+                          cards.map((card) => renderControlRoomVehicleCard(card, "alert"))
+                        ) : (
+                          <div className="rounded-md border border-dashed border-slate-200 bg-white px-2 py-4 text-center text-[11px] text-slate-400">
+                            No recent {severityKey} alerts
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+      ) : filteredAlerts.length === 0 ? (
         <div className="text-center py-20 bg-slate-50 rounded-xl border border-slate-200 border-dashed">
           <div className="mx-auto bg-white p-4 rounded-full w-20 h-20 flex items-center justify-center shadow-sm mb-4">
             <Search className="h-8 w-8 text-slate-300" />
@@ -2021,64 +2524,11 @@ export default function VideoAlertsDashboardTab({
               ? `${pendingVideoCount} active alert${pendingVideoCount === 1 ? "" : "s"} exist, but alert-time playback is not ready yet. They will appear here once video becomes playable.`
               : "Try adjusting your filters or search terms."}
           </p>
-          <Button variant="link" onClick={() => { setActiveTab('all'); setLevelFilter('all'); setBoardLevelFilter(null); setSearchTerm(''); }} className="mt-2">
+          <Button variant="link" onClick={() => { setActiveTab('all'); setLevelFilter('all'); setBoardLevelFilter("all"); setSearchTerm(''); }} className="mt-2">
             Clear all filters
           </Button>
         </div>
       ) : (
-        boardLevelFilter !== null ? (
-          <div className="space-y-3">
-            <div className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
-              <div>
-                <div className="text-sm font-semibold text-slate-900">
-                  {getLevelMeta(boardLevelFilter).label} board
-                </div>
-                <div className="text-xs text-slate-500">
-                  Severity table view fed by websocket + API for all vehicles
-                </div>
-              </div>
-              {!standaloneMode && <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  setBoardLevelFilter(null);
-                  setLevelFilter("all");
-                }}
-              >
-                Back to table
-              </Button>}
-            </div>
-
-          <div className="grid grid-cols-1 gap-3 xl:grid-cols-4">
-              {boardColumns.map((column) => (
-                <div key={column.key} className={cn("rounded-xl border border-slate-200 bg-slate-50 p-2.5", column.className)}>
-                  <div className="mb-2 flex items-start justify-between gap-2">
-                    <div>
-                      <div className="text-[13px] font-semibold text-slate-900">{column.title}</div>
-                      <div className="text-[11px] text-slate-500">{column.description}</div>
-                      <div className="text-[11px] text-slate-500">
-                        Avg handle: <span className="font-semibold text-slate-700">{column.avgHandlingTime || "n/a"}</span>
-                      </div>
-                    </div>
-                    <Badge variant="secondary" className="rounded-full px-2 py-0.5 text-xs">
-                      {column.alerts.length}
-                    </Badge>
-                  </div>
-
-                  <div className="space-y-1.5">
-                    {column.alerts.length > 0 ? (
-                      column.alerts.map((alert: any) => renderAlertBoardRow(alert))
-                    ) : (
-                      <div className="rounded-md border border-dashed border-slate-200 bg-white px-2 py-4 text-center text-[11px] text-slate-400">
-                        No alerts
-                      </div>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        ) : (
           <div className="bg-white rounded-lg border border-slate-200 shadow-sm overflow-hidden">
              <Table>
                 <TableHeader>
@@ -2126,7 +2576,6 @@ export default function VideoAlertsDashboardTab({
                 </TableBody>
              </Table>
           </div>
-        )
       )}
       {Object.entries(popoutTargets).map(([severity, target]) => {
         if (!target) return null;
