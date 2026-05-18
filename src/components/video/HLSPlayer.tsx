@@ -11,11 +11,11 @@ interface HLSPlayerProps {
   fallbackVehicleIds?: string[];
 }
 
-// Stability mode: allow older frames (up to ~15s) to avoid constant reconnect churn.
-const PREVIEW_WAIT_MS = 1800;
-const PREVIEW_MAX_AGE_MS = 15000;
+// Low-latency mode: keep freshness tight and rely on last-frame hold during brief drops.
+const PREVIEW_WAIT_MS = 1200;
+const PREVIEW_MAX_AGE_MS = 4000;
 const PREVIEW_RETRY_DELAY_MS = 3500;
-const MJPEG_FIRST_FRAME_DEADLINE_MS = 15000;
+const MJPEG_FIRST_FRAME_DEADLINE_MS = 9000;
 const START_LIVE_THROTTLE_MS = 45000;
 
 function normalizeVehicleAlias(value: string) {
@@ -90,7 +90,7 @@ export default function HLSPlayer({
       autoStart: 'true',
       videoOnly: 'true',
       input: 'auto',
-      fps: '8',
+      fps: '10',
       _ts: String(reloadToken),
     });
     return `/api/video-server/vehicles/${encodeURIComponent(activeCandidateId)}/live.mjpeg?${params.toString()}`;

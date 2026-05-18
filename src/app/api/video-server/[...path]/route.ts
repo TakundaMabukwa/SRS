@@ -276,16 +276,16 @@ async function handleVehicleLiveMjpegProxy(request: NextRequest, pathArray: stri
   const candidates = buildCandidateVehicleIds(vehicleId, fallbackIds)
   const forwardedQuery = new URLSearchParams(request.nextUrl.searchParams)
   forwardedQuery.delete('fallbackIds')
-  if (!forwardedQuery.get('waitMs')) forwardedQuery.set('waitMs', '2500')
-  if (!forwardedQuery.get('maxAgeMs')) forwardedQuery.set('maxAgeMs', '15000')
+  if (!forwardedQuery.get('waitMs')) forwardedQuery.set('waitMs', '1200')
+  if (!forwardedQuery.get('maxAgeMs')) forwardedQuery.set('maxAgeMs', '4000')
   if (!forwardedQuery.get('autoStart')) forwardedQuery.set('autoStart', 'true')
   if (!forwardedQuery.get('videoOnly')) forwardedQuery.set('videoOnly', 'true')
   if (!forwardedQuery.get('input')) forwardedQuery.set('input', 'auto')
-  if (!forwardedQuery.get('fps')) forwardedQuery.set('fps', '6')
+  if (!forwardedQuery.get('fps')) forwardedQuery.set('fps', '10')
   const waitMs = Number(forwardedQuery.get('waitMs') || 0)
   const timeoutMs = Number.isFinite(waitMs) && waitMs > 0
-    ? Math.max(6000, Math.min(16000, Math.round(waitMs) + 7000))
-    : 9000
+    ? Math.max(4500, Math.min(10000, Math.round(waitMs) + 4500))
+    : 7000
 
   const attempts: string[] = []
   const seen = new Set<string>()

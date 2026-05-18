@@ -528,7 +528,7 @@ export default function LiveStreamTab({ selectedCostCenters = [] }: LiveStreamTa
     const runtimeEndpoints = [
       { url: `/api/video-server/live/vehicles`, parser: parseRuntimeVehicles },
       { url: `/api/video-server/vehicles/connected`, parser: parseConnectedVehicles },
-      { url: `/api/video-server/live/streams?maxAgeMs=15000`, parser: parseRuntimeVehicles },
+      { url: `/api/video-server/live/streams?maxAgeMs=5000`, parser: parseRuntimeVehicles },
     ] as const;
 
     for (const endpoint of runtimeEndpoints) {
