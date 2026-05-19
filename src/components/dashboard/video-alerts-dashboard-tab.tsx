@@ -2402,6 +2402,7 @@ export default function VideoAlertsDashboardTab({
               if (card.key === "closed") {
                 setActiveTab("history");
                 setBoardLevelFilter(null);
+                void fetchClosedHistoryAlerts();
               } else {
                 setActiveTab("all");
                 setBoardLevelFilter("all");
