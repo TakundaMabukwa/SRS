@@ -3272,19 +3272,31 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
   };
   const closeSelectedAlert = async (
     closureType: "resolved" | "false_alert" | "ncr" | "report" = "resolved",
-    artifact?: SavedAlertArtifact | null
+    artifact?: SavedAlertArtifact | null,
+    targetAlert?: any
   ) => {
-      if (!selectedAlert?.id) return;
-      const closingAlertId = String(selectedAlert.id);
+      const activeAlert = targetAlert || selectedAlert;
+      if (!activeAlert?.id) return;
+      const closingAlertId = String(activeAlert.id);
+      const activeAlertTitle = String(
+        activeAlert?.type ||
+          activeAlert?.alert_type ||
+          activeAlert?.label ||
+          activeAlert?.title ||
+          selectedAlertTitle ||
+          "Alert"
+      )
+        .replace(/_/g, " ")
+        .replace(/\b\w/g, (c: string) => c.toUpperCase());
       const reasonLabel = String(alertReason || "").trim();
       const manualNotes = alertNotesDraft.trim();
       const ncrLabel = String(selectedNcrForm || "").trim();
       const reportLabel = String(selectedReportForm || "").trim();
       const defaultClosureLabel =
         closureType === "false_alert"
-          ? `False alert - ${selectedAlertTitle || "Alert"}`
+          ? `False alert - ${activeAlertTitle}`
           : closureType === "resolved"
-          ? `Resolved - ${selectedAlertTitle || "Alert"}`
+          ? `Resolved - ${activeAlertTitle}`
           : closureType === "ncr"
           ? (artifact?.documentType || "ncr")
           : closureType === "report"
@@ -3313,10 +3325,10 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
 
       const defaultNotes =
         closureType === "false_alert"
-          ? `Marked as false alert from dashboard for ${selectedAlertTitle || "alert"}.`
+          ? `Marked as false alert from dashboard for ${activeAlertTitle || "alert"}.`
           : closureType === "resolved"
-          ? `Resolved from dashboard for ${selectedAlertTitle || "alert"}.`
-          : `Closed from dashboard for ${selectedAlertTitle || "alert"} via ${closureLabel}.`;
+          ? `Resolved from dashboard for ${activeAlertTitle || "alert"}.`
+          : `Closed from dashboard for ${activeAlertTitle || "alert"} via ${closureLabel}.`;
       const notes = manualNotes || closureLabel || defaultNotes;
       if (notes.length < 5) {
         const message = "Reason/notes must be at least 5 characters.";
@@ -3338,7 +3350,7 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
         if (closureType === "resolved") {
           try {
             resolvedWindowVideos = await resolveAlertPlaybackVideos(
-              selectedAlert,
+              activeAlert,
               videoProxyBase,
               {
                 beforeMs: 60 * 1000,
@@ -3353,6 +3365,58 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
           }
         }
 
+        const closurePayloadBase =
+          String(selectedAlert?.id || "").trim() === closingAlertId
+            ? buildSelectedAlertClosurePayload(artifact, resolvedWindowVideos)
+            : {
+                source: "dashboard_trip_routing",
+                alertId: activeAlert?.id || null,
+                deviceId:
+                  activeAlert?.device_id ||
+                  activeAlert?.vehicleId ||
+                  activeAlert?.vehicle_id ||
+                  activeAlert?.vehicle?.device_id ||
+                  null,
+                channel: activeAlert?.channel ?? activeAlert?.metadata?.channel ?? null,
+                alertType: activeAlert?.type || activeAlert?.alert_type || null,
+                severity: activeAlert?.priority || activeAlert?.severity || null,
+                timestamp: activeAlert?.displayTimestamp || activeAlert?.timestamp || null,
+                lastOccurrenceTimestamp:
+                  activeAlert?.lastOccurrenceTimestamp ||
+                  activeAlert?.displayTimestamp ||
+                  activeAlert?.timestamp ||
+                  null,
+                vehicle:
+                  String(
+                    activeAlert?.vehicle_registration ||
+                      activeAlert?.vehicleRegistration ||
+                      activeAlert?.fleet_number ||
+                      activeAlert?.fleetNumber ||
+                      activeAlert?.device_id ||
+                      ""
+                  ).trim() || null,
+                fleetNumber:
+                  String(activeAlert?.fleet_number || activeAlert?.fleetNumber || "").trim() || null,
+                vehicleRegistration:
+                  String(
+                    activeAlert?.vehicle_registration || activeAlert?.vehicleRegistration || ""
+                  ).trim() || null,
+                driverName:
+                  String(
+                    activeAlert?.driver_name ||
+                      activeAlert?.driverName ||
+                      activeAlert?.metadata?.driver_name ||
+                      ""
+                  ).trim() || null,
+                coordinates: activeAlert?.location || null,
+                screenshots: Array.isArray(activeAlert?.screenshots) ? activeAlert.screenshots : [],
+                videos: Array.isArray(activeAlert?.media?.videos) ? activeAlert.media.videos : [],
+                resolvedWindowVideos,
+                timeline: Array.isArray(activeAlert?.resolution_timeline)
+                  ? activeAlert.resolution_timeline
+                  : [],
+              };
+
         const closePayload = {
           closureType,
           notes,
@@ -3363,7 +3427,7 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
           documentName: artifact?.documentName || undefined,
           documentType: artifact?.documentType || undefined,
           payload: {
-            ...buildSelectedAlertClosurePayload(artifact, resolvedWindowVideos),
+            ...closurePayloadBase,
             ncrForm: closureType === "ncr" ? selectedNcrForm : undefined,
             reportForm: closureType === "report" ? selectedReportForm : undefined,
           },
@@ -3381,14 +3445,14 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
         };
 
         let response = await postClosure(
-          `/alerts/${encodeURIComponent(String(selectedAlert.id))}/close`,
+          `/alerts/${encodeURIComponent(closingAlertId)}/close`,
           closePayload
         );
 
         if (!response.res.ok && response.res.status === 404) {
           if (closureType === "false_alert") {
             response = await postClosure(
-              `/alerts/${encodeURIComponent(String(selectedAlert.id))}/mark-false`,
+              `/alerts/${encodeURIComponent(closingAlertId)}/mark-false`,
               {
                 reason: notes,
                 markedBy: actor,
@@ -3397,7 +3461,7 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
             );
           } else {
             response = await postClosure(
-              `/alerts/${encodeURIComponent(String(selectedAlert.id))}/resolve-with-notes`,
+              `/alerts/${encodeURIComponent(closingAlertId)}/resolve-with-notes`,
               {
                 notes,
                 resolvedBy: actor,
@@ -3407,7 +3471,7 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
             );
             if (!response.res.ok && response.res.status === 404) {
               response = await postClosure(
-                `/alerts/${encodeURIComponent(String(selectedAlert.id))}/resolve`,
+                `/alerts/${encodeURIComponent(closingAlertId)}/resolve`,
                 {}
               );
             }
@@ -3433,7 +3497,7 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
             new CustomEvent("video-alert-closed", {
               detail: {
                 id: closingAlertId,
-                groupedIds: Array.isArray(selectedAlert?.groupedIds) ? selectedAlert.groupedIds : [],
+                groupedIds: Array.isArray(activeAlert?.groupedIds) ? activeAlert.groupedIds : [],
               },
             })
           );
@@ -4827,6 +4891,20 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
       }
     }
   }, [getAlertCoordinates, toAbsoluteVideoUrl]);
+
+  const runTimelineAlertAction = async (
+    rowSeed: any,
+    action: "open" | "resolved" | "false_alert" = "open"
+  ) => {
+    if (!rowSeed) return;
+    const opened = await openAlertDetailRealtime(rowSeed, null, { silent: false });
+    if (action === "open") return;
+    if (action === "false_alert") {
+      const shouldClose = confirm("Mark this alert as a false alarm and close it?");
+      if (!shouldClose) return;
+    }
+    await closeSelectedAlert(action, null, opened || rowSeed);
+  };
 
   useEffect(() => {
     const getCookie = (name: string) => {
@@ -6825,7 +6903,12 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
                       const nextReason = e.target.value;
                       setAlertReason(nextReason);
                       if (nextReason) {
-                        setAlertNotesDraft(nextReason);
+                        setAlertNotesDraft((prev) => {
+                          const existing = String(prev || "").trim();
+                          const previousReason = String(alertReason || "").trim();
+                          if (!existing || existing === previousReason) return nextReason;
+                          return prev;
+                        });
                       }
                     }}
                   >
@@ -6896,6 +6979,18 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
                   ) : (
                     <Badge className="border border-emerald-300 bg-emerald-100 text-emerald-800">Resolved</Badge>
                   )}
+                </div>
+                <div className="mt-2">
+                  <label className="mb-1 block text-[11px] font-medium text-slate-200">
+                    Additional comments
+                  </label>
+                  <textarea
+                    className="min-h-[58px] w-full rounded-md border border-white/20 bg-white/10 px-2 py-1.5 text-xs text-white outline-none placeholder:text-slate-300/80 focus:border-white/40"
+                    value={alertNotesDraft}
+                    onChange={(e) => setAlertNotesDraft(e.target.value)}
+                    placeholder="Add extra context for this action (stored with alert resolution)"
+                    maxLength={1200}
+                  />
                 </div>
               </div>
             </div>
@@ -7312,7 +7407,7 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
                                   onClick={() => {
                                     const row = latestEntry?.raw || latestEntry;
                                     if (!row) return;
-                                    void openAlertDetailRealtime(row, null, { silent: false });
+                                    void runTimelineAlertAction(row, "open");
                                   }}
                                 >
                                   Open
@@ -7320,14 +7415,18 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
                                 <span className="text-[10px] font-medium text-slate-500">
                                   {group?.count || 0}
                                 </span>
-                                {isCurrent && !selectedAlert?.resolved ? (
+                                {group?.openCount > 0 ? (
                                   <>
                                     <Button
                                       size="sm"
                                       variant="outline"
                                       className="h-6 px-2 text-[10px] border-emerald-300 text-emerald-700 hover:bg-emerald-50"
                                       disabled={alertActionLoading}
-                                      onClick={() => closeSelectedAlert("resolved")}
+                                      onClick={() => {
+                                        const row = latestEntry?.raw || latestEntry;
+                                        if (!row) return;
+                                        void runTimelineAlertAction(row, "resolved");
+                                      }}
                                     >
                                       Resolve
                                     </Button>
@@ -7336,9 +7435,10 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
                                       variant="outline"
                                       className="h-6 px-2 text-[10px] border-red-300 text-red-700 hover:bg-red-50"
                                       disabled={alertActionLoading}
-                                      onClick={async () => {
-                                        if (!confirm('Mark this alert as a false alarm and close it?')) return;
-                                        await closeSelectedAlert("false_alert");
+                                      onClick={() => {
+                                        const row = latestEntry?.raw || latestEntry;
+                                        if (!row) return;
+                                        void runTimelineAlertAction(row, "false_alert");
                                       }}
                                     >
                                       False
