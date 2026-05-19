@@ -681,6 +681,42 @@ export default function VideoAlertsDashboardTab({
     );
   }, [normalizeAlert]);
 
+  const latestAlertPerVehicle = useCallback((alerts: any[]) => {
+    const byVehicle = new Map<string, { alert: any; ts: number }>();
+    const fallbackAlerts = new Map<string, any>();
+
+    alerts.forEach((alert: any, index: number) => {
+      const vehicleKey = String(
+        alert?.vehicleId ||
+        alert?.device_id ||
+        alert?.vehicle_id ||
+        alert?.metadata?.vehicle?.vehicleId ||
+        ""
+      ).trim();
+      const timestampMs = new Date(getGroupedAlertTimestamp(alert) || alert?.timestamp || alert?.created_at || 0).getTime();
+
+      if (!vehicleKey) {
+        const fallbackKey = String(alert?.id || alert?.alert_id || `unknown-${index}`);
+        fallbackAlerts.set(fallbackKey, alert);
+        return;
+      }
+
+      const existing = byVehicle.get(vehicleKey);
+      if (!existing || timestampMs > existing.ts) {
+        byVehicle.set(vehicleKey, { alert, ts: timestampMs });
+      }
+    });
+
+    return [
+      ...Array.from(byVehicle.values()).map((entry) => entry.alert),
+      ...Array.from(fallbackAlerts.values()),
+    ].sort(
+      (a: any, b: any) =>
+        new Date(getGroupedAlertTimestamp(b) || b?.timestamp || 0).getTime() -
+        new Date(getGroupedAlertTimestamp(a) || a?.timestamp || 0).getTime()
+    );
+  }, [getGroupedAlertTimestamp]);
+
   const getAvailabilityDate = useCallback((alert: any) => {
     const displayTimestamp = getAlertDisplayTimestamp(alert);
     if (!displayTimestamp) return "";
@@ -941,13 +977,13 @@ export default function VideoAlertsDashboardTab({
             : [];
 
       const deduped = dedupeByIdAndSort(activeList).filter((alert: any) => !isSuppressedAlert(alert));
-      setSourceAlerts(deduped);
+      setSourceAlerts(latestAlertPerVehicle(deduped));
     } catch (error) {
       console.error("Failed to fetch video alerts board data:", error);
     } finally {
       activeAlertsFetchInFlightRef.current = false;
     }
-  }, [dedupeByIdAndSort, isSuppressedAlert, readJsonSafely, suspendBackgroundWork, vehicleIdentityLookupReady, videoProxyBase]);
+  }, [dedupeByIdAndSort, isSuppressedAlert, latestAlertPerVehicle, readJsonSafely, suspendBackgroundWork, vehicleIdentityLookupReady, videoProxyBase]);
 
   const fetchPinnedVehicleHistoryAlerts = useCallback(async () => {
     const vehicleIds = pinnedVehicleIds.filter(Boolean);

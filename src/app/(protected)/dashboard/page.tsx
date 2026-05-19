@@ -1550,6 +1550,35 @@ function RoutingSection({ userRole, handleViewMap, setCurrentTripForNote, setNot
     );
   }, [extractVehicleKey, normalizeId, toAlertTimestamp]);
 
+  const latestAlertPerVehicle = useCallback((alerts: any[]) => {
+    const byVehicle = new Map<string, { alert: any; ts: number }>();
+    const withoutVehicle = new Map<string, any>();
+
+    alerts.forEach((alert: any, index: number) => {
+      const vehicleKey = normalizeId(alert?.vehicleId || extractVehicleKey(alert));
+      const ts = new Date(toAlertTimestamp(alert) || 0).getTime();
+
+      if (!vehicleKey) {
+        const fallbackKey = normalizeId(alert?.id) || `unknown-${index}`;
+        withoutVehicle.set(fallbackKey, alert);
+        return;
+      }
+
+      const existing = byVehicle.get(vehicleKey);
+      if (!existing || ts > existing.ts) {
+        byVehicle.set(vehicleKey, { alert, ts });
+      }
+    });
+
+    return [
+      ...Array.from(byVehicle.values()).map((entry) => entry.alert),
+      ...Array.from(withoutVehicle.values()),
+    ].sort(
+      (a: any, b: any) =>
+        new Date(toAlertTimestamp(b) || 0).getTime() - new Date(toAlertTimestamp(a) || 0).getTime()
+    );
+  }, [extractVehicleKey, normalizeId, toAlertTimestamp]);
+
   const buildDashboardAlert = useCallback(async (activeAlert: any) => {
     try {
       const alertId = normalizeId(activeAlert?.id);
@@ -1656,10 +1685,11 @@ function RoutingSection({ userRole, handleViewMap, setCurrentTripForNote, setNot
 
       // Render immediately using active list so UI doesn't wait on slow per-alert media calls.
       const immediateAlerts = activeList.map((activeAlert: any) => toBaseDashboardAlert(activeAlert));
-      setGroupedAlerts(dedupeAndSortAlerts(immediateAlerts));
+      const latestPerVehicleAlerts = latestAlertPerVehicle(immediateAlerts);
+      setGroupedAlerts(dedupeAndSortAlerts(latestPerVehicleAlerts));
 
       // Hydrate detailed media in background for the most recent alerts.
-      const hydrateCandidates = immediateAlerts
+      const hydrateCandidates = latestPerVehicleAlerts
         .slice()
         .sort((a: any, b: any) =>
           new Date(toAlertTimestamp(b) || 0).getTime() - new Date(toAlertTimestamp(a) || 0).getTime()
@@ -1693,7 +1723,7 @@ function RoutingSection({ userRole, handleViewMap, setCurrentTripForNote, setNot
     } catch (err) {
       console.error("Failed to fetch grouped alerts:", err);
     }
-  }, [buildDashboardAlert, dedupeAndSortAlerts, normalizeId, toAlertTimestamp, toBaseDashboardAlert, videoProxyBase]);
+  }, [buildDashboardAlert, dedupeAndSortAlerts, latestAlertPerVehicle, normalizeId, toAlertTimestamp, toBaseDashboardAlert, videoProxyBase]);
 
   useEffect(() => {
     fetchGroupedAlerts();

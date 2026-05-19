@@ -84,6 +84,21 @@ const LIVE_PREVIEW_WS_URL =
   "";
 const LIVE_SCREENSHOT_WINDOW_MS = 10 * 60 * 1000;
 
+function deriveHttpBaseFromWsUrl(rawValue: string): string {
+  const raw = String(rawValue || "").trim();
+  if (!raw) return "";
+  try {
+    const parsed = new URL(raw);
+    if (parsed.protocol === "ws:") return `http://${parsed.host}`;
+    if (parsed.protocol === "wss:") return `https://${parsed.host}`;
+  } catch {
+    return "";
+  }
+  return "";
+}
+
+const LIVE_PREVIEW_WS_HTTP_BASE = deriveHttpBaseFromWsUrl(LIVE_PREVIEW_WS_URL);
+
 function normalizeCostCenter(value: unknown): string {
   return String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
 }
@@ -156,6 +171,11 @@ function toProxiedScreenshotUrl(rawValue: unknown): string {
     return raw;
   }
   if (raw.startsWith("/api/")) {
+    if (LIVE_PREVIEW_WS_HTTP_BASE) {
+      // When screenshots are sourced via sandbox websocket, use the same sandbox API host
+      // for image bytes to avoid listener/go-hub routing mismatches.
+      return `${LIVE_PREVIEW_WS_HTTP_BASE}${raw}`;
+    }
     return `/api/video-server${raw.slice(4)}`;
   }
   if (raw.startsWith("/captures/") || raw.startsWith("/media/")) {
@@ -181,6 +201,53 @@ function toProxiedScreenshotUrl(rawValue: unknown): string {
     }
   }
   return raw;
+}
+
+function withCacheBuster(url: string, tsMs: number): string {
+  const base = String(url || "").trim();
+  if (!base) return "";
+  const token = Number.isFinite(tsMs) && tsMs > 0 ? Math.round(tsMs) : Date.now();
+  const sep = base.includes("?") ? "&" : "?";
+  return `${base}${sep}_ts=${token}`;
+}
+
+function buildMjpegFallbackUrl(vehicle: ConnectedVehicle, channel: number, tsMs: number): string {
+  const ids = buildVehicleCandidateIds(vehicle);
+  const primary = String(ids[0] || vehicle.id || "").trim();
+  if (!primary) return "";
+
+  const params = new URLSearchParams({
+    sim: primary,
+    channel: String(channel),
+    waitMs: "900",
+    maxAgeMs: "5000",
+    autoStart: "true",
+    videoOnly: "true",
+    input: "auto",
+    fps: "2",
+    _ts: String(Number.isFinite(tsMs) ? Math.round(tsMs) : Date.now()),
+  });
+
+  return `/api/video-server/live/mjpeg?${params.toString()}`;
+}
+
+function buildDirectScreenshotFallbackUrl(vehicle: ConnectedVehicle, channel: number, tsMs: number): string {
+  const ids = buildVehicleCandidateIds(vehicle);
+  const primary = String(ids[0] || vehicle.id || "").trim();
+  if (!primary) return "";
+
+  const params = new URLSearchParams({
+    channel: String(channel),
+    maxAgeMs: "120000",
+    _ts: String(Number.isFinite(tsMs) ? Math.round(tsMs) : Date.now()),
+  });
+
+  const fallbackIds = ids.slice(1).join(",");
+  if (fallbackIds) {
+    params.set("fallbackIds", fallbackIds);
+  }
+
+  return `/api/video-server/vehicles/${encodeURIComponent(primary)}/screenshot?${params.toString()}`;
 }
 
 function toScreenshotWsCandidates(): string[] {
@@ -310,6 +377,7 @@ export default function ScreenshotsDashboardTab({
   const [lastScreenshotAt, setLastScreenshotAt] = useState<Date | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [gridColumns, setGridColumns] = useState(4);
+  const [mjpegFallbackToken, setMjpegFallbackToken] = useState(() => Date.now());
 
   const ingestScreenshotResult = useCallback((result: ScreenshotResult) => {
     const vehicleId = String(result.vehicleId || "").trim();
@@ -322,13 +390,14 @@ export default function ScreenshotsDashboardTab({
     if (!normalizedUrl) return;
 
     const nowMs = Date.now();
+    const cacheBustedUrl = withCacheBuster(normalizedUrl, nowMs);
     const entries: Array<[string, ScreenshotEntry]> = [];
     const ids = [vehicleId, normalizeVehicleAlias(vehicleId)].filter(Boolean);
     for (const id of ids) {
       entries.push([
         screenshotKey(id, channel),
         {
-          url: normalizedUrl,
+          url: cacheBustedUrl,
           timestampMs: nowMs,
           ok: result.ok !== false,
         },
@@ -613,6 +682,13 @@ export default function ScreenshotsDashboardTab({
   }, [ingestScreenshotResult]);
 
   useEffect(() => {
+    const timer = setInterval(() => {
+      setMjpegFallbackToken(Date.now());
+    }, 45000);
+    return () => clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
     let active = true;
 
     const refreshFromLatest = async () => {
@@ -693,13 +769,25 @@ export default function ScreenshotsDashboardTab({
               ? (Date.now() - shotTimestampMs) <= LIVE_SCREENSHOT_WINDOW_MS
               : !!liveRow;
 
+            const useMjpegFallback =
+              !shot &&
+              (vehicle.connected === true || !!liveRow) &&
+              streamTimestampMs > 0;
+            const screenshotFallbackUrl =
+              !shot && (vehicle.connected === true || !!liveRow)
+                ? buildDirectScreenshotFallbackUrl(vehicle, channel, mjpegFallbackToken)
+                : "";
+            const mjpegFallbackUrl = useMjpegFallback
+              ? buildMjpegFallbackUrl(vehicle, channel, mjpegFallbackToken)
+              : "";
+
             return {
               channel,
               active: vehicle.connected === true || !!liveRow || !!shot,
               isLive,
-              imageUrl: shot?.url,
+              imageUrl: shot?.url || screenshotFallbackUrl || mjpegFallbackUrl || undefined,
               timestamp,
-              source: shot ? "ws" : "stream",
+              source: shot ? "ws" : ((screenshotFallbackUrl || mjpegFallbackUrl) ? "stream" : undefined),
             } satisfies VehicleChannelCard;
           });
 
@@ -720,7 +808,7 @@ export default function ScreenshotsDashboardTab({
         if (aLatest !== bLatest) return bLatest - aLatest;
         return a.displayLabel.localeCompare(b.displayLabel);
       });
-  }, [scopedVehicles, screenshotMap]);
+  }, [mjpegFallbackToken, scopedVehicles, screenshotMap]);
 
   const liveCount = useMemo(() => {
     const now = Date.now();
@@ -847,8 +935,14 @@ export default function ScreenshotsDashboardTab({
           </div>
           <div className={gridClassName}>
             {cards.map((card) => {
+              const latestFrameTimestamp = Math.max(
+                ...card.channels
+                  .filter((channelCard) => Boolean(channelCard.imageUrl))
+                  .map((channelCard) => parseDate(channelCard.timestamp)),
+                0
+              );
               const latestTimestamp = Math.max(...card.channels.map((channelCard) => parseDate(channelCard.timestamp)), 0);
-              const hasScreenshot = card.channels.some((channelCard) => channelCard.active || channelCard.isLive);
+              const hasScreenshot = card.channels.some((channelCard) => Boolean(channelCard.imageUrl));
               return (
                 <Card
                   key={card.vehicleId}
@@ -859,11 +953,9 @@ export default function ScreenshotsDashboardTab({
                       <div className="min-w-0">
                         <p className="truncate text-sm font-semibold">{card.displayLabel}</p>
                         <p className="mt-1 text-[11px] text-slate-500">
-                          {card.connected ? "Connected" : "Offline"}
-                          {" - "}
-                          {latestTimestamp > 0
-                            ? `Latest screenshot ${new Date(latestTimestamp).toLocaleTimeString()}`
-                            : "Waiting for screenshots"}
+                          {hasScreenshot
+                            ? `Connected - Latest screenshot ${new Date(latestFrameTimestamp || latestTimestamp).toLocaleTimeString()}`
+                            : (card.connected ? "Connected - Waiting for screenshots" : "Offline - Waiting for stream")}
                         </p>
                       </div>
                       <span
@@ -889,6 +981,7 @@ export default function ScreenshotsDashboardTab({
                               src={channelCard.imageUrl}
                               alt={`Vehicle ${card.vehicleId} channel ${channelCard.channel}`}
                               className="h-full w-full object-cover"
+                              loading="lazy"
                             />
                           ) : (
                             <div className="flex h-full items-center justify-center text-slate-500">
@@ -908,8 +1001,8 @@ export default function ScreenshotsDashboardTab({
                           <div className="min-w-0">
                             <p className="text-[11px] text-slate-400">
                               {channelCard.timestamp
-                                ? `Refreshed ${new Date(channelCard.timestamp).toLocaleTimeString()}`
-                                : (channelCard.active ? "Awaiting websocket screenshot" : "Channel idle")}
+                                ? `${channelCard.source === "ws" ? "Refreshed" : "Stream seen"} ${new Date(channelCard.timestamp).toLocaleTimeString()}`
+                                : (channelCard.active ? "Awaiting screenshot frame" : "Channel idle")}
                             </p>
                           </div>
                           {channelCard.imageUrl && (

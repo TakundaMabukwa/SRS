@@ -383,11 +383,37 @@ export default function VideoAlertsPage() {
           return status !== 'resolved' && status !== 'closed'
         })
 
+      // Initial load optimization: keep only the most recent open alert per vehicle.
+      const latestPerVehicleMap = new Map<string, any>()
+      const fallbackAlerts: any[] = []
+      normalizedAlerts.forEach((alert) => {
+        const vehicleKey = String(
+          alert?.vehicleId ||
+          alert?.device_id ||
+          alert?.vehicle_id ||
+          alert?.metadata?.vehicle?.vehicleId ||
+          ''
+        ).trim()
+        const ts = new Date(alert?.timestamp || alert?.displayTimestamp || alert?.created_at || 0).getTime()
+        if (!vehicleKey) {
+          fallbackAlerts.push(alert)
+          return
+        }
+        const existing = latestPerVehicleMap.get(vehicleKey)
+        const existingTs = existing
+          ? new Date(existing?.timestamp || existing?.displayTimestamp || existing?.created_at || 0).getTime()
+          : -1
+        if (!existing || ts > existingTs) {
+          latestPerVehicleMap.set(vehicleKey, alert)
+        }
+      })
+      const initialAlerts = [...Array.from(latestPerVehicleMap.values()), ...fallbackAlerts]
+
       const grouped = { critical: [], high: [], medium: [], low: [] }
       const sortByLatest = (a, b) =>
         new Date(b?.timestamp || b?.displayTimestamp || 0).getTime() -
         new Date(a?.timestamp || a?.displayTimestamp || 0).getTime()
-      normalizedAlerts.forEach((alert) => {
+      initialAlerts.forEach((alert) => {
         const priority = alert.priority || 'low'
         if (grouped[priority]) grouped[priority].push(alert)
       })
