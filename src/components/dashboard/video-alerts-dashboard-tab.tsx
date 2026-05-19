@@ -1429,15 +1429,20 @@ export default function VideoAlertsDashboardTab({
     return result;
   }, [costCenterScopedAlertCollection, formatAverageHandlingTime]);
 
-  // Calculate statistics from alerts
+  // Calculate statistics from alerts (always based on alert status, not video-ready gate)
+  const isClosedStatus = (status: unknown) => {
+    const normalized = String(status || "").toLowerCase();
+    return normalized === "closed" || normalized === "resolved";
+  };
+
   const calculatedStats = {
-    critical_alerts: costCenterScopedAlertCollection.filter(a => getAlertLevel(a) === 'critical' && !['closed', 'resolved'].includes(a.status) && passesVideoReadyGate(a)).length,
-    high_alerts: costCenterScopedAlertCollection.filter(a => getAlertLevel(a) === 'high' && !['closed', 'resolved'].includes(a.status) && passesVideoReadyGate(a)).length,
-    medium_alerts: costCenterScopedAlertCollection.filter(a => getAlertLevel(a) === 'medium' && !['closed', 'resolved'].includes(a.status) && passesVideoReadyGate(a)).length,
-    low_alerts: costCenterScopedAlertCollection.filter(a => getAlertLevel(a) === 'low' && !['closed', 'resolved'].includes(a.status) && passesVideoReadyGate(a)).length,
-    total_alerts: costCenterScopedAlertCollection.filter(a => !['closed', 'resolved'].includes(a.status) && passesVideoReadyGate(a)).length,
+    critical_alerts: costCenterScopedAlertCollection.filter((a) => getAlertLevel(a) === 'critical' && !isClosedStatus(a?.status)).length,
+    high_alerts: costCenterScopedAlertCollection.filter((a) => getAlertLevel(a) === 'high' && !isClosedStatus(a?.status)).length,
+    medium_alerts: costCenterScopedAlertCollection.filter((a) => getAlertLevel(a) === 'medium' && !isClosedStatus(a?.status)).length,
+    low_alerts: costCenterScopedAlertCollection.filter((a) => getAlertLevel(a) === 'low' && !isClosedStatus(a?.status)).length,
+    total_alerts: costCenterScopedAlertCollection.filter((a) => !isClosedStatus(a?.status)).length,
     resolved_today: costCenterScopedAlertCollection.filter(a => {
-      if (!['closed', 'resolved'].includes(a.status)) return false;
+      if (!isClosedStatus(a?.status)) return false;
       const today = new Date().toDateString();
       const resolvedDate = new Date(a.resolved_at || a.closed_at || a.updated_at).toDateString();
       return today === resolvedDate;
