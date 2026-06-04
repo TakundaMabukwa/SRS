@@ -569,9 +569,11 @@ export default function LiveStreamTab({ selectedCostCenters = [] }: LiveStreamTa
             </Badge>
           </div>
           <div className={gridClassName}>
-            {streamEntries.map((entry) => (
+            {streamEntries
+              .filter((e) => !pinnedFeed || e.id !== `${pinnedFeed.deviceId}-${pinnedFeed.channel}`)
+              .map((entry) => (
               <div key={entry.id} className="relative overflow-hidden rounded-lg border border-slate-800 bg-slate-900">
-                <div className="absolute right-2 top-2 z-20">
+                <div className="absolute bottom-2 right-2 z-20">
                   <Button
                     size="sm"
                     className="h-7 border border-cyan-400/40 bg-slate-950/80 px-2 text-[11px] text-cyan-300 hover:bg-slate-800"
