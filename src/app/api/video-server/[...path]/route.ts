@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server'
 import {
   getLivePreviewBaseUrl,
   getLiveVideoRuntimeBaseUrl,
+  getEpsStreamingServerBaseUrl,
   resolveVideoServerProxyBase,
 } from '@/lib/backend-hubs'
 export const dynamic = 'force-dynamic'
@@ -1495,7 +1496,9 @@ export async function POST(
 ) {
   const { path: pathArray } = await params
   const path = pathArray.join('/')
-  const target = resolveVideoServerProxyBase(pathArray)
+  const epsStreamingBase = getEpsStreamingServerBaseUrl()
+  const isEpsStreamPath = path.startsWith('stream/') || path.startsWith('eps/')
+  const target = isEpsStreamPath ? { name: 'epsStreaming', baseUrl: epsStreamingBase } : resolveVideoServerProxyBase(pathArray)
   const epsPath = path.startsWith('eps/') ? path.slice(4) : path
   const url = `${target.baseUrl}/api/${epsPath}`
   const body = await request.json().catch(() => ({}))

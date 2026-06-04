@@ -3,7 +3,7 @@
 import { useRef, useEffect, useState } from 'react';
 import flvjs from 'flv.js';
 
-const VIDEO_SERVER = 'http://localhost:3002';
+const VIDEO_SERVER = process.env.NEXT_PUBLIC_EPS_STREAMING_SERVER || 'http://localhost:3002';
 
 interface FLVPlayerProps {
   streamUrl: string;
