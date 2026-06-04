@@ -38,8 +38,8 @@ interface CameraCoveredModalProps {
 export default function NRCCameraCoveredModal({ isOpen, onClose, onSaved, driverInfo, alertDetails }: CameraCoveredModalProps) {
   const [saving, setSaving] = useState(false)
   const [ncrNo, setNcrNo] = useState(`NCR-${Date.now()}`)
-  const [section, setSection] = useState('Fleet Operations')
-  const [responsibleManager, setResponsibleManager] = useState('Fleet Manager')
+  const [section, setSection] = useState(driverInfo.department || 'Fleet Operations')
+  const [responsibleManager, setResponsibleManager] = useState(driverInfo.department ? `${driverInfo.department} Manager` : 'Fleet Manager')
   const [duration, setDuration] = useState('Observed during vehicle operation')
   const [area, setArea] = useState('Fleet operation / monitored journey')
   const [otherClass, setOtherClass] = useState('Operational non-conformance requiring investigation.')

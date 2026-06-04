@@ -4,355 +4,69 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { RefreshCw, Download, MonitorPlay, Shield, RadioTower, ExternalLink } from "lucide-react";
+import { RefreshCw, MonitorPlay, Shield, RadioTower, ExternalLink } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { toSAST } from "@/lib/utils/date-formatter";
 
-type ChannelInfo = {
-  logicalChannel?: number;
-  channel?: number;
-  updatedAtMs?: number;
+type DbVehicle = {
+  registration_number: string;
+  fleet_number: string;
+  cost_center: string;
+  camera_sim_id: string;
 };
 
-type ConnectedVehicle = {
-  id: string;
-  phone?: string;
-  channels?: ChannelInfo[];
-  connected?: boolean;
-  registration?: string;
-  fleetNumber?: string;
-  costCenter?: string;
-  displayLabel?: string;
+type GalleryFile = {
+  deviceName: string;
+  deviceId: string;
+  channelId: number;
+  channelName: string;
+  fileUrl: string;
+  fileType: string;
+  createTime: string;
 };
 
-type LivePreviewRow = {
-  vehicleId: string;
-  channel: number;
-  updatedAtMs: number;
-  timestamp: string;
+type VehicleCard = {
+  registration: string;
+  fleetNumber: string;
+  costCenter: string;
+  deviceId: string | null;
+  online: boolean;
+  ch1Url: string | null;
+  ch2Url: string | null;
+  ch1Time: string | null;
+  ch2Time: string | null;
 };
 
-type VehicleChannelCard = {
-  channel: number;
-  active: boolean;
-  isLive: boolean;
-  imageUrl?: string;
-  timestamp?: string;
-  source?: "ws" | "stream";
-};
-
-type VehicleGroupCard = {
-  vehicleId: string;
-  displayLabel: string;
-  connected: boolean;
-  channels: VehicleChannelCard[];
-};
-
-type VehicleCatalogRow = {
-  registration_number?: string | null;
-  fleet_number?: string | null;
-  camera_sim_id?: string | null;
-  camera_serial?: string | null;
-  cost_center?: string | null;
-};
-
-type ScreenshotResult = {
-  vehicleId?: string;
-  channel?: number;
-  ok?: boolean;
-  fileUrl?: string;
-  sourceUrl?: string;
-};
-
-type ScreenshotWsMessage = {
-  type?: "snapshot" | "update";
-  results?: ScreenshotResult[];
-  result?: ScreenshotResult;
-};
-
-type ScreenshotEntry = {
-  url: string;
-  timestampMs: number;
-  ok: boolean;
-};
-
-const LIVE_PREVIEW_BASE_URL =
-  process.env.NEXT_PUBLIC_LIVE_PREVIEW_BASE_URL ||
-  process.env.NEXT_PUBLIC_PLAYBACK_HUB_BASE_URL ||
-  "";
-const LIVE_PREVIEW_WS_URL =
-  process.env.NEXT_PUBLIC_LIVE_PREVIEW_WS_URL ||
-  "";
-const LIVE_SCREENSHOT_WINDOW_MS = 10 * 60 * 1000;
-
-function deriveHttpBaseFromWsUrl(rawValue: string): string {
-  const raw = String(rawValue || "").trim();
-  if (!raw) return "";
-  try {
-    const parsed = new URL(raw);
-    if (parsed.protocol === "ws:") return `http://${parsed.host}`;
-    if (parsed.protocol === "wss:") return `https://${parsed.host}`;
-  } catch {
-    return "";
-  }
-  return "";
-}
-
-const LIVE_PREVIEW_WS_HTTP_BASE = deriveHttpBaseFromWsUrl(LIVE_PREVIEW_WS_URL);
+const EPS_API = "/api/video-server";
+const REFRESH_INTERVAL_MS = 30000;
+const SCREENSHOT_WINDOW_MS = 10 * 60 * 1000;
 
 function normalizeCostCenter(value: unknown): string {
   return String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
 }
 
-function matchesCostCenterFilter(costCenter: string | undefined, selectedCostCenters: Set<string>) {
+function matchesCostCenterFilter(costCenter: string, selectedCostCenters: Set<string>) {
   if (selectedCostCenters.size === 0) return true;
   const normalized = normalizeCostCenter(costCenter);
-  if (!normalized) {
-    return selectedCostCenters.has("unassigned");
-  }
+  if (!normalized) return selectedCostCenters.has("unassigned");
   return selectedCostCenters.has(normalized);
 }
 
-function toVehicleKey(vehicle: ConnectedVehicle): string {
-  return String(vehicle.id || vehicle.phone || "").trim();
-}
-
-function normalizeVehicleAlias(value: string): string {
-  const trimmed = String(value || "").trim();
-  if (!/^\d+$/.test(trimmed)) return trimmed;
-  if (trimmed.startsWith("862") && trimmed.length > 12) {
-    return trimmed.slice(3);
-  }
-  return trimmed;
-}
-
-function parseDate(value?: string): number {
+function parseDate(value?: string | null): number {
   if (!value) return 0;
   const parsed = Date.parse(value);
   return Number.isNaN(parsed) ? 0 : parsed;
 }
 
-function getScreenshotChannels(channels: ChannelInfo[] | undefined): number[] {
-  const discovered = (channels || [])
-    .map((channel) => channel.logicalChannel ?? channel.channel ?? 1)
-    .filter((value, index, values) => Number.isFinite(value) && value > 0 && values.indexOf(value) === index);
-
-  return Array.from(new Set([1, 2, ...discovered])).sort((a, b) => a - b);
+function toProxiedUrl(rawUrl: string): string {
+  if (!rawUrl) return "";
+  return `${EPS_API}/eps/stream/stream/proxy?url=${encodeURIComponent(rawUrl)}`;
 }
 
-function screenshotKey(vehicleId: string, channel: number): string {
-  return `${String(vehicleId || "").trim()}|${Number(channel || 0)}`;
-}
-
-function buildVehicleCandidateIds(vehicle: ConnectedVehicle): string[] {
-  const values = [vehicle.id, vehicle.phone]
-    .map((value) => String(value || "").trim())
-    .filter(Boolean);
-  const out: string[] = [];
-  const seen = new Set<string>();
-  for (const value of values) {
-    const alias = normalizeVehicleAlias(value);
-    if (!seen.has(value)) {
-      out.push(value);
-      seen.add(value);
-    }
-    if (alias && alias !== value && !seen.has(alias)) {
-      out.push(alias);
-      seen.add(alias);
-    }
-  }
-  return out;
-}
-
-function toProxiedScreenshotUrl(rawValue: unknown): string {
-  const raw = String(rawValue || "").trim();
-  if (!raw) return "";
-
-  if (raw.startsWith("/api/video-server/")) {
-    return raw;
-  }
-  if (raw.startsWith("/api/")) {
-    if (LIVE_PREVIEW_WS_HTTP_BASE) {
-      // When screenshots are sourced via sandbox websocket, use the same sandbox API host
-      // for image bytes to avoid listener/go-hub routing mismatches.
-      return `${LIVE_PREVIEW_WS_HTTP_BASE}${raw}`;
-    }
-    return `/api/video-server${raw.slice(4)}`;
-  }
-  if (raw.startsWith("/captures/") || raw.startsWith("/media/")) {
-    return `/api/video-server${raw}`;
-  }
-  if (raw.startsWith("captures/")) {
-    return `/api/video-server/${raw}`;
-  }
-  if (/^https?:\/\//i.test(raw)) {
-    try {
-      const parsed = new URL(raw);
-      if (parsed.pathname.startsWith("/api/video-server/")) {
-        return `${parsed.pathname}${parsed.search || ""}`;
-      }
-      if (parsed.pathname.startsWith("/api/")) {
-        return `/api/video-server${parsed.pathname.slice(4)}${parsed.search || ""}`;
-      }
-      if (parsed.pathname.startsWith("/captures/") || parsed.pathname.startsWith("/media/")) {
-        return `/api/video-server${parsed.pathname}${parsed.search || ""}`;
-      }
-    } catch {
-      return raw;
-    }
-  }
-  return raw;
-}
-
-function withCacheBuster(url: string, tsMs: number): string {
-  const base = String(url || "").trim();
-  if (!base) return "";
-  const token = Number.isFinite(tsMs) && tsMs > 0 ? Math.round(tsMs) : Date.now();
-  const sep = base.includes("?") ? "&" : "?";
-  return `${base}${sep}_ts=${token}`;
-}
-
-function buildMjpegFallbackUrl(vehicle: ConnectedVehicle, channel: number, tsMs: number): string {
-  const ids = buildVehicleCandidateIds(vehicle);
-  const primary = String(ids[0] || vehicle.id || "").trim();
-  if (!primary) return "";
-
-  const params = new URLSearchParams({
-    sim: primary,
-    channel: String(channel),
-    waitMs: "900",
-    maxAgeMs: "5000",
-    autoStart: "true",
-    videoOnly: "true",
-    input: "auto",
-    fps: "2",
-    _ts: String(Number.isFinite(tsMs) ? Math.round(tsMs) : Date.now()),
-  });
-
-  return `/api/video-server/live/mjpeg?${params.toString()}`;
-}
-
-function buildDirectScreenshotFallbackUrl(vehicle: ConnectedVehicle, channel: number, tsMs: number): string {
-  const ids = buildVehicleCandidateIds(vehicle);
-  const primary = String(ids[0] || vehicle.id || "").trim();
-  if (!primary) return "";
-
-  const params = new URLSearchParams({
-    channel: String(channel),
-    maxAgeMs: "120000",
-    _ts: String(Number.isFinite(tsMs) ? Math.round(tsMs) : Date.now()),
-  });
-
-  const fallbackIds = ids.slice(1).join(",");
-  if (fallbackIds) {
-    params.set("fallbackIds", fallbackIds);
-  }
-
-  return `/api/video-server/vehicles/${encodeURIComponent(primary)}/screenshot?${params.toString()}`;
-}
-
-function toScreenshotWsCandidates(): string[] {
-  const out: string[] = [];
-  const seen = new Set<string>();
-  const isHttps = typeof window !== "undefined" && window.location.protocol === "https:";
-
-  const push = (url: string) => {
-    const normalized = String(url || "").trim().replace(/\/+$/, "");
-    if (!normalized || seen.has(normalized)) return;
-    seen.add(normalized);
-    out.push(normalized);
-  };
-
-  const rawWs = String(LIVE_PREVIEW_WS_URL || "").trim();
-  if (rawWs) {
-    if (/^wss?:\/\//i.test(rawWs)) {
-      try {
-        const parsed = new URL(rawWs);
-        const path = String(parsed.pathname || "").replace(/\/+$/, "");
-        if (path && path !== "/") {
-          push(`${parsed.protocol}//${parsed.host}${path}`);
-        } else {
-          push(`${parsed.protocol}//${parsed.host}/ws/screenshots`);
-        }
-      } catch {
-        push(rawWs.replace(/\/+$/, "").replace(/\/ws\/screenshots$/i, "") + "/ws/screenshots");
-      }
-    } else if (/^https?:\/\//i.test(rawWs)) {
-      try {
-        const parsed = new URL(rawWs);
-        const proto = parsed.protocol === "https:" ? "wss" : "ws";
-        const path = String(parsed.pathname || "").replace(/\/+$/, "");
-        if (path && path !== "/") {
-          push(`${proto}://${parsed.host}${path}`);
-        } else {
-          push(`${proto}://${parsed.host}/ws/screenshots`);
-        }
-      } catch {
-        // ignore invalid URL and continue with other candidates
-      }
-    }
-  }
-
-  const rawHttp = String(LIVE_PREVIEW_BASE_URL || "").trim();
-  if (rawHttp) {
-    try {
-      const parsed = new URL(rawHttp);
-      const proto = parsed.protocol === "https:" ? "wss" : "ws";
-      if (isHttps) {
-        push(`wss://${parsed.host}/ws/screenshots`);
-      }
-      push(`${proto}://${parsed.host}/ws/screenshots`);
-      if (!isHttps && parsed.protocol !== "https:") {
-        push(`ws://${parsed.host}/ws/screenshots`);
-      }
-    } catch {
-      // ignore invalid URL
-    }
-  }
-
-  // Only fall back to current window host when no explicit screenshot endpoints are configured.
-  if (typeof window !== "undefined" && !rawWs && !rawHttp) {
-    const host = window.location.host;
-    if (host) {
-      push(`${isHttps ? "wss" : "ws"}://${host}/ws/screenshots`);
-    }
-  }
-
-  return out;
-}
-
-function readRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
-}
-
-function parseLivePreviewFeed(payload: unknown): LivePreviewRow[] {
-  const root = readRecord(payload);
-  const rows = Array.isArray(root.rows)
-    ? root.rows
-    : Array.isArray(root.data)
-      ? root.data
-      : [];
-
-  return rows
-    .map((entry) => {
-      const record = readRecord(entry);
-      const vehicleId = String(record.vehicleId ?? record.id ?? "").trim();
-      const channel = Number(record.channel ?? 0);
-      const updatedAtMs = Number(record.updatedAtMs ?? 0);
-      const timestamp = String(record.updatedAt ?? "").trim();
-      if (!vehicleId || !Number.isFinite(channel) || channel <= 0) {
-        return null;
-      }
-
-      return {
-        vehicleId,
-        channel,
-        updatedAtMs: Number.isFinite(updatedAtMs) ? updatedAtMs : 0,
-        timestamp,
-      } satisfies LivePreviewRow;
-    })
-    .filter((row): row is LivePreviewRow => !!row);
+function withCacheBuster(url: string): string {
+  if (!url) return "";
+  const sep = url.includes("?") ? "&" : "?";
+  return `${url}${sep}_ts=${Date.now()}`;
 }
 
 type ScreenshotsDashboardTabProps = {
@@ -365,481 +79,219 @@ export default function ScreenshotsDashboardTab({
   selectedCostCenters = [],
 }: ScreenshotsDashboardTabProps) {
   const supabase = createClient();
-  const wsRef = useRef<WebSocket | null>(null);
-  const wsReconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const wsUrlCursorRef = useRef(0);
-  const [vehicles, setVehicles] = useState<ConnectedVehicle[]>([]);
-  const [screenshotMap, setScreenshotMap] = useState<Record<string, ScreenshotEntry>>({});
+  const dbVehiclesRef = useRef<DbVehicle[] | null>(null);
+  const [cards, setCards] = useState<VehicleCard[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [wsConnected, setWsConnected] = useState(false);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
   const [lastScreenshotAt, setLastScreenshotAt] = useState<Date | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [gridColumns, setGridColumns] = useState(4);
-  const [mjpegFallbackToken, setMjpegFallbackToken] = useState(() => Date.now());
+  const activeRef = useRef(true);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const prevCardsRef = useRef<VehicleCard[]>([]);
 
-  const ingestScreenshotResult = useCallback((result: ScreenshotResult) => {
-    const vehicleId = String(result.vehicleId || "").trim();
-    const channel = Number(result.channel || 0);
-    if (!vehicleId || !Number.isFinite(channel) || channel <= 0) return;
-
-    const rawUrl = String(result.fileUrl || "").trim();
-    if (!rawUrl) return;
-    const normalizedUrl = toProxiedScreenshotUrl(rawUrl);
-    if (!normalizedUrl) return;
-
-    const nowMs = Date.now();
-    const cacheBustedUrl = withCacheBuster(normalizedUrl, nowMs);
-    const entries: Array<[string, ScreenshotEntry]> = [];
-    const ids = [vehicleId, normalizeVehicleAlias(vehicleId)].filter(Boolean);
-    for (const id of ids) {
-      entries.push([
-        screenshotKey(id, channel),
-        {
-          url: cacheBustedUrl,
-          timestampMs: nowMs,
-          ok: result.ok !== false,
-        },
-      ]);
-    }
-
-    setScreenshotMap((prev) => {
-      const next = { ...prev };
-      for (const [key, value] of entries) {
-        next[key] = value;
+  const fetchDbOnce = useCallback(async () => {
+    if (dbVehiclesRef.current) return dbVehiclesRef.current;
+    try {
+      const { data } = await supabase
+        .from("vehiclesc")
+        .select("registration_number, fleet_number, cost_center, camera_sim_id");
+      const rows = (data || []) as DbVehicle[];
+      const unique = new Map<string, DbVehicle>();
+      for (const r of rows) {
+        const reg = (r.registration_number || "").trim().toUpperCase();
+        if (!reg) continue;
+        if (!unique.has(reg)) {
+          unique.set(reg, { registration_number: reg, fleet_number: r.fleet_number || "", cost_center: r.cost_center || "", camera_sim_id: (r.camera_sim_id || "").trim() });
+        }
       }
-      return next;
-    });
-    setLastScreenshotAt(new Date(nowMs));
-  }, []);
-
-  const fetchConnectedVehicles = useCallback(async () => {
-    const liveRowsResponse = await fetch("/api/live-preview/streams?maxAgeMs=45000", {
-      cache: "no-store",
-      signal: AbortSignal.timeout(12000),
-    }).catch(() => null);
-
-    const liveRowsPayload = liveRowsResponse && liveRowsResponse.ok
-      ? await liveRowsResponse.json().catch(() => ({}))
-      : {};
-    const liveRows = parseLivePreviewFeed(liveRowsPayload);
-    const liveByKey = new Map<string, Map<number, LivePreviewRow>>();
-
-    for (const row of liveRows) {
-      if (!liveByKey.has(row.vehicleId)) {
-        liveByKey.set(row.vehicleId, new Map<number, LivePreviewRow>());
-      }
-      liveByKey.get(row.vehicleId)?.set(row.channel, row);
+      dbVehiclesRef.current = Array.from(unique.values());
+      return dbVehiclesRef.current;
+    } catch {
+      return dbVehiclesRef.current || [];
     }
-
-    const { data: vehicleRows, error: vehiclesError } = await supabase
-      .from("vehiclesc")
-      .select("registration_number, fleet_number, camera_sim_id, camera_serial, cost_center");
-
-    if (vehiclesError) {
-      throw new Error("Failed to load vehicle catalog");
-    }
-
-    const dedupedById = new Map<string, ConnectedVehicle>();
-    for (const rawRow of vehicleRows || []) {
-      const row = rawRow as VehicleCatalogRow;
-      const keys = [row.camera_sim_id, row.camera_serial]
-        .map((value) => String(value || "").trim())
-        .filter(Boolean);
-      if (keys.length === 0) continue;
-
-      const primaryKey = keys[0];
-      const secondaryKey = keys[1] || "";
-      const matchedRows = keys.flatMap((key) => {
-        const channelMap = liveByKey.get(key);
-        return channelMap ? Array.from(channelMap.values()) : [];
-      });
-
-      const uniqueChannelRows = Array.from(
-        matchedRows.reduce((acc, rowValue) => {
-          if (!acc.has(rowValue.channel) || Number(rowValue.updatedAtMs) > Number(acc.get(rowValue.channel)?.updatedAtMs || 0)) {
-            acc.set(rowValue.channel, rowValue);
-          }
-          return acc;
-        }, new Map<number, LivePreviewRow>())
-          .values()
-      ).sort((a, b) => a.channel - b.channel);
-
-      const registration = String(row.registration_number || "").trim();
-      const fleetNumber = String(row.fleet_number || "").trim();
-      const fallbackLabel = registration || fleetNumber || primaryKey;
-      const displayLabel = registration && fleetNumber ? `${fleetNumber} - ${registration}` : fallbackLabel;
-
-      const nextVehicle: ConnectedVehicle = {
-        id: primaryKey,
-        phone: secondaryKey || "",
-        channels: uniqueChannelRows.map((liveRow) => ({
-          logicalChannel: liveRow.channel,
-          channel: liveRow.channel,
-          updatedAtMs: liveRow.updatedAtMs,
-        })),
-        connected: uniqueChannelRows.length > 0,
-        registration: registration || undefined,
-        fleetNumber: fleetNumber || undefined,
-        costCenter: String(row.cost_center || "").trim() || undefined,
-        displayLabel: displayLabel || primaryKey,
-      };
-
-      const dedupeKey = toVehicleKey(nextVehicle);
-      const existing = dedupedById.get(dedupeKey);
-      if (!existing) {
-        dedupedById.set(dedupeKey, nextVehicle);
-        continue;
-      }
-
-      dedupedById.set(dedupeKey, {
-        ...existing,
-        ...nextVehicle,
-        channels: nextVehicle.channels?.length ? nextVehicle.channels : existing.channels,
-        connected: existing.connected === true || nextVehicle.connected === true,
-        displayLabel: String(nextVehicle.displayLabel || existing.displayLabel || dedupeKey).trim(),
-      });
-    }
-
-    const enrichedVehicles = Array.from(dedupedById.values()).sort((a, b) => {
-      const aConnected = a.connected === true ? 0 : 1;
-      const bConnected = b.connected === true ? 0 : 1;
-      if (aConnected !== bConnected) return aConnected - bConnected;
-      return String(a.displayLabel || "").localeCompare(String(b.displayLabel || ""));
-    });
-
-    setVehicles(enrichedVehicles);
-    setLastRefresh(new Date());
-    return enrichedVehicles;
   }, [supabase]);
 
-  const refreshAll = useCallback(async () => {
-    setRefreshing(true);
-    setError(null);
+  const fetchData = useCallback(async () => {
     try {
-      await fetchConnectedVehicles();
-    } catch (fetchError) {
-      console.error("[Screenshots] Refresh failed:", fetchError);
-      setError("Unable to refresh screenshot monitor right now.");
-    } finally {
-      setRefreshing(false);
-      setLoading(false);
-    }
-  }, [fetchConnectedVehicles]);
+      const dbVehicles = await fetchDbOnce();
+      if (!activeRef.current) return;
 
-  useEffect(() => {
-    let active = true;
-    const boot = async () => {
-      try {
-        await refreshAll();
-      } finally {
-        if (active) {
-          setLoading(false);
+      // Fetch online status (returns ALL devices with plateName + deviceId + online)
+      const onlineRes = await fetch(`${EPS_API}/eps/stream/online`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
+        cache: "no-store", signal: AbortSignal.timeout(15000),
+      }).catch(() => null);
+      if (!activeRef.current) return;
+
+      // Build registration -> {deviceId, online} map from EPS plateNames
+      // plateName format: "REGISTRATION - FLEET" e.g. "LDG095MP - FM02"
+      const regMap = new Map<string, { deviceId: string; online: boolean }>();
+      if (onlineRes && onlineRes.ok) {
+        const onlineData = await onlineRes.json();
+        if (onlineData.success && onlineData.data?.devices) {
+          for (const d of onlineData.data.devices) {
+            if (!d.deviceId) continue;
+            const plate = (d.plateName || "").trim();
+            const registration = plate.split(" - ")[0].trim();
+            if (registration) {
+              regMap.set(registration.toUpperCase(), { deviceId: d.deviceId, online: d.online === true });
+            }
+          }
         }
       }
-    };
 
-    void boot();
-    return () => {
-      active = false;
-    };
-  }, [refreshAll]);
-
-  useEffect(() => {
-    let active = true;
-    const urls = toScreenshotWsCandidates();
-    if (urls.length === 0) {
-      setError("No screenshot websocket URL configured.");
-      return () => {
-        active = false;
-      };
-    }
-
-    const clearReconnect = () => {
-      if (wsReconnectTimerRef.current) {
-        clearTimeout(wsReconnectTimerRef.current);
-        wsReconnectTimerRef.current = null;
-      }
-    };
-
-    const handleMessage = (event: MessageEvent<string>) => {
-      let payload: ScreenshotWsMessage | null = null;
-      try {
-        payload = JSON.parse(event.data) as ScreenshotWsMessage;
-      } catch {
-        return;
-      }
-      if (!payload) return;
-      if (payload.type === "snapshot" && Array.isArray(payload.results)) {
-        payload.results.forEach(ingestScreenshotResult);
-        return;
-      }
-      if (payload.type === "update" && payload.result) {
-        ingestScreenshotResult(payload.result);
-      }
-    };
-
-    const scheduleReconnect = () => {
-      if (!active || wsReconnectTimerRef.current) return;
-      wsReconnectTimerRef.current = setTimeout(() => {
-        wsReconnectTimerRef.current = null;
-        openSocket();
-      }, 2500);
-    };
-
-    const openSocket = () => {
-      if (!active || urls.length === 0) return;
-      clearReconnect();
-
-      const current = wsRef.current;
-      if (current) {
-        wsRef.current = null;
-        current.onopen = null;
-        current.onmessage = null;
-        current.onerror = null;
-        current.onclose = null;
-        current.close();
-      }
-
-      let attempts = 0;
-      const startIndex = wsUrlCursorRef.current % urls.length;
-
-      const tryNext = () => {
-        if (!active) return;
-        if (attempts >= urls.length) {
-          setWsConnected(false);
-          scheduleReconnect();
-          return;
-        }
-
-        const idx = (startIndex + attempts) % urls.length;
-        const wsUrl = urls[idx];
-        attempts += 1;
-
-        let socket: WebSocket;
-        try {
-          socket = new WebSocket(wsUrl);
-        } catch {
-          tryNext();
-          return;
-        }
-
-        wsRef.current = socket;
-        wsUrlCursorRef.current = idx + 1;
-
-        const openTimeout = setTimeout(() => {
-          if (socket.readyState === WebSocket.CONNECTING) {
-            socket.close();
-          }
-        }, 7000);
-
-        socket.onopen = () => {
-          clearTimeout(openTimeout);
-          if (!active || wsRef.current !== socket) return;
-          setWsConnected(true);
-          setError(null);
-          clearReconnect();
+      // Build vehicle cards from DB, matching registration_number -> plateName
+      const matchedDeviceIds: string[] = [];
+      const built: VehicleCard[] = dbVehicles.map((v) => {
+        const match = regMap.get(v.registration_number.toUpperCase());
+        const deviceId = match ? match.deviceId : null;
+        if (deviceId) matchedDeviceIds.push(deviceId);
+        const online = match ? match.online : false;
+        return {
+          registration: v.registration_number,
+          fleetNumber: v.fleet_number,
+          costCenter: v.cost_center,
+          deviceId,
+          online,
+          ch1Url: null, ch2Url: null, ch1Time: null, ch2Time: null,
         };
+      });
 
-        socket.onmessage = handleMessage;
-        socket.onerror = () => {
-          clearTimeout(openTimeout);
-        };
-        socket.onclose = () => {
-          clearTimeout(openTimeout);
-          if (wsRef.current === socket) {
-            wsRef.current = null;
-          }
-          if (!active) return;
-          setWsConnected(false);
-          if (attempts < urls.length) {
-            tryNext();
-            return;
-          }
-          scheduleReconnect();
-        };
-      };
+      // Fetch gallery screenshots for matched devices
+      if (matchedDeviceIds.length > 0) {
+        const now = new Date();
+        const end = now.toISOString().replace("T", " ").slice(0, 19);
+        const start = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString().replace("T", " ").slice(0, 19);
 
-      tryNext();
-    };
-
-    openSocket();
-
-    return () => {
-      active = false;
-      clearReconnect();
-      const socket = wsRef.current;
-      wsRef.current = null;
-      if (socket) {
-        socket.onopen = null;
-        socket.onmessage = null;
-        socket.onerror = null;
-        socket.onclose = null;
-        socket.close();
-      }
-    };
-  }, [ingestScreenshotResult]);
-
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setMjpegFallbackToken(Date.now());
-    }, 45000);
-    return () => clearInterval(timer);
-  }, []);
-
-  useEffect(() => {
-    let active = true;
-
-    const refreshFromLatest = async () => {
-      try {
-        const response = await fetch(`/api/video-server/live/screenshots/latest?_ts=${Date.now()}`, {
+        const galRes = await fetch(`${EPS_API}/eps/gallery/files/page`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ pageSize: 500, pageIndex: 1, deviceIds: matchedDeviceIds.join(","), startTime: start, endTime: end, queryType: "Device" }),
           cache: "no-store",
           signal: AbortSignal.timeout(20000),
         });
-        if (!response.ok) return;
-        const payload = await response.json().catch(() => ({} as Record<string, unknown>));
-        const rows = Array.isArray(payload.results) ? payload.results as ScreenshotResult[] : [];
-        if (!active || rows.length === 0) return;
-        rows.forEach(ingestScreenshotResult);
-      } catch {
-        // keep quiet; websocket reconnect flow continues in parallel
+        if (galRes.ok) {
+          const galData = await galRes.json();
+          const files: GalleryFile[] = galData.data?.files || [];
+          const byDevice: Record<string, Record<number, GalleryFile>> = {};
+          for (const f of files) {
+            const ch = f.channelId || 1;
+            if (!byDevice[f.deviceId]) byDevice[f.deviceId] = {};
+            const existing = byDevice[f.deviceId][ch];
+            if (!existing || (f.createTime || "") > (existing.createTime || "")) {
+              byDevice[f.deviceId][ch] = f;
+            }
+          }
+          for (const card of built) {
+            if (!card.deviceId) continue;
+            const dev = byDevice[card.deviceId];
+            if (!dev) continue;
+            if (dev[1]) { card.ch1Url = toProxiedUrl(dev[1].fileUrl); card.ch1Time = dev[1].createTime; }
+            if (dev[2]) { card.ch2Url = toProxiedUrl(dev[2].fileUrl); card.ch2Time = dev[2].createTime; }
+          }
+        }
       }
-    };
 
-    void refreshFromLatest();
-    const timer = setInterval(() => {
-      void refreshFromLatest();
-    }, 30000);
+      // Auto-trigger captures for online vehicles with no screenshots (fire-and-forget)
+      const needCapture = built.filter((c) => c.online && c.deviceId && !c.ch1Url && !c.ch2Url);
+      if (needCapture.length > 0) {
+        const captures = needCapture.flatMap((c) => [
+          { deviceId: c.deviceId!, channelId: 1 },
+          { deviceId: c.deviceId!, channelId: 2 },
+        ]);
+        fetch(`${EPS_API}/eps/gallery/capture`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ captures }),
+        }).catch(() => {});
+      }
 
+      if (!activeRef.current) return;
+
+      // Keep last images for vehicles that still have no new screenshots
+      const prevImages = prevCardsRef.current;
+      for (const card of built) {
+        if (!card.ch1Url && !card.ch2Url) {
+          const prev = prevImages.find((c) => c.registration === card.registration);
+          if (prev) {
+            card.ch1Url = prev.ch1Url;
+            card.ch2Url = prev.ch2Url;
+            card.ch1Time = prev.ch1Time;
+            card.ch2Time = prev.ch2Time;
+          }
+        }
+      }
+
+      prevCardsRef.current = built;
+      setCards(built);
+      setLastRefresh(new Date());
+      if (built.some((c) => c.ch1Url || c.ch2Url)) setLastScreenshotAt(new Date());
+      setError(null);
+      setLoading(false);
+    } catch (e: any) {
+      if (e.name === "AbortError") return;
+      if (!activeRef.current) return;
+      setError(e.message || "Failed to load");
+      setLoading(false);
+    }
+  }, [fetchDbOnce]);
+
+  const refreshAll = useCallback(async () => {
+    setRefreshing(true);
+    try { await fetchData(); } finally { setRefreshing(false); }
+  }, [fetchData]);
+
+  useEffect(() => {
+    activeRef.current = true;
+    fetchData().finally(() => setLoading(false));
+    timerRef.current = setInterval(() => fetchData(), REFRESH_INTERVAL_MS);
     return () => {
-      active = false;
-      clearInterval(timer);
+      activeRef.current = false;
+      if (timerRef.current) clearInterval(timerRef.current);
     };
-  }, [ingestScreenshotResult]);
+  }, [fetchData]);
 
   const selectedCostCenterSet = useMemo(
-    () =>
-      new Set(
-        selectedCostCenters
-          .map((value) => normalizeCostCenter(value))
-          .filter(Boolean)
-      ),
+    () => new Set(selectedCostCenters.map((v) => normalizeCostCenter(v)).filter(Boolean)),
     [selectedCostCenters]
   );
 
-  const scopedVehicles = useMemo(
-    () => vehicles.filter((vehicle) => matchesCostCenterFilter(vehicle.costCenter, selectedCostCenterSet)),
-    [selectedCostCenterSet, vehicles]
-  );
-
-  const connectedVehicles = useMemo(
-    () => scopedVehicles.filter((vehicle) => vehicle.connected === true),
-    [scopedVehicles]
-  );
-
-  const cards = useMemo<VehicleGroupCard[]>(() => {
-    return scopedVehicles
-      .map((vehicle) => {
-        const vehicleId = toVehicleKey(vehicle);
-        if (!vehicleId) return null;
-        const candidateIds = buildVehicleCandidateIds(vehicle);
-
-        const channels = getScreenshotChannels(vehicle.channels)
-          .filter((channel) => channel === 1 || channel === 2)
-          .map((channel) => {
-            const liveRow = (vehicle.channels || []).find(
-              (entry) => Number(entry.logicalChannel ?? entry.channel ?? 0) === Number(channel)
-            );
-            const streamTimestampMs = Number(liveRow?.updatedAtMs || 0);
-            let shot: ScreenshotEntry | undefined;
-            for (const id of candidateIds) {
-              const entry = screenshotMap[screenshotKey(id, channel)];
-              if (!entry) continue;
-              if (!shot || entry.timestampMs > shot.timestampMs) {
-                shot = entry;
-              }
-            }
-            const shotTimestampMs = Number(shot?.timestampMs || 0);
-            const timestampMs = Math.max(streamTimestampMs, shotTimestampMs);
-            const timestamp = timestampMs > 0
-              ? new Date(timestampMs).toISOString()
-              : undefined;
-            const isLive = shotTimestampMs > 0
-              ? (Date.now() - shotTimestampMs) <= LIVE_SCREENSHOT_WINDOW_MS
-              : !!liveRow;
-
-            const useMjpegFallback =
-              !shot &&
-              (vehicle.connected === true || !!liveRow) &&
-              streamTimestampMs > 0;
-            const screenshotFallbackUrl =
-              !shot && (vehicle.connected === true || !!liveRow)
-                ? buildDirectScreenshotFallbackUrl(vehicle, channel, mjpegFallbackToken)
-                : "";
-            const mjpegFallbackUrl = useMjpegFallback
-              ? buildMjpegFallbackUrl(vehicle, channel, mjpegFallbackToken)
-              : "";
-
-            return {
-              channel,
-              active: vehicle.connected === true || !!liveRow || !!shot,
-              isLive,
-              imageUrl: shot?.url || screenshotFallbackUrl || mjpegFallbackUrl || undefined,
-              timestamp,
-              source: shot ? "ws" : ((screenshotFallbackUrl || mjpegFallbackUrl) ? "stream" : undefined),
-            } satisfies VehicleChannelCard;
-          });
-
-        return {
-          vehicleId,
-          displayLabel: String(vehicle.displayLabel || vehicleId).trim(),
-          connected: vehicle.connected === true,
-          channels,
-        } satisfies VehicleGroupCard;
-      })
-      .filter((card): card is VehicleGroupCard => !!card)
+  const scopedCards = useMemo(
+    () => cards
+      .filter((c) => matchesCostCenterFilter(c.costCenter, selectedCostCenterSet))
       .sort((a, b) => {
-        const aLatest = Math.max(...a.channels.map((channel) => parseDate(channel.timestamp)), 0);
-        const bLatest = Math.max(...b.channels.map((channel) => parseDate(channel.timestamp)), 0);
-        const aConnected = a.connected ? 0 : 1;
-        const bConnected = b.connected ? 0 : 1;
-        if (aConnected !== bConnected) return aConnected - bConnected;
-        if (aLatest !== bLatest) return bLatest - aLatest;
-        return a.displayLabel.localeCompare(b.displayLabel);
-      });
-  }, [mjpegFallbackToken, scopedVehicles, screenshotMap]);
+        if (a.online !== b.online) return a.online ? -1 : 1;
+        return a.registration.localeCompare(b.registration);
+      }),
+    [selectedCostCenterSet, cards]
+  );
 
-  const liveCount = useMemo(() => {
-    const now = Date.now();
-    return cards.flatMap((card) => card.channels).filter((channelCard) => {
-      const ts = parseDate(channelCard.timestamp);
-      return ts > 0 && now - ts <= LIVE_SCREENSHOT_WINDOW_MS;
-    }).length;
-  }, [cards]);
+  const onlineCount = useMemo(() => scopedCards.filter((c) => c.online).length, [scopedCards]);
 
   const gridClassName = useMemo(() => {
     switch (gridColumns) {
-      case 1:
-        return "grid grid-cols-1 gap-3";
-      case 2:
-        return "grid grid-cols-1 gap-3 md:grid-cols-2";
-      case 3:
-        return "grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3";
-      case 4:
-        return "grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4";
-      case 5:
-        return "grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5";
-      case 6:
-        return "grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-6";
-      case 7:
-        return "grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-7";
-      case 8:
-        return "grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-8";
-      default:
-        return "grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4";
+      case 1: return "grid grid-cols-1 gap-3";
+      case 2: return "grid grid-cols-1 gap-3 md:grid-cols-2";
+      case 3: return "grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3";
+      case 4: return "grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4";
+      case 5: return "grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5";
+      case 6: return "grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-6";
+      case 7: return "grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-7";
+      case 8: return "grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-8";
+      default: return "grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4";
     }
   }, [gridColumns]);
+
+  const liveCount = useMemo(() => {
+    const now = Date.now();
+    return scopedCards.filter((c) => {
+      const t1 = parseDate(c.ch1Time);
+      const t2 = parseDate(c.ch2Time);
+      return (t1 > 0 && now - t1 <= SCREENSHOT_WINDOW_MS) || (t2 > 0 && now - t2 <= SCREENSHOT_WINDOW_MS);
+    }).length;
+  }, [scopedCards]);
 
   return (
     <div className="space-y-6">
@@ -851,16 +303,13 @@ export default function ScreenshotsDashboardTab({
                 <Shield className="h-3.5 w-3.5" />
                 Vehicle Screenshot Monitoring
               </div>
-              <h2 className="mt-3 text-3xl font-bold tracking-tight">Screenshot Control Room</h2>
-              <p className="mt-1 text-sm text-slate-300">
-                Websocket-backed screenshots for CH1 and CH2 from go-hub live feed.
-              </p>
+              <h2 className="mt-3 text-3xl font-bold tracking-tight">Screenshots</h2>
             </div>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
               <div className="rounded-lg border border-slate-700 bg-slate-900/70 px-4 py-3">
                 <p className="text-[11px] uppercase tracking-wide text-slate-400">Vehicles</p>
-                <p className="mt-1 text-2xl font-bold text-emerald-300">{scopedVehicles.length}</p>
-                <p className="mt-1 text-[11px] text-slate-400">{connectedVehicles.length} connected</p>
+                <p className="mt-1 text-2xl font-bold text-emerald-300">{scopedCards.length}</p>
+                <p className="mt-1 text-[11px] text-slate-400">{onlineCount} online</p>
               </div>
               <div className="rounded-lg border border-slate-700 bg-slate-900/70 px-4 py-3">
                 <p className="text-[11px] uppercase tracking-wide text-slate-400">Live Channels</p>
@@ -869,7 +318,7 @@ export default function ScreenshotsDashboardTab({
               <div className="rounded-lg border border-slate-700 bg-slate-900/70 px-4 py-3">
                 <p className="text-[11px] uppercase tracking-wide text-slate-400">Last Update</p>
                 <p className="mt-1 text-sm font-semibold text-slate-100">
-                  {lastScreenshotAt ? lastScreenshotAt.toLocaleTimeString() : (lastRefresh ? lastRefresh.toLocaleTimeString() : "Waiting...")}
+                  {lastScreenshotAt ? toSAST(lastScreenshotAt).toLocaleTimeString() : (lastRefresh ? toSAST(lastRefresh).toLocaleTimeString() : "Waiting...")}
                 </p>
               </div>
             </div>
@@ -877,17 +326,9 @@ export default function ScreenshotsDashboardTab({
           <div className="mt-4 flex flex-wrap items-center gap-2">
             <Button onClick={() => void refreshAll()} disabled={refreshing} className="bg-cyan-600 hover:bg-cyan-700">
               <RefreshCw className={`mr-2 h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
-              Refresh vehicles
+              Refresh
             </Button>
-            <div
-              className={`rounded-full border px-3 py-1 text-xs font-medium ${
-                wsConnected
-                  ? "border-emerald-400/40 bg-emerald-500/10 text-emerald-300"
-                  : "border-amber-400/40 bg-amber-500/10 text-amber-300"
-              }`}
-            >
-              {wsConnected ? "WS Connected" : "WS Reconnecting"}
-            </div>
+
             {detachable && (
               <Button
                 variant="outline"
@@ -908,8 +349,8 @@ export default function ScreenshotsDashboardTab({
 
       {loading ? (
         <Card className="p-10 text-center text-slate-600">Loading screenshot monitor...</Card>
-      ) : cards.length === 0 ? (
-        <Card className="p-10 text-center text-slate-600">No vehicles found in the catalog yet.</Card>
+      ) : scopedCards.length === 0 ? (
+        <Card className="p-10 text-center text-slate-600">No vehicles found in the database.</Card>
       ) : (
         <div className="space-y-4">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
@@ -934,91 +375,56 @@ export default function ScreenshotsDashboardTab({
             </div>
           </div>
           <div className={gridClassName}>
-            {cards.map((card) => {
-              const latestFrameTimestamp = Math.max(
-                ...card.channels
-                  .filter((channelCard) => Boolean(channelCard.imageUrl))
-                  .map((channelCard) => parseDate(channelCard.timestamp)),
-                0
-              );
-              const latestTimestamp = Math.max(...card.channels.map((channelCard) => parseDate(channelCard.timestamp)), 0);
-              const hasScreenshot = card.channels.some((channelCard) => Boolean(channelCard.imageUrl));
+            {scopedCards.map((card) => {
+              const hasScreenshot = !!(card.ch1Url || card.ch2Url);
+              const latestTs = Math.max(parseDate(card.ch1Time), parseDate(card.ch2Time));
               return (
-                <Card
-                  key={card.vehicleId}
-                  className="overflow-hidden border-slate-300 bg-white text-slate-900"
-                >
+                <Card key={card.registration} className="overflow-hidden border-slate-300 bg-white text-slate-900">
                   <div className="border-b border-slate-200 px-3 py-2">
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
-                        <p className="truncate text-sm font-semibold">{card.displayLabel}</p>
+                        <p className="truncate text-sm font-semibold">{card.fleetNumber} - {card.registration}</p>
                         <p className="mt-1 text-[11px] text-slate-500">
-                          {hasScreenshot
-                            ? `Connected - Latest screenshot ${new Date(latestFrameTimestamp || latestTimestamp).toLocaleTimeString()}`
-                            : (card.connected ? "Connected - Waiting for screenshots" : "Offline - Waiting for stream")}
+                          {card.online
+                            ? (hasScreenshot ? `Online - ${toSAST(latestTs).toLocaleTimeString()}` : "Online - No screenshots")
+                            : "Offline"}
                         </p>
                       </div>
-                      <span
-                        className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium ${
-                          hasScreenshot
-                            ? "bg-emerald-100 text-emerald-700"
-                            : "bg-slate-100 text-slate-600"
-                        }`}
-                      >
-                        {hasScreenshot ? "Live" : "Idle"}
+                      <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                        card.online ? (hasScreenshot ? "bg-emerald-100 text-emerald-700" : "bg-blue-100 text-blue-700") : "bg-slate-100 text-slate-600"
+                      }`}>
+                        {card.online ? (hasScreenshot ? "Live" : "Online") : "Offline"}
                       </span>
                     </div>
                   </div>
                   <div className="grid grid-cols-2 gap-2 p-2">
-                    {card.channels.map((channelCard) => (
-                      <div
-                        key={`${card.vehicleId}-${channelCard.channel}`}
-                        className="overflow-hidden rounded-md border border-slate-300 bg-slate-950 text-slate-100"
-                      >
-                        <div className="relative aspect-video bg-slate-900">
-                          {channelCard.imageUrl ? (
-                            <img
-                              src={channelCard.imageUrl}
-                              alt={`Vehicle ${card.vehicleId} channel ${channelCard.channel}`}
-                              className="h-full w-full object-cover"
-                              loading="lazy"
-                            />
-                          ) : (
-                            <div className="flex h-full items-center justify-center text-slate-500">
-                              <MonitorPlay className="h-8 w-8" />
+                    {[1, 2].map((ch) => {
+                      const imgUrl = ch === 1 ? card.ch1Url : card.ch2Url;
+                      const imgTime = ch === 1 ? card.ch1Time : card.ch2Time;
+                      const hasImg = !!imgUrl;
+                      return (
+                        <div key={`${card.registration}-${ch}`} className="overflow-hidden rounded-md border border-slate-300 bg-slate-950 text-slate-100">
+                          <div className="relative" style={{ minHeight: 200 }}>
+                            {hasImg ? (
+                              <img
+                                src={withCacheBuster(imgUrl!)}
+                                alt={`${card.registration} CH${ch}`}
+                                className="w-full h-full object-cover"
+                                loading="lazy"
+                                style={{ minHeight: 200, maxHeight: 320 }}
+                              />
+                            ) : (
+                              <div className="flex items-center justify-center text-slate-500" style={{ minHeight: 200 }}>
+                                <MonitorPlay className="h-8 w-8" />
+                              </div>
+                            )}
+                            <div className="absolute right-2 top-2 rounded bg-black/70 px-2 py-1 text-[11px] font-medium">
+                              CH {ch}
                             </div>
-                          )}
-                          <div className="absolute right-2 top-2 rounded bg-black/70 px-2 py-1 text-[11px] font-medium">
-                            CH {channelCard.channel}
                           </div>
-                          {channelCard.source === "ws" && (
-                            <div className="absolute left-2 top-2 rounded bg-cyan-500/80 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-white">
-                              Live Shot
-                            </div>
-                          )}
                         </div>
-                        <div className="flex items-start justify-between gap-3 border-t border-slate-800 px-3 py-2">
-                          <div className="min-w-0">
-                            <p className="text-[11px] text-slate-400">
-                              {channelCard.timestamp
-                                ? `${channelCard.source === "ws" ? "Refreshed" : "Stream seen"} ${new Date(channelCard.timestamp).toLocaleTimeString()}`
-                                : (channelCard.active ? "Awaiting screenshot frame" : "Channel idle")}
-                            </p>
-                          </div>
-                          {channelCard.imageUrl && (
-                            <Button
-                              size="icon"
-                              variant="secondary"
-                              className="h-7 w-7 shrink-0"
-                              onClick={() => window.open(channelCard.imageUrl || "", "_blank")}
-                              title="Open image"
-                            >
-                              <Download className="h-3 w-3" />
-                            </Button>
-                          )}
-                        </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </Card>
               );

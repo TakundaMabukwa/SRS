@@ -25,13 +25,11 @@ import {
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import {
-  ALERT_READY_WINDOW_OPTIONS,
   formatRawAlertTimestamp,
   getAlertDisplayTimestamp,
   getAlertFirstOccurrenceTimestamp,
   getAlertLastOccurrenceTimestamp,
   normalizeBackendMediaUrl,
-  resolveAlertPlaybackVideos,
 } from '@/lib/video-alert-playback'
 
 export default function VideoAlertsPage() {
@@ -81,20 +79,6 @@ export default function VideoAlertsPage() {
       if (Number.isFinite(value) && value > 0) return value
     }
     return 1
-  }
-
-  const resolvePlaybackWindowVideo = async (alert) => {
-    const videos = await resolveAlertPlaybackVideos(
-      alert,
-      '/api/video-server',
-      {
-        ...ALERT_READY_WINDOW_OPTIONS,
-        fetchAlertDetail: true,
-        preferLatestAvailable: false,
-        latestAvailableDurationMs: 300 * 1000,
-      }
-    )
-    return videos[0] || null
   }
 
   const normalizeScreenshots = (alert, mediaPayload) => {
@@ -263,7 +247,7 @@ export default function VideoAlertsPage() {
     setLoadingAlertDetails(true)
     try {
       const loadScreenshots = async () => {
-        const res = await fetch(`/api/video-server/alerts/${alert.id}/screenshots?includeFallback=true`, {
+        const res = await fetch(`/api/video-server/eps/alerts/${alert.id}/screenshots`, {
           cache: 'no-store',
           signal: AbortSignal.timeout(8000)
         })
@@ -277,7 +261,7 @@ export default function VideoAlertsPage() {
       }
 
       const loadMedia = async () => {
-        const res = await fetch(`/api/video-server/alerts/${alert.id}/media?ensureMedia=true`, {
+        const res = await fetch(`/api/video-server/eps/alerts/${alert.id}/media`, {
           cache: 'no-store',
           signal: AbortSignal.timeout(8000)
         })
@@ -286,7 +270,7 @@ export default function VideoAlertsPage() {
       }
 
       const [alertRes, screenshotPayload, mediaPayload] = await Promise.all([
-        fetch(`/api/video-server/alerts/${alert.id}?ensureMedia=true`, {
+        fetch(`/api/video-server/eps/alerts/${alert.id}`, {
           cache: 'no-store',
           signal: AbortSignal.timeout(8000)
         }),
@@ -310,31 +294,6 @@ export default function VideoAlertsPage() {
         ],
       }
       const normalized = normalizeAlert(alertPayload, mergedMediaPayload)
-      if ((normalized.videos?.length || 0) === 0) {
-        try {
-          const playbackVideos = await resolveAlertPlaybackVideos(
-            normalized,
-            '/api/video-server',
-            {
-              beforeMs: 30 * 1000,
-              afterMs: 30 * 1000,
-              fetchAlertDetail: true,
-              preferLatestAvailable: false,
-              latestAvailableDurationMs: 300 * 1000,
-            }
-          )
-          if (playbackVideos.length > 0) {
-            normalized.videos = playbackVideos
-          } else {
-            const playbackWindowVideo = await resolvePlaybackWindowVideo(normalized)
-            normalized.videos = playbackWindowVideo ? [playbackWindowVideo] : []
-          }
-        } catch (playbackErr) {
-          console.error('Failed to resolve alert playback:', playbackErr)
-          const playbackWindowVideo = await resolvePlaybackWindowVideo(normalized)
-          normalized.videos = playbackWindowVideo ? [playbackWindowVideo] : []
-        }
-      }
 
       setSelectedAlert(normalized)
     } catch (err) {
@@ -350,7 +309,7 @@ export default function VideoAlertsPage() {
       let alertRows = []
 
       const activeLimit = 2000
-      const res = await fetch(`/api/video-server/alerts/active?limit=${activeLimit}`, { signal: AbortSignal.timeout(10000) })
+      const res = await fetch(`/api/video-server/eps/alerts/active?limit=${activeLimit}`, { signal: AbortSignal.timeout(30000) })
       if (res.ok) {
         const data = await res.json()
         alertRows = Array.isArray(data?.alerts)
@@ -363,7 +322,7 @@ export default function VideoAlertsPage() {
       }
 
       if (alertRows.length === 0) {
-        const activeRes = await fetch(`/api/video-server/alerts?limit=${activeLimit}`, { signal: AbortSignal.timeout(10000) })
+        const activeRes = await fetch(`/api/video-server/eps/alerts/active?limit=${activeLimit}`, { signal: AbortSignal.timeout(30000) })
         if (activeRes.ok) {
           const activeData = await activeRes.json()
           alertRows = Array.isArray(activeData?.alerts)
@@ -430,11 +389,24 @@ export default function VideoAlertsPage() {
 
   const fetchScreenshots = async () => {
     try {
-      const res = await fetch('/api/video-server/screenshots/recent?minutes=30', { signal: AbortSignal.timeout(10000) })
+      const res = await fetch('/api/video-server/eps/alerts/files/page', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pageSize: 50, pageIndex: 1 }),
+        signal: AbortSignal.timeout(10000)
+      })
       if (res.ok) {
         const data = await res.json()
-        if (data.success && data.screenshots) {
-          setScreenshots(data.screenshots)
+        if (data.success && Array.isArray(data.data?.files)) {
+          const mapped = data.data.files.map((f: any) => ({
+            id: f.alarmId || f.fileUrl,
+            storage_url: `/api/video-server/eps/stream/stream/proxy?url=${encodeURIComponent(f.fileUrl)}`,
+            device_id: f.deviceName || f.deviceId,
+            channel: 1,
+            camera_name: f.displayName || f.alarmType,
+            timestamp: f.timestamp,
+          }))
+          setScreenshots(mapped)
           return
         }
       }
@@ -490,7 +462,7 @@ export default function VideoAlertsPage() {
     setLoading(true)
     try {
       if (action === 'acknowledge') {
-        await fetch(`/api/video-server/alerts/${alertId}/acknowledge`, {
+        await fetch(`/api/video-server/eps/alerts/${alertId}/acknowledge`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ acknowledgedBy: currentUser.id })
@@ -508,41 +480,19 @@ export default function VideoAlertsPage() {
           ...alerts.medium,
           ...alerts.low,
         ].filter(Boolean)
-        const alertToResolve = alertPool.find((entry: any) => String(entry?.id || '') === String(alertId))
-        let resolvedWindowVideos: Array<{ key: string; label: string; url: string }> = []
-        if (alertToResolve) {
-          try {
-            resolvedWindowVideos = await resolveAlertPlaybackVideos(
-              alertToResolve,
-              '/api/video-server',
-              {
-                beforeMs: 60 * 1000,
-                afterMs: 0,
-                fetchAlertDetail: true,
-                preferLatestAvailable: false,
-                latestAvailableDurationMs: 300 * 1000,
-              }
-            )
-          } catch (playbackErr) {
-            console.warn('Failed to pull resolved-alert playback window:', playbackErr)
-          }
-        }
-        await fetch(`/api/video-server/alerts/${alertId}/close`, {
+        await fetch(`/api/video-server/eps/alerts/${alertId}/close`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             closureType: 'resolved',
             notes,
             actor: currentUser.id,
-            payload: {
-              resolvedWindowVideos,
-            },
           })
         })
         setSelectedAlert(null)
         setNotes('')
       } else if (action === 'escalate') {
-        await fetch(`/api/video-server/alerts/${alertId}/escalate`, {
+        await fetch(`/api/video-server/eps/alerts/${alertId}/escalate`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ reason: 'Escalated by controller' })
@@ -923,7 +873,7 @@ export default function VideoAlertsPage() {
                         onClick={async () => {
                           if (confirm('Mark this as a false alert?')) {
                             try {
-                              await fetch(`/api/video-server/alerts/${selectedAlert.id}/mark-false`, {
+                              await fetch(`/api/video-server/eps/alerts/${selectedAlert.id}/mark-false`, {
                                 method: 'POST',
                                 headers: { 'Content-Type': 'application/json' },
                                 body: JSON.stringify({ reason: 'False alert', markedBy: currentUser.name })

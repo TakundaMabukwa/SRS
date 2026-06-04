@@ -11,13 +11,16 @@ type VehicleLookupEntry = {
 };
 
 const VEHICLE_LOOKUP_CACHE_TTL_MS = 10 * 60 * 1000;
+const EPS_SERVER = process.env.NEXT_PUBLIC_EPS_STREAMING_SERVER || 'http://localhost:3002';
 const vehicleLookupCache: {
   rows: VehicleLookupEntry[];
   byDevice: Map<string, VehicleLookupEntry>;
+  byPlate: Map<string, VehicleLookupEntry>;
   expiresAt: number;
 } = {
   rows: [],
   byDevice: new Map(),
+  byPlate: new Map(),
   expiresAt: 0,
 };
 
@@ -32,13 +35,16 @@ function isVehicleLookupCacheFresh() {
 
 function buildLookupCache(rows: VehicleLookupEntry[]) {
   const byDevice = new Map<string, VehicleLookupEntry>();
+  const byPlate = new Map<string, VehicleLookupEntry>();
   for (const row of rows) {
     const deviceId = String(row?.deviceId || '').trim();
-    if (!deviceId) continue;
-    byDevice.set(deviceId, row);
+    if (deviceId) byDevice.set(deviceId, row);
+    const plate = String(row?.plate || '').trim().toUpperCase();
+    if (plate) byPlate.set(plate, row);
   }
   vehicleLookupCache.rows = rows;
   vehicleLookupCache.byDevice = byDevice;
+  vehicleLookupCache.byPlate = byPlate;
   vehicleLookupCache.expiresAt = Date.now() + VEHICLE_LOOKUP_CACHE_TTL_MS;
 }
 
@@ -67,6 +73,7 @@ async function fetchAllVehicleLookupRowsFromSupabase() {
   }
 
   const byDevice = new Map<string, VehicleLookupEntry>();
+  const byPlate = new Map<string, VehicleLookupEntry>();
   for (const row of data || []) {
     const rowValues = {
       plate: cleanText(row.registration_number),
@@ -91,7 +98,37 @@ async function fetchAllVehicleLookupRowsFromSupabase() {
         ...rowValues,
       });
     }
+
+    const plate = String(row.registration_number ?? '').trim().toUpperCase();
+    if (plate) {
+      byPlate.set(plate, {
+        deviceId: simId || serialId || plate,
+        ...rowValues,
+      });
+    }
   }
+
+  // Also match EPS devices by registration (plateName) so alerts with EPS deviceIds resolve correctly
+  try {
+    const epsRes = await fetch(`${EPS_SERVER}/api/stream/online`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+      cache: 'no-store', signal: AbortSignal.timeout(10000),
+    });
+    if (epsRes.ok) {
+      const epsData = await epsRes.json();
+      const epsDevices = epsData.data?.devices || [];
+      for (const d of epsDevices) {
+        if (!d.deviceId) continue;
+        const plate = (d.plateName || '').trim();
+        const registration = plate.split(' - ')[0].trim().toUpperCase();
+        if (!registration || byDevice.has(d.deviceId)) continue;
+        const match = byPlate.get(registration);
+        if (match) {
+          byDevice.set(d.deviceId, { deviceId: d.deviceId, ...match });
+        }
+      }
+    }
+  } catch {}
 
   const rows = Array.from(byDevice.values());
   buildLookupCache(rows);
@@ -272,11 +309,38 @@ export async function GET(req: NextRequest) {
       .maybeSingle();
 
     if (error || !vehicle) {
-      return NextResponse.json({ 
-        success: false, 
-        plate: null,
-        message: 'Vehicle not found' 
-      });
+      // Fallback: match by registration from EPS plateName
+      try {
+        const epsRes = await fetch(`${EPS_SERVER}/api/stream/online`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+          cache: 'no-store', signal: AbortSignal.timeout(10000),
+        });
+        if (epsRes.ok) {
+          const epsData = await epsRes.json();
+          const epsDevices = epsData.data?.devices || [];
+          const epsDevice = epsDevices.find((d: any) => d.deviceId === deviceId);
+          if (epsDevice) {
+            const plate = (epsDevice.plateName || '').trim();
+            const registration = plate.split(' - ')[0].trim().toUpperCase();
+            if (registration && isVehicleLookupCacheFresh()) {
+              const cached = vehicleLookupCache.byPlate.get(registration);
+              if (cached) {
+                return NextResponse.json({ success: true, cached: true, ...cached });
+              }
+            }
+            const { data: plateMatch } = await supabase
+              .from('vehiclesc')
+              .select('registration_number, fleet_number, make, model, cost_center')
+              .ilike('registration_number', registration)
+              .limit(1)
+              .maybeSingle();
+            if (plateMatch) {
+              return NextResponse.json({ success: true, plate: cleanText(plateMatch.registration_number), fleetNumber: cleanText(plateMatch.fleet_number), make: cleanText(plateMatch.make), model: cleanText(plateMatch.model), costCenter: cleanText(plateMatch.cost_center) });
+            }
+          }
+        }
+      } catch {}
+      return NextResponse.json({ success: false, plate: null, message: 'Vehicle not found' });
     }
 
     return NextResponse.json({ 

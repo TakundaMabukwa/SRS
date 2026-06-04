@@ -1392,7 +1392,8 @@ export async function GET(
     return handleVehicleVideoAvailabilityCompat(request, pathArray, target.baseUrl)
   }
 
-  const upstreamPath = (firstSegment === 'media' || firstSegment === 'captures') ? `/${path}` : `/api/${path}`
+  const epsPath = firstSegment === 'eps' ? path.slice(4) : path
+  const upstreamPath = (firstSegment === 'media' || firstSegment === 'captures') ? `/${path}` : (firstSegment === 'eps' ? `/api/${epsPath}` : `/api/${path}`)
   const url = `${target.baseUrl}${upstreamPath}${searchParams ? `?${searchParams}` : ''}`
   const lowerPath = `/${path}`.toLowerCase()
   const isDirectMediaRequest =
@@ -1495,7 +1496,8 @@ export async function POST(
   const { path: pathArray } = await params
   const path = pathArray.join('/')
   const target = resolveVideoServerProxyBase(pathArray)
-  const url = `${target.baseUrl}/api/${path}`
+  const epsPath = path.startsWith('eps/') ? path.slice(4) : path
+  const url = `${target.baseUrl}/api/${epsPath}`
   const body = await request.json().catch(() => ({}))
   const firstSegment = String(pathArray[0] || '').toLowerCase()
 

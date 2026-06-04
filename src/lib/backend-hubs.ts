@@ -165,5 +165,19 @@ export function resolveVideoServerProxyBase(pathArray: string[]) {
     return { name: "listener", baseUrl: getListenerBaseUrl() };
   }
 
+  const isEpsPath =
+    first === "eps";
+
+  if (isEpsPath) {
+    return { name: "epsStreaming", baseUrl: getEpsStreamingServerBaseUrl() };
+  }
+
   return { name: "listener", baseUrl: getListenerBaseUrl() };
+}
+
+export function getEpsStreamingServerBaseUrl() {
+  return normalizeBaseUrl(
+    process.env.NEXT_PUBLIC_EPS_STREAMING_SERVER,
+    "http://localhost:3002"
+  );
 }

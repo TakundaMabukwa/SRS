@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
-import { useVideoAlerts } from "@/context/video-alerts-context/context";
+
 import { useVideoWebSocket } from "@/hooks/use-video-websocket";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -248,7 +248,7 @@ export default function VideoAlertsDashboardTab({
   selectedCostCenters = [],
 }: VideoAlertsDashboardTabProps) {
   const router = useRouter();
-  const { filters, loading } = useVideoAlerts();
+  const [loading, setLoading] = useState(false);
   const videoProxyBase = "/api/video-server";
   const [searchTerm, setSearchTerm] = useState("");
   const [activeTab, setActiveTab] = useState("all"); 
@@ -258,7 +258,7 @@ export default function VideoAlertsDashboardTab({
   const [levelFilter, setLevelFilter] = useState<"all" | "critical" | "high" | "medium" | "low">(
     standaloneSeverity && standaloneSeverity !== "all" ? standaloneSeverity : "all"
   );
-  const [boardLevelFilter, setBoardLevelFilter] = useState<"all" | "critical" | "high" | "medium" | "low" | null>(
+  const [boardLevelFilter, setBoardLevelFilter] = useState<"all" | "critical" | "high" | "medium" | "low">(
     standaloneSeverity ?? "all"
   );
   const [sourceAlerts, setSourceAlerts] = useState<any[]>([]);
@@ -964,7 +964,7 @@ export default function VideoAlertsDashboardTab({
     lastActiveAlertsFetchAtRef.current = now;
     try {
       const activeLimit = 1500;
-      const res = await fetch(`${videoProxyBase}/alerts/active?limit=${activeLimit}`, { cache: "no-store" });
+      const res = await fetch(`${videoProxyBase}/eps/alerts/active?limit=${activeLimit}`, { cache: "no-store" });
       if (!res.ok) return;
 
       const json = await readJsonSafely(res);
@@ -1099,7 +1099,7 @@ export default function VideoAlertsDashboardTab({
   useEffect(() => {
     if (!vehicleIdentityLookupReady) return;
     fetchTripRoutingStyleAlerts();
-  }, [fetchTripRoutingStyleAlerts, filters, vehicleIdentityLookupReady]);
+  }, [fetchTripRoutingStyleAlerts, vehicleIdentityLookupReady]);
 
   useEffect(() => {
     void fetchPinnedVehicleHistoryAlerts();
@@ -2366,12 +2366,10 @@ export default function VideoAlertsDashboardTab({
               )}
               onClick={() => {
                 if (boardLevelFilter === key) {
-                  setActiveTab("all");
                   setBoardLevelFilter("all");
                   setLevelFilter("all");
                   return;
                 }
-                setActiveTab("all");
                 setBoardLevelFilter(key);
                 setLevelFilter(key);
               }}
@@ -2398,14 +2396,12 @@ export default function VideoAlertsDashboardTab({
               isStatusCardActive(card.key) && "ring-2 ring-slate-300 bg-slate-50"
             )}
             onClick={() => {
+              setBoardLevelFilter("all");
               setLevelFilter("all");
               if (card.key === "closed") {
                 setActiveTab("history");
-                setBoardLevelFilter(null);
-                void fetchClosedHistoryAlerts();
               } else {
                 setActiveTab("all");
-                setBoardLevelFilter("all");
               }
             }}
           >

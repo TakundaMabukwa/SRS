@@ -35,10 +35,24 @@ const ALERT_MEDIA_REQUEST_COOLDOWN_MS = 20 * 1000;
 const ALERT_READY_FALSE_TTL_MS = 15 * 1000;
 const ALERT_AVAILABILITY_ROWS_TTL_MS = 20 * 1000;
 const PLAYBACK_CACHE_PREFIX = "alert-playback:";
-const playbackVideoCache = new Map<string, AlertPlaybackVideo[]>();
-const playbackReadyCache = new Map<string, PlaybackReadyCacheEntry>();
-const playbackReadyPending = new Map<string, Promise<boolean>>();
-const availabilityRowsCache = new Map<string, { rows: PlaybackJsonRecord[]; checkedAt: number }>();
+
+function cappedMap<K, V>(maxSize: number = 500): Map<K, V> {
+  const map = new Map<K, V>();
+  const origSet = map.set.bind(map);
+  map.set = (key: K, value: V): Map<K, V> => {
+    if (map.size >= maxSize && !map.has(key)) {
+      const firstKey = map.keys().next().value;
+      if (firstKey !== undefined) map.delete(firstKey);
+    }
+    return origSet(key, value);
+  };
+  return map;
+}
+
+const playbackVideoCache = cappedMap<string, AlertPlaybackVideo[]>(500);
+const playbackReadyCache = cappedMap<string, PlaybackReadyCacheEntry>(500);
+const playbackReadyPending = cappedMap<string, Promise<boolean>>(200);
+const availabilityRowsCache = cappedMap<string, { rows: PlaybackJsonRecord[]; checkedAt: number }>(200);
 const APPROX_AVAILABLE_RANGE_PATTERN =
   /Approx available range:\s*([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:\.\-+Z]+)\s+to\s+([0-9]{4}-[0-9]{2}-[0-9:\.\-+Z]+)/i;
 
@@ -48,7 +62,7 @@ export const ALERT_READY_WINDOW_OPTIONS: AlertPlaybackWindowOptions = {
   preferLatestAvailable: true,
   latestAvailableDurationMs: 300 * 1000,
 };
-const alertMediaRequestCache = new Map<string, number>();
+const alertMediaRequestCache = cappedMap<string, number>(500);
 
 function resolvePlaybackWindowOptions(options?: AlertPlaybackWindowOptions) {
   const beforeCandidate = Number(options?.beforeMs);
@@ -850,10 +864,14 @@ export function formatRawAlertTimestamp(
   if (!parts) return String(value || "").trim();
 
   const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-  const monthLabel = months[Math.max(0, Math.min(11, parts.month - 1))] || "";
-  const day = String(parts.day).padStart(2, "0");
-  const hour = String(parts.hour).padStart(2, "0");
-  const minute = String(parts.minute).padStart(2, "0");
+
+  // Shift UTC → SAST (+2h)
+  const utcDate = new Date(Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute));
+  const sast = new Date(utcDate.getTime() + 2 * 60 * 60 * 1000);
+  const monthLabel = months[Math.max(0, Math.min(11, sast.getUTCMonth()))] || "";
+  const day = String(sast.getUTCDate()).padStart(2, "0");
+  const hour = String(sast.getUTCHours()).padStart(2, "0");
+  const minute = String(sast.getUTCMinutes()).padStart(2, "0");
 
   if (style === "date") return `${monthLabel} ${day}`;
   if (style === "time") return `${hour}:${minute}`;

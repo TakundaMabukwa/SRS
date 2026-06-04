@@ -7,6 +7,7 @@ import { AlertTriangle, Camera, Clock, BarChart3, ShieldAlert, Siren, LayoutDash
 
 const NAV_ITEMS = [
   { label: 'Control Center', href: '/video-alerts', icon: AlertTriangle },
+  { label: 'EPS Monitor', href: '/video-alerts/eps-monitor', icon: Camera },
   { label: 'Management', href: '/video-alerts/management', icon: LayoutDashboard },
   { label: 'Unattended', href: '/video-alerts/unattended', icon: Clock },
   { label: 'Screenshots', href: '/video-alerts/screenshots', icon: Camera },

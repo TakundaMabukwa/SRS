@@ -415,24 +415,28 @@ export async function saveAlertArtifactBundle({
   }
 }
 
+function toSastDate(timestamp?: string): Date | null {
+  if (!timestamp) return null
+  const d = new Date(timestamp)
+  if (Number.isNaN(d.getTime())) return null
+  return new Date(d.getTime() + 2 * 60 * 60 * 1000)
+}
+
 export function formatReportDate(timestamp?: string): string {
-  if (!timestamp) return ''
-  const date = new Date(timestamp)
-  if (Number.isNaN(date.getTime())) return ''
+  const date = toSastDate(timestamp)
+  if (!date) return ''
   return date.toISOString().slice(0, 10)
 }
 
 export function formatReportTime(timestamp?: string): string {
-  if (!timestamp) return ''
-  const date = new Date(timestamp)
-  if (Number.isNaN(date.getTime())) return ''
+  const date = toSastDate(timestamp)
+  if (!date) return ''
   return date.toISOString().slice(11, 16)
 }
 
 export function formatReportDateTime(timestamp?: string): string {
-  if (!timestamp) return ''
-  const date = new Date(timestamp)
-  if (Number.isNaN(date.getTime())) return ''
+  const date = toSastDate(timestamp)
+  if (!date) return ''
   return date.toLocaleString('en-GB')
 }
 
@@ -470,16 +474,123 @@ function sanitizeOklchStyles(doc: Document) {
   })
 }
 
+function injectDocumentStyles(srcDoc: Document, targetDoc: Document) {
+  const styleCache = new Set<string>()
+  srcDoc.querySelectorAll<HTMLLinkElement>('link[rel="stylesheet"]').forEach((link) => {
+    const href = link.getAttribute('href')
+    if (!href || styleCache.has(href)) return
+    styleCache.add(href)
+    const clone = targetDoc.createElement('link')
+    clone.setAttribute('rel', 'stylesheet')
+    clone.setAttribute('href', href)
+    targetDoc.head.appendChild(clone)
+  })
+  srcDoc.querySelectorAll<HTMLStyleElement>('style').forEach((style) => {
+    const text = style.textContent || ''
+    if (styleCache.has(text)) return
+    styleCache.add(text)
+    const clone = targetDoc.createElement('style')
+    clone.textContent = text
+    targetDoc.head.appendChild(clone)
+  })
+}
+
+function inlineElementStyles(element: HTMLElement) {
+  element.querySelectorAll<HTMLElement>('*').forEach((el) => {
+    const s = window.getComputedStyle(el)
+    const cs = el.style
+    cs.borderTopWidth = s.borderTopWidth
+    cs.borderRightWidth = s.borderRightWidth
+    cs.borderBottomWidth = s.borderBottomWidth
+    cs.borderLeftWidth = s.borderLeftWidth
+    cs.borderTopStyle = s.borderTopStyle
+    cs.borderRightStyle = s.borderRightStyle
+    cs.borderBottomStyle = s.borderBottomStyle
+    cs.borderLeftStyle = s.borderLeftStyle
+    cs.borderTopColor = s.borderTopColor
+    cs.borderRightColor = s.borderRightColor
+    cs.borderBottomColor = s.borderBottomColor
+    cs.borderLeftColor = s.borderLeftColor
+    cs.backgroundColor = s.backgroundColor
+    cs.color = s.color
+    cs.fontSize = s.fontSize
+    cs.fontWeight = s.fontWeight
+    cs.fontFamily = s.fontFamily
+    cs.textAlign = s.textAlign
+    cs.paddingTop = s.paddingTop
+    cs.paddingRight = s.paddingRight
+    cs.paddingBottom = s.paddingBottom
+    cs.paddingLeft = s.paddingLeft
+    cs.marginTop = s.marginTop
+    cs.marginRight = s.marginRight
+    cs.marginBottom = s.marginBottom
+    cs.marginLeft = s.marginLeft
+    cs.display = s.display
+    cs.gridColumn = s.gridColumn
+    cs.gridRow = s.gridRow
+    cs.width = s.width
+    cs.height = s.height
+    cs.minHeight = s.minHeight
+    cs.flex = s.flex
+    cs.alignItems = s.alignItems
+    cs.justifyContent = s.justifyContent
+    cs.gap = s.gap
+    cs.lineHeight = s.lineHeight
+    cs.letterSpacing = s.letterSpacing
+    cs.textTransform = s.textTransform
+    cs.whiteSpace = s.whiteSpace
+    cs.overflow = s.overflow
+    cs.overflowX = s.overflowX
+    cs.overflowY = s.overflowY
+    cs.borderRadius = s.borderRadius
+    cs.boxShadow = 'none'
+    cs.textShadow = 'none'
+    if (cs.position === 'fixed' || cs.position === 'sticky') {
+      cs.position = 'static'
+    }
+  })
+}
+
+async function resolveCrossOriginImages(element: HTMLElement) {
+  const imgs = element.querySelectorAll<HTMLImageElement>('img[src]')
+  await Promise.all(
+    Array.from(imgs).map(async (img) => {
+      const src = img.getAttribute('src') || ''
+      if (!src || src.startsWith('data:') || src.startsWith('blob:')) return
+      try {
+        const res = await fetch(src, { mode: 'cors', signal: AbortSignal.timeout(5000) })
+        if (!res.ok) return
+        const blob = await res.blob()
+        const dataUrl = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader()
+          reader.onload = () => resolve(reader.result as string)
+          reader.onerror = reject
+          reader.readAsDataURL(blob)
+        })
+        img.setAttribute('src', dataUrl)
+      } catch {
+        /* leave original src for html2canvas to handle via useCORS */
+      }
+    })
+  )
+}
+
 export function getSafeHtml2CanvasOptions(element: HTMLElement) {
   return {
     scale: 2,
     useCORS: true,
+    allowTaint: false,
     logging: false,
     backgroundColor: '#ffffff',
+    width: element.scrollWidth,
+    height: element.scrollHeight,
     windowWidth: element.scrollWidth,
     windowHeight: element.scrollHeight,
-    onclone: (clonedDoc: Document) => {
+    onclone: async (clonedDoc: Document, clonedElement: HTMLElement) => {
+      injectDocumentStyles(document, clonedDoc)
+      inlineElementStyles(clonedElement)
       sanitizeOklchStyles(clonedDoc)
+      await resolveCrossOriginImages(clonedElement)
     },
   }
 }

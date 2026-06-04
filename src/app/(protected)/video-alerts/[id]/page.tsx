@@ -3,7 +3,7 @@
 import React, { useState, useEffect, use, useCallback, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Hls from "hls.js";
-import { useVideoAlerts } from "@/context/video-alerts-context/context";
+
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -33,7 +33,7 @@ import {
 import { cn } from "@/lib/utils";
 import { format } from "date-fns";
 import CloseAlertModal from "@/components/modals/close-alert-modal";
-import { getAlertDisplayTimestamp, getAlertFirstOccurrenceTimestamp, getAlertLastOccurrenceTimestamp, getAlertPlaybackSignature, normalizeBackendMediaUrl, resolveAlertPlaybackVideos, resolveMediaUrlForCurrentOrigin } from "@/lib/video-alert-playback";
+import { getAlertDisplayTimestamp, getAlertFirstOccurrenceTimestamp, getAlertLastOccurrenceTimestamp, getAlertPlaybackSignature, normalizeBackendMediaUrl, resolveMediaUrlForCurrentOrigin } from "@/lib/video-alert-playback";
 
 function AlertVideoPlayer({
   url,
@@ -170,16 +170,10 @@ export default function AlertDetailPage({ params }) {
   const unwrappedParams = use(params);
   const alertId = unwrappedParams.id;
   const router = useRouter();
-  const {
-    alerts,
-    selectedAlert,
-    fetchAlert,
-    updateAlertStatus,
-    addNote,
-    escalateAlert,
-  } = useVideoAlerts();
   const { toast } = useToast();
 
+  const [selectedAlert, setSelectedAlert] = useState<any>(null);
+  const [loadingAlert, setLoadingAlert] = useState(true);
   const [newNote, setNewNote] = useState("");
   const [addingNote, setAddingNote] = useState(false);
   const [showCloseModal, setShowCloseModal] = useState(false);
@@ -196,6 +190,29 @@ export default function AlertDetailPage({ params }) {
     () => getAlertPlaybackSignature(selectedAlert),
     [selectedAlert]
   );
+
+  // Fetch alert from EPS DB on mount
+  useEffect(() => {
+    if (!alertId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/video-server/eps/alerts/${encodeURIComponent(alertId)}`, {
+          cache: "no-store",
+        });
+        if (res.ok) {
+          const data = await res.json();
+          const alert = data?.alert || data?.data || null;
+          if (!cancelled && alert) setSelectedAlert(alert);
+        }
+      } catch (err) {
+        console.error("Failed to fetch alert:", err);
+      } finally {
+        if (!cancelled) setLoadingAlert(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [alertId]);
 
   const safeFormatDate = (value, pattern, fallback = "N/A") => {
     const date = value instanceof Date ? value : new Date(value);
@@ -308,15 +325,17 @@ export default function AlertDetailPage({ params }) {
       return res.json().catch(() => null);
     };
 
-    const [detailPayload, mediaPayload] = await Promise.all([
-      fetchJson(`/api/video-server/alerts/${encodeURIComponent(alertId)}?ensureMedia=true`),
-      fetchJson(`/api/video-server/alerts/${encodeURIComponent(alertId)}/media?ensureMedia=true`),
+    const [detailEps, mediaEps] = await Promise.all([
+      fetchJson(`/api/video-server/eps/alerts/${encodeURIComponent(alertId)}`),
+      fetchJson(`/api/video-server/eps/alerts/${encodeURIComponent(alertId)}/media`),
     ]);
 
-    return [
-      ...extractStoredAlertVideos(detailPayload),
-      ...extractStoredAlertVideos(mediaPayload),
+    let epsVideos = [
+      ...extractStoredAlertVideos(detailEps),
+      ...extractStoredAlertVideos(mediaEps),
     ].filter((video, index, arr) => arr.findIndex((x) => x.url === video.url) === index);
+
+    return epsVideos;
   }, [alertId]);
 
   const fetchAlertScreenshots = useCallback(async (forceRequest = false) => {
@@ -333,7 +352,7 @@ export default function AlertDetailPage({ params }) {
     setScreenshotsLoading(true);
     try {
       const fetchRows = async () => {
-        const res = await fetch(`/api/video-server/alerts/${encodeURIComponent(alertId)}/screenshots?includeFallback=true`, {
+        const res = await fetch(`/api/video-server/eps/alerts/${encodeURIComponent(alertId)}/screenshots`, {
           cache: "no-store",
         });
         const json = await res.json().catch(() => ({}));
@@ -342,19 +361,6 @@ export default function AlertDetailPage({ params }) {
       };
 
       let shots = await fetchRows();
-      if (shots.length === 0 || forceRequest) {
-        await fetch(`/api/video-server/alerts/${encodeURIComponent(alertId)}/collect-evidence`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            ensureScreenshots: true,
-            ensureVideo: false,
-          }),
-        }).catch(() => null);
-
-        await new Promise((resolve) => setTimeout(resolve, 1500));
-        shots = await fetchRows();
-      }
 
       setResolvedScreenshots(shots);
       return shots;
@@ -362,15 +368,6 @@ export default function AlertDetailPage({ params }) {
       setScreenshotsLoading(false);
     }
   }, [alertId]);
-
-  useEffect(() => {
-    if (alertId && alerts.length > 0) {
-      const alert = alerts.find(a => a.id === alertId);
-      if (alert) {
-        fetchAlert(alertId);
-      }
-    }
-  }, [alertId, alerts]);
 
   // Fetch vehicle registration using vehicle lookup API
   useEffect(() => {
@@ -474,50 +471,21 @@ export default function AlertDetailPage({ params }) {
       setLoadingEventVideos(true);
       setEventVideoError("");
       try {
-        let videos = await fetchStoredEventVideos();
-        if (!Array.isArray(videos) || videos.length === 0) {
-          videos = await resolveAlertPlaybackVideos(
-            selectedAlert,
-            '/api/video-server',
-            {
-              beforeMs: 30 * 1000,
-              afterMs: 30 * 1000,
-              fetchAlertDetail: true,
-              preferLatestAvailable: false,
-              latestAvailableDurationMs: 300 * 1000,
-            }
-          );
-        }
-        console.info("[AlertDetail] Resolved event videos", {
-          alertId: selectedAlert?.id,
-          videos,
-        });
+        const videos = await fetchStoredEventVideos();
         if (!cancelled) {
           setEventVideos(videos);
           if (!Array.isArray(videos) || videos.length === 0) {
-            setEventVideoError("No stored or playback video was available for this alert.");
+            setEventVideoError("No stored video was available for this alert.");
           }
         }
       } catch (error: any) {
-        console.error("[AlertDetail] Failed to resolve event videos", {
+        console.error("[AlertDetail] Failed to fetch event videos", {
           alertId: selectedAlert?.id,
           message: error?.message || String(error),
         });
-        try {
-          const storedVideos = await fetchStoredEventVideos();
-          if (!cancelled) {
-            setEventVideos(storedVideos);
-            setEventVideoError(
-              storedVideos.length > 0
-                ? ""
-                : (error?.message || "Failed to load alert-time playback.")
-            );
-          }
-        } catch {
-          if (!cancelled) {
-            setEventVideos([]);
-            setEventVideoError(error?.message || "Failed to load alert-time playback.");
-          }
+        if (!cancelled) {
+          setEventVideos([]);
+          setEventVideoError(error?.message || "Failed to load alert-time playback.");
         }
       } finally {
         if (!cancelled) {
@@ -631,43 +599,68 @@ export default function AlertDetailPage({ params }) {
     if (!newNote.trim()) return;
     
     setAddingNote(true);
-    const result = await addNote(alertId, {
-      content: newNote,
-      user_id: currentUser.id,
-      user_name: currentUser.name,
-      user_role: currentUser.role,
-      is_internal: false,
-    });
-    
-    if (result) {
-      setNewNote("");
+    try {
+      const res = await fetch(`/api/video-server/eps/alerts/${encodeURIComponent(alertId)}/note`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          content: newNote,
+          user_id: currentUser.id,
+          user_name: currentUser.name,
+          user_role: currentUser.role,
+          is_internal: false,
+        }),
+      });
+      if (res.ok) {
+        setNewNote("");
+        toast({ title: "Note added", description: "Note saved successfully" });
+      }
+    } catch (err) {
+      toast({ title: "Error", description: "Failed to add note", variant: "destructive" });
     }
     setAddingNote(false);
   };
 
   const handleEscalate = async () => {
-    // In production, show a modal to select who to escalate to
-    await escalateAlert(alertId, {
-      escalate_to: "manager-1",
-      escalate_to_name: "Fleet Manager",
-      reason: "Requires management attention",
-    });
+    try {
+      await fetch(`/api/video-server/eps/alerts/${encodeURIComponent(alertId)}/escalate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          escalate_to: "manager-1",
+          escalate_to_name: "Fleet Manager",
+          reason: "Requires management attention",
+        }),
+      });
+      toast({ title: "Escalated", description: "Alert escalated to Fleet Manager" });
+    } catch (err) {
+      toast({ title: "Error", description: "Failed to escalate alert", variant: "destructive" });
+    }
   };
 
   const handleStatusChange = async (newStatus) => {
     if (newStatus === "closed") {
       setShowCloseModal(true);
     } else {
-      await updateAlertStatus(alertId, newStatus, currentUser.id);
+      try {
+        await fetch(`/api/video-server/eps/alerts/${encodeURIComponent(alertId)}/${newStatus}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ userId: currentUser.id }),
+        });
+        toast({ title: "Status updated", description: `Alert marked as ${newStatus}` });
+      } catch (err) {
+        toast({ title: "Error", description: "Failed to update status", variant: "destructive" });
+      }
     }
   };
 
-  if (!selectedAlert) {
+  if (loadingAlert || !selectedAlert) {
     return (
       <div className="flex items-center justify-center h-screen">
         <div className="text-center">
           <Clock className="w-12 h-12 text-slate-400 mx-auto mb-4 animate-spin" />
-          <p className="text-slate-600">Loading alert details...</p>
+          <p className="text-slate-600">{loadingAlert ? "Loading alert details..." : "Alert not found"}</p>
         </div>
       </div>
     );
@@ -734,10 +727,18 @@ export default function AlertDetailPage({ params }) {
                   <Button 
                     variant="outline" 
                     className="border-red-300 text-red-700 hover:bg-red-50"
-                    onClick={() => {
+                    onClick={async () => {
                       if (confirm('Mark this alert as a false alarm?')) {
-                        updateAlertStatus(alertId, 'closed', currentUser.id, { false_positive: true });
-                        toast({ title: "False Alert", description: "Alert marked as false alarm" });
+                        try {
+                          await fetch(`/api/video-server/eps/alerts/${encodeURIComponent(alertId)}/mark-false`, {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ userId: currentUser.id, false_positive: true }),
+                          });
+                          toast({ title: "False Alert", description: "Alert marked as false alarm" });
+                        } catch {
+                          toast({ title: "Error", description: "Failed to mark as false alarm", variant: "destructive" });
+                        }
                       }
                     }}
                   >
@@ -1051,6 +1052,22 @@ export default function AlertDetailPage({ params }) {
         onClose={() => setShowCloseModal(false)}
         alertId={alertId}
         alertTitle={selectedAlert.title}
+        onSubmit={async (data) => {
+          try {
+            const res = await fetch(`/api/video-server/eps/alerts/${encodeURIComponent(alertId)}/close`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ ...data, userId: currentUser.id }),
+            });
+            if (res.ok) {
+              toast({ title: "Alert Closed", description: "NCR report saved successfully" });
+              return true;
+            }
+          } catch {
+            toast({ title: "Error", description: "Failed to close alert", variant: "destructive" });
+          }
+          return false;
+        }}
       />
     </div>
   );

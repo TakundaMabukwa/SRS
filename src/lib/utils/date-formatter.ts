@@ -203,3 +203,13 @@ export function formatDateOnly(timestamp: string): string {
     format: 'short'
   });
 }
+
+/**
+ * Shifts a UTC timestamp by +2 hours (SAST / South African Standard Time).
+ * Accepts any Date-parseable value and returns a Date object adjusted by +2h.
+ */
+export function toSAST(value: string | number | Date | null | undefined): Date {
+  const d = new Date(value ?? 0);
+  if (Number.isNaN(d.getTime())) return new Date(0);
+  return new Date(d.getTime() + 2 * 60 * 60 * 1000);
+}
