@@ -20,6 +20,7 @@ export default function FLVPlayer({ streamUrl, channel, vehicleName, onStop }: F
   const destroyedRef = useRef(false);
   const [status, setStatus] = useState('Connecting...');
   const [error, setError] = useState(false);
+  const [videoPlaying, setVideoPlaying] = useState(false);
 
   useEffect(() => {
     if (!videoRef.current || !streamUrl || !flvjs.isSupported()) {
@@ -29,7 +30,30 @@ export default function FLVPlayer({ streamUrl, channel, vehicleName, onStop }: F
 
     destroyedRef.current = false;
     reconnectRef.current = 0;
+    setVideoPlaying(false);
+    setError(false);
+    setStatus('Connecting...');
     const maxReconnects = 5;
+
+    const onVideoPlaying = () => {
+      if (destroyedRef.current) return;
+      setVideoPlaying(true);
+      setStatus('Streaming live');
+      setError(false);
+      reconnectRef.current = 0;
+    };
+    const onVideoTimeUpdate = () => {
+      if (destroyedRef.current) return;
+      if (videoRef.current && videoRef.current.currentTime > 0 && !videoPlaying) {
+        setVideoPlaying(true);
+        setStatus('Streaming live');
+        setError(false);
+        reconnectRef.current = 0;
+      }
+    };
+    const videoEl = videoRef.current;
+    videoEl.addEventListener('playing', onVideoPlaying);
+    videoEl.addEventListener('timeupdate', onVideoTimeUpdate);
 
     function connect() {
       if (destroyedRef.current || !videoRef.current) return;
@@ -63,13 +87,6 @@ export default function FLVPlayer({ streamUrl, channel, vehicleName, onStop }: F
 
         player.on(flvjs.Events.LOADING_COMPLETE, () => {
           if (!destroyedRef.current) reconnectRef.current = 0;
-        });
-
-        player.on(flvjs.Events.PLAYING, () => {
-          if (destroyedRef.current) return;
-          setStatus('Streaming live');
-          setError(false);
-          reconnectRef.current = 0;
         });
 
         player.load();
@@ -108,12 +125,16 @@ export default function FLVPlayer({ streamUrl, channel, vehicleName, onStop }: F
 
     return () => {
       destroyedRef.current = true;
+      if (videoEl) {
+        videoEl.removeEventListener('playing', onVideoPlaying);
+        videoEl.removeEventListener('timeupdate', onVideoTimeUpdate);
+      }
       if (pingRef.current) clearInterval(pingRef.current);
       destroyPlayer();
     };
   }, [streamUrl]);
 
-  const isStreaming = !error && status === 'Streaming live';
+  const isStreaming = !error && videoPlaying;
 
   return (
     <div className="bg-slate-800 rounded-lg p-4 shadow-lg">

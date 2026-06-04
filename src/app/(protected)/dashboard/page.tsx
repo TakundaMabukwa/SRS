@@ -5025,9 +5025,9 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
           </div>
         )}
 
-        {activeTab === "live-stream" && (
+        <div style={{ display: activeTab === "live-stream" ? "" : "none" }} className="w-full">
           <LiveStreamTab selectedCostCenters={selectedCostCenters} />
-        )}
+        </div>
 
         {activeTab === "financials" && (
           <div className="space-y-4">

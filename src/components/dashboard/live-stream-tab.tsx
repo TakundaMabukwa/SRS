@@ -26,6 +26,7 @@ import {
   StopCircle,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { createPortal } from "react-dom";
 
 type DbVehicle = {
   registration_number: string;
@@ -576,10 +577,10 @@ export default function LiveStreamTab({ selectedCostCenters = [] }: LiveStreamTa
                     className="h-7 border border-cyan-400/40 bg-slate-950/80 px-2 text-[11px] text-cyan-300 hover:bg-slate-800"
                     variant="outline"
                     onClick={() => setPinnedFeed({ deviceId: entry.deviceId, channel: entry.channel, vehicleName: entry.vehicleName })}
-                    title="Open split view"
+                    title="Pin to PiP"
                   >
                     <PictureInPicture2 className="mr-1 h-3.5 w-3.5" />
-                    Split View
+                    PiP
                   </Button>
                 </div>
                 <FLVPlayer
@@ -594,11 +595,11 @@ export default function LiveStreamTab({ selectedCostCenters = [] }: LiveStreamTa
         </Card>
       )}
 
-      {pinnedFeed && (() => {
+      {typeof document !== "undefined" && pinnedFeed && (() => {
         const entry = streamEntries.find(e => e.deviceId === pinnedFeed.deviceId && e.channel === pinnedFeed.channel);
-        return entry ? (
+        return entry ? createPortal(
           <div
-            className="fixed z-[70] min-h-[280px] min-w-[320px] max-h-[90vh] max-w-[95vw] resize overflow-auto rounded-lg border border-cyan-400/40 bg-slate-900 shadow-2xl"
+            className="fixed z-[9999] min-h-[240px] min-w-[300px] max-h-[85vh] max-w-[90vw] resize overflow-hidden rounded-lg border border-cyan-400/40 bg-slate-900 shadow-2xl"
             style={{ left: pipPosition.x, top: pipPosition.y }}
           >
             <div
@@ -609,15 +610,18 @@ export default function LiveStreamTab({ selectedCostCenters = [] }: LiveStreamTa
               }}
             >
               <div>
-                <p className="text-[11px] uppercase tracking-wide text-cyan-300">Split View</p>
+                <p className="text-[11px] uppercase tracking-wide text-cyan-300">PiP</p>
                 <p className="text-xs font-semibold text-slate-100">{entry.vehicleName}</p>
               </div>
-              <Button size="icon" variant="ghost" className="h-7 w-7 text-slate-300 hover:bg-slate-800 hover:text-white" onClick={() => setPinnedFeed(null)} title="Close split view">
+              <Button size="icon" variant="ghost" className="h-7 w-7 text-slate-300 hover:bg-slate-800 hover:text-white" onClick={() => setPinnedFeed(null)} title="Close PiP">
                 <X className="h-4 w-4" />
               </Button>
             </div>
-            <FLVPlayer streamUrl={entry.streamUrl} channel={entry.channel} vehicleName={`${entry.vehicleName} (Pinned)`} onStop={() => { stopStream(entry.deviceId); setPinnedFeed(null); }} />
-          </div>
+            <div className="h-full">
+              <FLVPlayer streamUrl={entry.streamUrl} channel={entry.channel} vehicleName={`${entry.vehicleName}`} onStop={() => { stopStream(entry.deviceId); setPinnedFeed(null); }} />
+            </div>
+          </div>,
+          document.body
         ) : null;
       })()}
 
