@@ -264,11 +264,20 @@ export function AlertDetailModal({
   }, [getDashboardStructuredAlertMapping, selectedAlert]);
 
   const selectedAlertVehicleDisplay = useMemo(() => {
-    if (!selectedAlert) return "Unknown Vehicle";
+    if (!selectedAlert) return preservedVehicleRef.current || "Unknown Vehicle";
     const reg = String(selectedAlert?.vehicle_registration || selectedAlert?.plate || selectedAlert?.registration || "").trim();
     const fleet = String(selectedAlert?.fleet_number || selectedAlert?.fleetNumber || "").trim();
-    if (fleet && reg && fleet.toUpperCase() !== reg.toUpperCase()) return `${fleet} - ${reg}`;
-    return reg || fleet || "Unknown Vehicle";
+    let display: string;
+    if (fleet && reg && fleet.toUpperCase() !== reg.toUpperCase()) {
+      display = `${fleet} - ${reg}`;
+    } else {
+      display = reg || fleet || "";
+    }
+    if (display) {
+      preservedVehicleRef.current = display;
+      return display;
+    }
+    return preservedVehicleRef.current || "Unknown Vehicle";
   }, [selectedAlert]);
 
   const selectedAlertDriverInfo = useMemo(() => {
@@ -320,6 +329,7 @@ export function AlertDetailModal({
   const videoProxyBase = "/api/video-server";
   const [contentOpacity, setContentOpacity] = useState(1);
   const prevAlertIdRef = useRef<string | undefined>(undefined);
+  const preservedVehicleRef = useRef("");
 
   useEffect(() => {
     const newId = String(selectedAlert?.id || "").trim();
@@ -808,6 +818,7 @@ export function AlertDetailModal({
                                   onClick={async () => {
                                     if (!confirm("Mark this alert as a false alarm and close it?")) return;
                                     await onSidebarAction(entry, "false_alert");
+                                    setActiveTab("screenshots");
                                   }}
                                 >
                                   False Alert
@@ -818,6 +829,7 @@ export function AlertDetailModal({
                                   className="h-6 border-emerald-300 bg-white text-[10px] text-emerald-700 hover:bg-emerald-50"
                                   onClick={async () => {
                                     await onSidebarAction(entry, "resolve");
+                                    setActiveTab("screenshots");
                                   }}
                                 >
                                   Resolve
