@@ -3186,6 +3186,8 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
               detail: {
                 id: closingAlertId,
                 groupedIds: Array.isArray(activeAlert?.groupedIds) ? activeAlert.groupedIds : [],
+                deviceId: activeAlert?.device_id || activeAlert?.vehicleId || null,
+                alertType: activeAlert?.alert_type || activeAlert?.type || null,
               },
             })
           );
@@ -6710,6 +6712,8 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
                   detail: {
                     id: closingAlertId,
                     groupedIds,
+                    deviceId: (selectedAlertForIncidentTemplate || selectedAlert)?.device_id || (selectedAlertForIncidentTemplate || selectedAlert)?.vehicleId || null,
+                    alertType: (selectedAlertForIncidentTemplate || selectedAlert)?.alert_type || (selectedAlertForIncidentTemplate || selectedAlert)?.type || null,
                   },
                 })
               );

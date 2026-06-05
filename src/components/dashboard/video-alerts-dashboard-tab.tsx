@@ -330,14 +330,21 @@ export default function VideoAlertsDashboardTab({
         .map((value) => String(value || "").trim())
         .filter(Boolean)
     );
-    if (idsToRemove.size === 0) return;
+    const groupDeviceId = String(detail?.deviceId || "").trim();
+    const groupAlertType = String(detail?.alertType || "").trim();
 
     const filterClosed = (alerts: any[]) =>
       alerts.filter((alert) => {
         const alertId = String(alert?.id || "").trim();
         if (alertId && idsToRemove.has(alertId)) return false;
         const groupedIds = Array.isArray(alert?.groupedIds) ? alert.groupedIds.map((value: any) => String(value || "").trim()) : [];
-        return !groupedIds.some((value: string) => idsToRemove.has(value));
+        if (groupedIds.some((value: string) => idsToRemove.has(value))) return false;
+        if (groupDeviceId && groupAlertType) {
+          const ad = String(alert?.device_id || alert?.vehicleId || "").trim();
+          const at = String(alert?.alert_type || alert?.type || "").trim();
+          if (ad === groupDeviceId && at === groupAlertType) return false;
+        }
+        return true;
       });
 
     setSourceAlerts((prev) => filterClosed(prev));
@@ -519,7 +526,8 @@ export default function VideoAlertsDashboardTab({
       firstOccurrenceTimestamp,
       displayTimestamp,
       playbackTimestamp: displayTimestamp || lastOccurrenceTimestamp || firstOccurrenceTimestamp,
-      repeated_count: Number(incoming.repeated_count || incoming.repeatedCount || 1) || 1,
+      repeated_count: Number(incoming.repeated_count || incoming.repeatedCount || incoming.count || 1) || 1,
+      count: Number(incoming.count || incoming.repeated_count || incoming.repeatedCount || 1) || 1,
     };
   }, [getAlertPresentation, resolveVehicleIdentity]);
 
@@ -2070,6 +2078,37 @@ export default function VideoAlertsDashboardTab({
     };
   }, []);
 
+  const renderAlertClosureInfo = (alert: any) => {
+    if (!alert?.resolved && !["closed", "resolved"].includes(String(alert?.status || "").toLowerCase())) return null;
+    const badges: { label: string; className: string }[] = [];
+    const docs = Array.isArray(alert?.documents) ? alert.documents : [];
+    const ncrDoc = docs.find((d: any) => (d.type || "").toLowerCase() === "ncr");
+    const reportDoc = docs.find((d: any) => (d.type || "").toLowerCase() === "report");
+    if (alert.false_alert) badges.push({ label: "False Alert", className: "border-rose-300 bg-rose-50 text-rose-700" });
+    if (ncrDoc) badges.push({ label: "NCR Filed", className: "border-orange-300 bg-orange-50 text-orange-700" });
+    if (reportDoc) badges.push({ label: "Report Filed", className: "border-purple-300 bg-purple-50 text-purple-700" });
+    if (badges.length === 0 && alert.resolved) badges.push({ label: "Resolved", className: "border-emerald-300 bg-emerald-50 text-emerald-700" });
+    const resolvedBy = alert.resolved_by;
+    const resolvedAt = alert.resolved_at ? new Date(alert.resolved_at).toLocaleString() : null;
+    return (
+      <div className="mt-2 space-y-1 border-t border-slate-100 pt-2">
+        <div className="flex flex-wrap items-center gap-1.5">
+          {badges.map((b, i) => (
+            <Badge key={i} className={cn("rounded-full border px-1.5 py-0 text-[10px] font-semibold", b.className)}>
+              {b.label}
+            </Badge>
+          ))}
+        </div>
+        {resolvedBy ? (
+          <p className="text-[10px] text-slate-400">
+            by {resolvedBy}
+            {resolvedAt ? ` at ${resolvedAt}` : ""}
+          </p>
+        ) : null}
+      </div>
+    );
+  };
+
   const renderAlertBoardRow = (alert: any) => {
     const vehicleLabel = getAlertVehicleDisplayLabel(alert);
     const alertLabel = alert?.title || alert?.alert_type || alert?.type || "Alert";
@@ -2085,6 +2124,7 @@ export default function VideoAlertsDashboardTab({
           <div className="min-w-0">
             <div className="truncate text-[13px] font-semibold leading-4 text-slate-900">
               {alertLabel}
+              {alert.count > 1 ? <span className="ml-1 text-[10px] text-slate-400">(×{alert.count})</span> : null}
               {vehicleLabel ? ` (${vehicleLabel})` : ""}
             </div>
             {codeLabel ? (
@@ -2128,6 +2168,7 @@ export default function VideoAlertsDashboardTab({
             {getAlertLevel(alert)}
           </Badge>
         </div>
+        {renderAlertClosureInfo(alert)}
         <div className="mt-2 flex justify-between">
           <Button
             size="sm"
@@ -2178,6 +2219,7 @@ export default function VideoAlertsDashboardTab({
               return (
                 <div className="truncate text-[13px] font-semibold leading-4 text-slate-900">
                   {alert.title}
+                  {alert.count > 1 ? <span className="ml-1 text-[10px] text-slate-400">(×{alert.count})</span> : null}
                   {vehicleLabel ? ` (${vehicleLabel})` : ""}
                 </div>
               );
@@ -2229,6 +2271,8 @@ export default function VideoAlertsDashboardTab({
           </div>
         </div>
 
+        {renderAlertClosureInfo(alert)}
+
         <div className="mt-2 flex justify-end">
           <Button
             size="sm"
@@ -2266,8 +2310,14 @@ export default function VideoAlertsDashboardTab({
         onClick={() => handleViewAlert(alert)}
       >
         <div className="min-w-0">
-          <div className="truncate font-semibold text-slate-900">{alert.title}</div>
+          <div className="truncate font-semibold text-slate-900">
+            {alert.title}
+            {alert.count > 1 ? <span className="ml-1 text-[10px] text-slate-400">(×{alert.count})</span> : null}
+          </div>
           <div className="truncate text-[11px] text-slate-500">{(alert.alert_type || "alert").replace(/_/g, " ")}</div>
+          {alert?.resolved || ["closed", "resolved"].includes(String(alert?.status || "").toLowerCase()) ? (
+            <div className="mt-1">{renderAlertClosureInfo(alert)}</div>
+          ) : null}
         </div>
         <div className="min-w-0">
           {getAlertVehicleDisplayLabel(alert) ? (

@@ -332,6 +332,27 @@ export function AlertDetailModal({
   const [contentOpacity, setContentOpacity] = useState(1);
   const prevAlertIdRef = useRef<string | undefined>(undefined);
 
+  const sidebarGroups = useMemo(() => {
+    const raw = Array.isArray(selectedAlert?.recent_alerts) ? selectedAlert.recent_alerts : [];
+    const groups = new Map<string, { entry: any; count: number; latestTs: string }>();
+    for (const entry of raw) {
+      const key = String(entry?.alert_type || entry?.type || entry?.title || "alert").toLowerCase().trim();
+      const existing = groups.get(key);
+      const ts = entry?.timestamp || entry?.created_at || "";
+      if (existing) {
+        existing.count++;
+        if (ts > existing.latestTs) {
+          existing.latestTs = ts;
+          existing.entry = entry;
+        }
+      } else {
+        groups.set(key, { entry, count: 1, latestTs: ts });
+      }
+    }
+    return Array.from(groups.values())
+      .sort((a, b) => new Date(b.latestTs || 0).getTime() - new Date(a.latestTs || 0).getTime());
+  }, [selectedAlert?.recent_alerts]);
+
   useEffect(() => {
     const newId = String(selectedAlert?.id || "").trim();
     if (prevAlertIdRef.current && prevAlertIdRef.current !== newId && prevAlertIdRef.current !== "undefined") {
@@ -510,8 +531,14 @@ export function AlertDetailModal({
                     </select>
                   </div>
                 ) : (
-                  <div className="mb-2">
+                  <div className="mb-2 space-y-0.5">
                     <Badge className="border border-emerald-300 bg-emerald-100 text-emerald-800">Resolved</Badge>
+                    {selectedAlert?.resolved_by ? (
+                      <p className="text-[11px] text-slate-400">
+                        by {selectedAlert.resolved_by}
+                        {selectedAlert?.resolved_at ? ` at ${new Date(selectedAlert.resolved_at).toLocaleString()}` : ""}
+                      </p>
+                    ) : null}
                   </div>
                 )}
                 <div>
@@ -658,7 +685,7 @@ export function AlertDetailModal({
                         <p>
                           {selectedAlertPlaybackLoading
                             ? "Preparing alert video from stored footage..."
-                            : "Alert video is not ready yet for this alert."}
+                            : "Waiting for video"}
                         </p>
                         {selectedAlertPlaybackError ? (
                           <p className="mt-2 text-sm text-rose-600">{selectedAlertPlaybackError}</p>
@@ -780,16 +807,17 @@ export function AlertDetailModal({
                   <p className="text-xs text-slate-500">Time + incident with quick actions</p>
                 </div>
                 <div className="max-h-[52vh] space-y-2 overflow-auto pr-1">
-                  {Array.isArray(selectedAlert?.recent_alerts) && selectedAlert.recent_alerts.length > 0 ? (
-                    [...selectedAlert.recent_alerts]
-                      .sort((a: any, b: any) => new Date(b?.timestamp || 0).getTime() - new Date(a?.timestamp || 0).getTime())
-                      .map((entry: any, idx: number) => (
+                  {sidebarGroups.length > 0 ? (
+                    sidebarGroups.map(({ entry, count }, idx: number) => (
                         <div
                           key={`sidebar-incident-${entry?.id || idx}`}
                           className="rounded-md border border-slate-200 bg-slate-50 p-2"
                         >
                           <div className="flex items-center justify-between gap-1">
-                            <p className="truncate text-xs font-semibold text-slate-900">{entry?.title || "Alert"}</p>
+                            <p className="truncate text-xs font-semibold text-slate-900">
+                              {entry?.title || "Alert"}
+                              {count > 1 ? <span className="ml-1 text-[10px] text-slate-400">(×{count})</span> : null}
+                            </p>
                             <Badge variant="outline" className="shrink-0 text-[10px]">
                               {String(entry?.severity || "info").toUpperCase()}
                             </Badge>
@@ -809,7 +837,15 @@ export function AlertDetailModal({
                               {timelinePlaybackLoading[String(entry?.id || "").trim()] ? "Loading..." : "Playback"}
                             </Button>
                             {entry?.resolved ? (
-                              <Badge className="h-5 border-emerald-200 bg-emerald-50 text-[10px] text-emerald-700">Resolved</Badge>
+                              <div className="flex flex-col gap-0.5">
+                                <Badge className="h-5 w-fit border-emerald-200 bg-emerald-50 text-[10px] text-emerald-700">Resolved</Badge>
+                                {entry?.resolved_by ? (
+                                  <span className="text-[10px] text-slate-400">
+                                    by {entry.resolved_by}
+                                    {entry?.resolved_at ? ` at ${new Date(entry.resolved_at).toLocaleString()}` : ""}
+                                  </span>
+                                ) : null}
+                              </div>
                             ) : (
                               <>
                                 <Button
@@ -838,6 +874,9 @@ export function AlertDetailModal({
                               </>
                             )}
                           </div>
+                          {count > 1 && (
+                            <p className="mt-1 text-[10px] text-slate-400">+ {count - 1} more of this type</p>
+                          )}
                           {Array.isArray(timelinePlaybackByAlert[String(entry?.id || "").trim()]) &&
                           timelinePlaybackByAlert[String(entry?.id || "").trim()].length > 0 && (
                             <div className="mt-2 space-y-1.5">
