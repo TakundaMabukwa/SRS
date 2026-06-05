@@ -263,6 +263,8 @@ export function AlertDetailModal({
     return candidateValues[0] || "Alert";
   }, [getDashboardStructuredAlertMapping, selectedAlert]);
 
+  const preservedVehicleRef = useRef("");
+
   const selectedAlertVehicleDisplay = useMemo(() => {
     if (!selectedAlert) return preservedVehicleRef.current || "Unknown Vehicle";
     const reg = String(selectedAlert?.vehicle_registration || selectedAlert?.plate || selectedAlert?.registration || "").trim();
@@ -329,7 +331,6 @@ export function AlertDetailModal({
   const videoProxyBase = "/api/video-server";
   const [contentOpacity, setContentOpacity] = useState(1);
   const prevAlertIdRef = useRef<string | undefined>(undefined);
-  const preservedVehicleRef = useRef("");
 
   useEffect(() => {
     const newId = String(selectedAlert?.id || "").trim();
