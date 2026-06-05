@@ -1101,6 +1101,29 @@ export default function VideoAlertsDashboardTab({
 
   const handleClosedAlertEvent = useCallback((detail: any) => {
     removeClosedAlertFromBoard(detail);
+
+    // Add a synthetic closed alert entry so it reflects immediately in history/count
+    if (detail?.id) {
+      setClosedHistoryAlerts((prev) => {
+        if (prev.some((a: any) => String(a.id) === String(detail.id))) return prev;
+        const title = String(detail?.alertTitle || detail?.alertType || "Alert").trim();
+        return [{
+          id: String(detail.id),
+          device_id: String(detail?.deviceId || "").trim(),
+          vehicleId: String(detail?.deviceId || "").trim(),
+          alert_type: String(detail?.alertType || "").trim(),
+          type: String(detail?.alertType || "").trim(),
+          title,
+          status: "resolved",
+          resolved: true,
+          resolved_by: String(detail?.resolvedBy || "").trim() || null,
+          resolved_at: new Date().toISOString(),
+          timestamp: new Date().toISOString(),
+          count: 1,
+        }, ...prev];
+      });
+    }
+
     void fetchClosedHistoryAlerts();
   }, [fetchClosedHistoryAlerts, removeClosedAlertFromBoard]);
 
