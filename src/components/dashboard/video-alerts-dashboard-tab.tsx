@@ -1123,9 +1123,7 @@ export default function VideoAlertsDashboardTab({
         }, ...prev];
       });
     }
-
-    void fetchClosedHistoryAlerts();
-  }, [fetchClosedHistoryAlerts, removeClosedAlertFromBoard]);
+  }, [removeClosedAlertFromBoard]);
 
   useEffect(() => {
     if (!vehicleIdentityLookupReady) return;
