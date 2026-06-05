@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "cross-env NODE_OPTIONS=--max-old-space-size=1536 UV_THREADPOOL_SIZE=1 NEXT_DISABLE_ESLINT=1 next dev",
+    "dev": "next dev",
     "build": "cross-env NODE_OPTIONS=--max-old-space-size=1536 UV_THREADPOOL_SIZE=1 NEXT_DISABLE_ESLINT=1 next build",
     "start": "cross-env NODE_OPTIONS=--max-old-space-size=1536 UV_THREADPOOL_SIZE=1 next start",
     "lint": "next lint",
