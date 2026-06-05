@@ -1064,23 +1064,35 @@ export default function VideoAlertsDashboardTab({
             : [];
 
     try {
+      // Fetch resolved alerts from our EPS backend (DB-backed, authoritative)
+      const epsResolvedRes = await fetch(`${videoProxyBase}/eps/alerts/resolved?limit=500`, { cache: "no-store" });
+
+      let allClosed: any[] = [];
+
+      if (epsResolvedRes.ok) {
+        const epsJson = await readJsonSafely(epsResolvedRes);
+        const epsAlerts = normalizeHistoryList(readAlertArray(epsJson));
+        allClosed.push(...epsAlerts);
+      }
+
+      // Also try GoHub status endpoints as supplement
       const [closedRes, resolvedRes] = await Promise.all([
-        fetch(`${videoProxyBase}/alerts?status=closed&limit=200`, { cache: "no-store" }),
-        fetch(`${videoProxyBase}/alerts?status=resolved&limit=200`, { cache: "no-store" }),
+        fetch(`${videoProxyBase}/alerts?status=closed&limit=200`, { cache: "no-store" }).catch(() => null),
+        fetch(`${videoProxyBase}/alerts?status=resolved&limit=200`, { cache: "no-store" }).catch(() => null),
       ]);
 
-      const closedJson = closedRes.ok ? await readJsonSafely(closedRes) : null;
-      const resolvedJson = resolvedRes.ok ? await readJsonSafely(resolvedRes) : null;
-      const merged = dedupeByIdAndSort([
-        ...normalizeHistoryList(readAlertArray(closedJson)),
-        ...normalizeHistoryList(readAlertArray(resolvedJson)),
-      ]);
+      const closedJson = closedRes?.ok ? await readJsonSafely(closedRes).catch(() => null) : null;
+      const resolvedJson = resolvedRes?.ok ? await readJsonSafely(resolvedRes).catch(() => null) : null;
+      allClosed.push(...normalizeHistoryList(readAlertArray(closedJson)));
+      allClosed.push(...normalizeHistoryList(readAlertArray(resolvedJson)));
 
-      if (merged.length > 0) {
+      if (allClosed.length > 0) {
+        const merged = dedupeByIdAndSort(allClosed);
         setClosedHistoryAlerts((prev) => (areAlertListsEquivalent(prev, merged) ? prev : merged));
         return;
       }
 
+      // Fallback: GoHub history endpoint
       const historyRes = await fetch(`${videoProxyBase}/alerts/history?days=30&limit=200`, { cache: "no-store" });
       if (!historyRes.ok) {
         setClosedHistoryAlerts((prev) => (prev.length === 0 ? prev : []));
