@@ -258,7 +258,7 @@ export default function VideoAlertsDashboardTab({
   const [levelFilter, setLevelFilter] = useState<"all" | "critical" | "high" | "medium" | "low">(
     standaloneSeverity && standaloneSeverity !== "all" ? standaloneSeverity : "all"
   );
-  const [boardLevelFilter, setBoardLevelFilter] = useState<"all" | "critical" | "high" | "medium" | "low">(
+  const [boardLevelFilter, setBoardLevelFilter] = useState<"all" | "critical" | "high" | "medium" | "low" | null>(
     standaloneSeverity ?? "all"
   );
   const [sourceAlerts, setSourceAlerts] = useState<any[]>([]);
@@ -2479,11 +2479,13 @@ export default function VideoAlertsDashboardTab({
               isStatusCardActive(card.key) && "ring-2 ring-slate-300 bg-slate-50"
             )}
             onClick={() => {
-              setBoardLevelFilter("all");
-              setLevelFilter("all");
               if (card.key === "closed") {
+                setBoardLevelFilter(null);
+                setLevelFilter("all");
                 setActiveTab("history");
               } else {
+                setBoardLevelFilter("all");
+                setLevelFilter("all");
                 setActiveTab("all");
               }
             }}
