@@ -275,13 +275,10 @@ export default function LiveStreamTab({ selectedCostCenters = [] }: LiveStreamTa
               <div className={`shrink-0 rounded-lg p-2 text-white ${vehicle.online ? "bg-emerald-700" : "bg-slate-400"}`}>
                 <Video className="h-5 w-5" />
               </div>
-              <div className="min-w-0 flex-1">
+              <div className="min-w-0 flex-1 self-center">
                 <p className="break-words text-sm font-bold leading-tight text-slate-900">
                   {vehicle.fleetNumber} - {vehicle.registration}
                 </p>
-                {vehicle.deviceId && (
-                  <p className="truncate text-[11px] font-mono text-slate-500">{vehicle.deviceId}</p>
-                )}
               </div>
             </div>
             <Badge
