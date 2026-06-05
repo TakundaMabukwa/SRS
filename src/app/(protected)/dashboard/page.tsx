@@ -3057,10 +3057,9 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
       setAlertActionError("");
       setAlertActionSuccess("");
       try {
-        const actor =
-          decodeURIComponent(getCookieValue("email") || "") ||
-          decodeURIComponent(getCookieValue("name") || "") ||
-          "dashboard_user";
+        const supabase = createClient();
+        const { data: { session } } = await supabase.auth.getSession();
+        const actor = session?.user?.email || session?.user?.user_metadata?.email || "dashboard_user";
         const resolvedWindowVideos: Array<{ key: string; label: string; url: string }> = [];
         const closurePayloadBase =
           String(selectedAlert?.id || "").trim() === closingAlertId
@@ -6402,15 +6401,8 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
                     
                     try {
                       const supabase = createClient();
-                      
-                      // Get user email from cookies
-                      const getCookie = (name: string) => {
-                        const value = `; ${document.cookie}`;
-                        const parts = value.split(`; ${name}=`);
-                        if (parts.length === 2) return parts.pop()?.split(";").shift();
-                        return null;
-                      };
-                      const userEmail = decodeURIComponent(getCookie("email") || "unknown@user.com");
+                      const { data: { session } } = await supabase.auth.getSession();
+                      const userEmail = session?.user?.email || session?.user?.user_metadata?.email || "unknown@user.com";
                       
                       const closeNote = `Completed by: ${userEmail}\nReason: ${closeReason.trim()}`;
                       const existingNotes = currentTripForClose.statusnotes || currentTripForClose.status_notes || '';
