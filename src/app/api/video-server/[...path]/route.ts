@@ -1393,9 +1393,12 @@ export async function GET(
     return handleVehicleVideoAvailabilityCompat(request, pathArray, target.baseUrl)
   }
 
+  const epsStreamingBase = getEpsStreamingServerBaseUrl()
+  const isEpsStreamPath = path.startsWith('stream/') || path.startsWith('eps/')
+  const getTarget = isEpsStreamPath ? { name: 'epsStreaming', baseUrl: epsStreamingBase } : target
   const epsPath = firstSegment === 'eps' ? path.slice(4) : path
   const upstreamPath = (firstSegment === 'media' || firstSegment === 'captures') ? `/${path}` : (firstSegment === 'eps' ? `/api/${epsPath}` : `/api/${path}`)
-  const url = `${target.baseUrl}${upstreamPath}${searchParams ? `?${searchParams}` : ''}`
+  const url = `${getTarget.baseUrl}${upstreamPath}${searchParams ? `?${searchParams}` : ''}`
   const lowerPath = `/${path}`.toLowerCase()
   const isDirectMediaRequest =
     /\/file(?:$|\?)/i.test(lowerPath) ||

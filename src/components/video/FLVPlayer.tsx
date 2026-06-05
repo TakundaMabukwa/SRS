@@ -3,8 +3,6 @@
 import { useRef, useEffect, useState } from 'react';
 import flvjs from 'flv.js';
 
-const VIDEO_SERVER = process.env.NEXT_PUBLIC_EPS_STREAMING_SERVER || 'http://localhost:3002';
-
 interface FLVPlayerProps {
   streamUrl: string;
   channel: number;
@@ -60,7 +58,7 @@ export default function FLVPlayer({ streamUrl, channel, vehicleName, onStop }: F
 
       destroyPlayer();
 
-      const proxyUrl = `${VIDEO_SERVER}/api/stream/stream/proxy?url=${encodeURIComponent(streamUrl)}`;
+      const proxyUrl = `/api/video-server/stream/stream/proxy?url=${encodeURIComponent(streamUrl)}`;
 
       try {
         const player = flvjs.createPlayer({
