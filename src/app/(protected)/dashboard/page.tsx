@@ -132,316 +132,10 @@ const FinancialsPanel = dynamic(
   { ssr: false, loading: () => <div className="h-40 animate-pulse rounded-lg bg-slate-100" /> }
 );
 
-// Reports Content Component
-function ReportsContent() {
-  const yesterday = new Date();
-  yesterday.setDate(yesterday.getDate() - 1);
-  const [dateFrom, setDateFrom] = useState(yesterday.toISOString().split('T')[0]);
-  const [dateTo, setDateTo] = useState(yesterday.toISOString().split('T')[0]);
-  const [registrationFilter, setRegistrationFilter] = useState('');
-  const [vehicleReports, setVehicleReports] = useState<any[]>([]);
-  const [filteredReports, setFilteredReports] = useState<any[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [stats, setStats] = useState({ total: 0, high: 0, medium: 0, low: 0 });
 
-  // Auto-fetch on mount
-  useEffect(() => {
-    if (dateFrom && dateTo) {
-      fetchReports();
-    }
-  }, []);
 
-  // Filter reports when registration filter changes
-  useEffect(() => {
-    if (registrationFilter.trim()) {
-      const filtered = vehicleReports.filter(report => 
-        report.vehicle.toLowerCase().includes(registrationFilter.toLowerCase())
-      );
-      setFilteredReports(filtered);
-      updateStats(filtered);
-    } else {
-      setFilteredReports(vehicleReports);
-      updateStats(vehicleReports);
-    }
-  }, [registrationFilter, vehicleReports]);
 
-  const updateStats = (reports: any[]) => {
-    setStats({
-      total: reports.length,
-      high: reports.filter((r: any) => r.riskRating === 'High').length,
-      medium: reports.filter((r: any) => r.riskRating === 'Medium').length,
-      low: reports.filter((r: any) => r.riskRating === 'Low').length
-    });
-  };
 
-  const fetchReports = async () => {
-    setLoading(true);
-    try {
-      const params = new URLSearchParams();
-      params.append('dateFrom', dateFrom);
-      params.append('dateTo', dateTo);
-      
-      const res = await fetch(`/api/ncr/generate?${params}`);
-      const data = await res.json();
-      if (data.success) {
-        // Group NCRs by vehicle
-        const grouped = (data.ncrs || []).reduce((acc: any, ncr: any) => {
-          const vehicle = ncr.ncr_data.fleetNumber;
-          if (!acc[vehicle]) {
-            acc[vehicle] = {
-              vehicle,
-              driver: ncr.ncr_data.driverName,
-              violations: 0,
-              riskRating: ncr.ncr_data.riskRating,
-              ncr
-            };
-          }
-          acc[vehicle].violations += ncr.speeding_events?.length || 0;
-          return acc;
-        }, {});
-        const reports = Object.values(grouped);
-        setVehicleReports(reports);
-        setFilteredReports(reports);
-        updateStats(reports);
-      }
-    } catch (err) {
-      console.error(err);
-    }
-    setLoading(false);
-  };
-
-  const downloadNCR = async (ncr: any) => {
-    const printWindow = window.open('', '_blank');
-    if (!printWindow) return;
-
-    printWindow.document.write(`
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <title>NCR ${ncr.ncr_id}</title>
-          <script src="https://cdn.tailwindcss.com"></script>
-          <style>
-            @media print {
-              body { margin: 0; padding: 0; }
-              .no-print { display: none; }
-            }
-          </style>
-        </head>
-        <body>
-          <div id="root"></div>
-          <div class="no-print p-4 text-center">
-            <button onclick="window.print()" class="px-4 py-2 bg-blue-600 text-white rounded">Print / Save as PDF</button>
-          </div>
-        </body>
-      </html>
-    `);
-
-    printWindow.document.close();
-
-    setTimeout(() => {
-      const root = createRoot(printWindow.document.getElementById('root')!);
-      root.render(<NCRTemplate data={ncr.ncr_data} />);
-    }, 500);
-  };
-
-  return (
-    <div className="space-y-6">
-      {/* Header with Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <Card className="bg-gradient-to-br from-blue-500 to-blue-600 text-white">
-          <CardContent className="p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-blue-100 text-sm font-medium">Total Reports</p>
-                <h3 className="text-3xl font-bold mt-2">{stats.total}</h3>
-              </div>
-              <FileText className="w-12 h-12 text-blue-200 opacity-80" />
-            </div>
-          </CardContent>
-        </Card>
-        
-        <Card className="bg-gradient-to-br from-red-500 to-red-600 text-white">
-          <CardContent className="p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-red-100 text-sm font-medium">High Risk</p>
-                <h3 className="text-3xl font-bold mt-2">{stats.high}</h3>
-              </div>
-              <AlertTriangle className="w-12 h-12 text-red-200 opacity-80" />
-            </div>
-          </CardContent>
-        </Card>
-        
-        <Card className="bg-gradient-to-br from-yellow-500 to-yellow-600 text-white">
-          <CardContent className="p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-yellow-100 text-sm font-medium">Medium Risk</p>
-                <h3 className="text-3xl font-bold mt-2">{stats.medium}</h3>
-              </div>
-              <AlertTriangle className="w-12 h-12 text-yellow-200 opacity-80" />
-            </div>
-          </CardContent>
-        </Card>
-        
-        <Card className="bg-gradient-to-br from-green-500 to-green-600 text-white">
-          <CardContent className="p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-green-100 text-sm font-medium">Low Risk</p>
-                <h3 className="text-3xl font-bold mt-2">{stats.low}</h3>
-              </div>
-              <CheckCircle className="w-12 h-12 text-green-200 opacity-80" />
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Filters */}
-      <Card>
-        <CardContent className="p-6">
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-2">From Date</label>
-              <input 
-                type="date" 
-                value={dateFrom} 
-                onChange={(e) => setDateFrom(e.target.value)}
-                className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-2">To Date</label>
-              <input 
-                type="date" 
-                value={dateTo} 
-                onChange={(e) => setDateTo(e.target.value)}
-                className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-2">Fleet Number</label>
-              <input 
-                type="text" 
-                value={registrationFilter}
-                onChange={(e) => setRegistrationFilter(e.target.value)}
-                placeholder="Search by fleet number..."
-                className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              />
-            </div>
-            <div className="flex items-end">
-              <Button 
-                onClick={fetchReports} 
-                disabled={loading}
-                className="w-full px-6 py-2 bg-blue-600 hover:bg-blue-700"
-              >
-                {loading ? 'Searching...' : 'Search Reports'}
-              </Button>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Vehicle Reports Grid */}
-      <Card>
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <div>
-              <CardTitle>NCR Reports</CardTitle>
-              <CardDescription>
-                {dateFrom === dateTo 
-                  ? new Date(dateFrom).toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })
-                  : `${new Date(dateFrom).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - ${new Date(dateTo).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`
-                }
-                {registrationFilter && ` â€¢ Filtered by: ${registrationFilter}`}
-              </CardDescription>
-            </div>
-            {filteredReports.length > 0 && (
-              <Badge variant="outline" className="text-base px-4 py-2">
-                <Truck className="w-4 h-4 mr-2" />
-                {filteredReports.length} Vehicle{filteredReports.length !== 1 ? 's' : ''}
-              </Badge>
-            )}
-          </div>
-        </CardHeader>
-        <CardContent>
-
-          {loading ? (
-            <div className="text-center py-16">
-              <div className="inline-block w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mb-4"></div>
-              <p className="text-slate-600">Searching reports...</p>
-            </div>
-          ) : filteredReports.length === 0 ? (
-            <div className="text-center py-16">
-              <FileText className="w-16 h-16 text-slate-300 mx-auto mb-4" />
-              <h4 className="text-lg font-semibold text-slate-900 mb-2">
-                {registrationFilter ? 'No Matching Reports' : 'No Reports Found'}
-              </h4>
-              <p className="text-slate-500">
-                {registrationFilter 
-                  ? `No reports found for "${registrationFilter}" in the selected date range`
-                  : 'No NCR reports available for this date range'
-                }
-              </p>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {filteredReports.map((report, idx) => (
-                  <Card 
-                    key={idx} 
-                    className="cursor-pointer hover:shadow-lg transition-all border-2 hover:border-blue-400"
-                    onClick={() => downloadNCR(report.ncr)}
-                  >
-                    <CardContent className="p-6">
-                      <div className="flex items-start justify-between mb-4">
-                        <div className="flex items-center gap-3">
-                          <div className="w-12 h-12 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-xl flex items-center justify-center">
-                            <Truck className="w-6 h-6 text-white" />
-                          </div>
-                          <div>
-                            <h3 className="font-bold text-lg text-slate-900">{report.vehicle}</h3>
-                            <p className="text-sm text-slate-500">Fleet Vehicle</p>
-                          </div>
-                        </div>
-                        <Badge className={cn(
-                          'text-xs font-bold',
-                          report.riskRating === 'High' ? 'bg-red-100 text-red-800' :
-                          report.riskRating === 'Medium' ? 'bg-yellow-100 text-yellow-800' :
-                          'bg-green-100 text-green-800'
-                        )}>
-                          {report.riskRating || 'Low'}
-                        </Badge>
-                      </div>
-                      
-                      <div className="space-y-3">
-                        <div className="flex items-center justify-between py-2 border-t border-slate-100">
-                          <span className="text-sm text-slate-600">Driver</span>
-                          <span className="text-sm font-semibold text-slate-900">{report.driver}</span>
-                        </div>
-                        
-                        <div className="flex items-center justify-between py-2 border-t border-slate-100">
-                          <span className="text-sm text-slate-600">Violations</span>
-                          <div className="flex items-center gap-2">
-                            <AlertTriangle className="w-4 h-4 text-red-600" />
-                            <span className="text-sm font-bold text-red-900">{report.violations}</span>
-                          </div>
-                        </div>
-                      </div>
-                      
-                      <Button className="w-full mt-4 bg-blue-600 hover:bg-blue-700">
-                        <Download className="w-4 h-4 mr-2" />
-                        Download NCR
-                      </Button>
-                    </CardContent>
-                  </Card>
-                ))}
-              </div>
-            )}
-        </CardContent>
-      </Card>
-    </div>
-  );
-}
 
 // Global vehicle data cache to prevent redundant API calls
 const vehicleDataCache = {
@@ -2644,6 +2338,15 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
   const [selectedNcrForm, setSelectedNcrForm] = useState<'' | 'nrc-camera-covered'>('');
   const [showReportModal, setShowReportModal] = useState(false);
   const [selectedReportForm, setSelectedReportForm] = useState<'' | 'incident-report' | 'accident-report' | 'criminal-report' | 'dispatch-report'>('');
+  const [pendingDocuments, setPendingDocuments] = useState<Array<{
+    type: string;
+    timestamp: string;
+    filled_by: string;
+    link: string;
+    documentName: string;
+    documentType: string;
+    formType: string;
+  }>>([]);
   const [incidentReportModalOpen, setIncidentReportModalOpen] = useState(false);
   const [selectedTripForIncident, setSelectedTripForIncident] = useState<any>(null);
   const [timelinePlaybackByAlert, setTimelinePlaybackByAlert] = useState<Record<string, Array<{ key: string; label: string; url: string }>>>({});
@@ -3147,12 +2850,25 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
             { userId: actor, notes }
           );
         } else {
-          const documents = artifact ? [{
-            type: closureType === "ncr" ? "ncr" : "report",
-            timestamp: new Date().toISOString(),
-            filled_by: actor,
-            link: artifact.documentUrl || "",
-          }] : undefined;
+          const docsFromPending = pendingDocuments.map((d) => ({
+            type: d.type,
+            timestamp: d.timestamp,
+            filled_by: d.filled_by,
+            link: d.link,
+          }))
+          const documents = artifact
+            ? [
+                ...docsFromPending,
+                {
+                  type: closureType === "ncr" ? "ncr" : "report",
+                  timestamp: new Date().toISOString(),
+                  filled_by: actor,
+                  link: artifact.documentUrl || "",
+                },
+              ]
+            : docsFromPending.length > 0
+              ? docsFromPending
+              : undefined
 
           response = await postClosure(
             `/eps/alerts/${encodeURIComponent(closingAlertId)}/close`,
@@ -3200,6 +2916,7 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
         setAlertReason("");
         setSelectedNcrForm("");
         setSelectedReportForm("");
+        setPendingDocuments([]);
         setRefreshTrigger((prev) => prev + 1);
       } catch (error: any) {
         let message = error?.message || "Failed to close alert.";
@@ -4806,12 +4523,6 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
           >
             <TabsList className="flex w-fit items-center rounded-lg bg-white/90 backdrop-blur-sm p-1 shadow-lg">
               <TabsTrigger
-                value="routing"
-                className="px-6 py-2 text-sm font-medium rounded-md data-[state=active]:bg-white data-[state=active]:shadow-sm"
-              >
-                Trip Routing
-              </TabsTrigger>
-              <TabsTrigger
                 value="video-alerts"
                 className="px-6 py-2 text-sm font-medium rounded-md data-[state=active]:bg-white data-[state=active]:shadow-sm"
               >
@@ -4897,18 +4608,6 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
               >
                 Playback
               </TabsTrigger>
-              <TabsTrigger
-                value="routing"
-                className="px-6 py-2 text-sm font-medium rounded-md data-[state=active]:bg-white data-[state=active]:shadow-sm"
-              >
-                Trip Routing
-              </TabsTrigger>
-              <TabsTrigger
-                value="reports"
-                className="px-6 py-2 text-sm font-medium rounded-md data-[state=active]:bg-white data-[state=active]:shadow-sm"
-              >
-                Reports
-              </TabsTrigger>
             </TabsList>
           </Tabs>
         </div>
@@ -4952,54 +4651,6 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
         )}
 
         {/* Conditionally render the main views */}
-        {activeTab === "routing" && (
-          <div className="space-y-4">
-            <div className="mb-4 flex justify-between items-center">
-              <div>
-                <h2 className="text-3xl font-bold tracking-tight">Trip Management</h2>
-                <p className="text-muted-foreground">Monitor all trips with progress tracking and waypoints</p>
-              </div>
-            </div>
-            <RoutingSection 
-              userRole={userRole}
-              isVisible={activeTab === "routing"}
-              handleViewMap={handleViewMap}
-              setCurrentTripForNote={setCurrentTripForNote}
-              setNoteText={setNoteText}
-              setNoteOpen={setNoteOpen}
-              setAvailableDrivers={setAvailableDrivers}
-              setCurrentTripForChange={setCurrentTripForChange}
-              setChangeDriverOpen={setChangeDriverOpen}
-              refreshTrigger={refreshTrigger}
-              setRefreshTrigger={setRefreshTrigger}
-              setPickupTimeOpen={setPickupTimeOpen}
-              setDropoffTimeOpen={setDropoffTimeOpen}
-              setCurrentTripForTime={setCurrentTripForTime}
-              setTimeType={setTimeType}
-              setSelectedTime={setSelectedTime}
-              currentUnauthorizedTrip={currentUnauthorizedTrip}
-              setCurrentUnauthorizedTrip={setCurrentUnauthorizedTrip}
-              setUnauthorizedStopModalOpen={setUnauthorizedStopModalOpen}
-              loadingPhotos={loadingPhotos}
-              setLoadingPhotos={setLoadingPhotos}
-              setCurrentTripPhotos={setCurrentTripPhotos}
-              setPhotosModalOpen={setPhotosModalOpen}
-              setCurrentTripAlerts={setCurrentTripAlerts}
-              setAlertsModalOpen={setAlertsModalOpen}
-              setCurrentTripForClose={setCurrentTripForClose}
-              setCloseReason={setCloseReason}
-              setCloseTripOpen={setCloseTripOpen}
-              setCurrentTripForEdit={setCurrentTripForEdit}
-              setEditTripOpen={setEditTripOpen}
-              setCurrentTripForApproval={setCurrentTripForApproval}
-              setApprovalModalOpen={setApprovalModalOpen}
-              onOpenAlertDetail={openAlertDetailRealtime}
-              setIncidentReportModalOpen={setIncidentReportModalOpen}
-              setSelectedTripForIncident={setSelectedTripForIncident}
-            />
-          </div>
-        )}
-
         {activeTab === "video-alerts" && (
           <VideoAlertsDashboardTab
             onOpenAlertDetail={openAlertDetailRealtime}
@@ -5014,18 +4665,6 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
 
         {activeTab === "playback" && (
           <PlaybackDashboardTab selectedCostCenters={selectedCostCenters} />
-        )}
-
-        {activeTab === "reports" && (
-          <div className="space-y-5">
-            <div className="flex items-center justify-between">
-              <div>
-                <h2 className="text-2xl font-bold text-slate-900">NCR Reports</h2>
-                <p className="text-sm text-slate-600 mt-1">Non-Conformance Reports for speeding violations</p>
-              </div>
-            </div>
-            <ReportsContent />
-          </div>
         )}
 
         <div style={{ display: activeTab === "live-stream" ? "" : "none" }} className="w-full">
@@ -6582,6 +6221,7 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
         ncrFormOptions={ncrFormOptions}
         reportFormOptions={reportFormOptions}
         alertActionLoading={alertActionLoading}
+        pendingDocuments={pendingDocuments}
         onClose={() => {
           setAlertDetailModalOpen(false);
           setAlertRealtimeLoading(false);
@@ -6593,6 +6233,7 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
           setAlertNotesDraft("");
           setAlertActionError("");
           setAlertActionSuccess("");
+          setPendingDocuments([]);
           setSelectedAlert(null);
         }}
         onFalseAlert={async () => {
@@ -6631,7 +6272,19 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
           onClose={() => setShowNCRModal(false)}
           onSaved={async (artifact) => {
             setShowNCRModal(false)
-            await closeSelectedAlert("ncr", artifact)
+            const supabase = createClient()
+            const { data: { session } } = await supabase.auth.getSession()
+            const actor = session?.user?.email || session?.user?.user_metadata?.email || "dashboard_user"
+            setPendingDocuments(prev => [...prev, {
+              type: "ncr",
+              timestamp: new Date().toISOString(),
+              filled_by: actor,
+              link: artifact.documentUrl || "",
+              documentName: artifact.documentName,
+              documentType: artifact.documentType,
+              formType: "nrc-camera-covered",
+            }])
+            toast.success("NCR saved. Alert is still open — you can fill more forms or resolve when ready.")
           }}
           driverInfo={selectedAlertDriverInfo}
           alertDetails={selectedAlertReportDetails}
@@ -6643,7 +6296,19 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
           onClose={() => setShowReportModal(false)}
           onSaved={async (artifact) => {
             setShowReportModal(false)
-            await closeSelectedAlert("report", artifact)
+            const supabase = createClient()
+            const { data: { session } } = await supabase.auth.getSession()
+            const actor = session?.user?.email || session?.user?.user_metadata?.email || "dashboard_user"
+            setPendingDocuments(prev => [...prev, {
+              type: "report",
+              timestamp: new Date().toISOString(),
+              filled_by: actor,
+              link: artifact.documentUrl || "",
+              documentName: artifact.documentName,
+              documentType: artifact.documentType,
+              formType: "incident-report",
+            }])
+            toast.success("Report saved. Alert is still open — you can fill more forms or resolve when ready.")
           }}
           driverInfo={selectedAlertDriverInfo}
           alertDetails={selectedAlertReportDetails}
@@ -6655,7 +6320,19 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
           onClose={() => setShowReportModal(false)}
           onSaved={async (artifact) => {
             setShowReportModal(false)
-            await closeSelectedAlert("report", artifact)
+            const supabase = createClient()
+            const { data: { session } } = await supabase.auth.getSession()
+            const actor = session?.user?.email || session?.user?.user_metadata?.email || "dashboard_user"
+            setPendingDocuments(prev => [...prev, {
+              type: "report",
+              timestamp: new Date().toISOString(),
+              filled_by: actor,
+              link: artifact.documentUrl || "",
+              documentName: artifact.documentName,
+              documentType: artifact.documentType,
+              formType: "accident-report",
+            }])
+            toast.success("Report saved. Alert is still open — you can fill more forms or resolve when ready.")
           }}
           driverInfo={selectedAlertDriverInfo}
           alertDetails={selectedAlertReportDetails}
@@ -6667,7 +6344,19 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
           onClose={() => setShowReportModal(false)}
           onSaved={async (artifact) => {
             setShowReportModal(false)
-            await closeSelectedAlert("report", artifact)
+            const supabase = createClient()
+            const { data: { session } } = await supabase.auth.getSession()
+            const actor = session?.user?.email || session?.user?.user_metadata?.email || "dashboard_user"
+            setPendingDocuments(prev => [...prev, {
+              type: "report",
+              timestamp: new Date().toISOString(),
+              filled_by: actor,
+              link: artifact.documentUrl || "",
+              documentName: artifact.documentName,
+              documentType: artifact.documentType,
+              formType: "criminal-report",
+            }])
+            toast.success("Report saved. Alert is still open — you can fill more forms or resolve when ready.")
           }}
           driverInfo={selectedAlertDriverInfo}
           alertDetails={selectedAlertReportDetails}
@@ -6679,7 +6368,19 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
           onClose={() => setShowReportModal(false)}
           onSaved={async (artifact) => {
             setShowReportModal(false)
-            await closeSelectedAlert("report", artifact)
+            const supabase = createClient()
+            const { data: { session } } = await supabase.auth.getSession()
+            const actor = session?.user?.email || session?.user?.user_metadata?.email || "dashboard_user"
+            setPendingDocuments(prev => [...prev, {
+              type: "report",
+              timestamp: new Date().toISOString(),
+              filled_by: actor,
+              link: artifact.documentUrl || "",
+              documentName: artifact.documentName,
+              documentType: artifact.documentType,
+              formType: "dispatch-report",
+            }])
+            toast.success("Report saved. Alert is still open — you can fill more forms or resolve when ready.")
           }}
           driverInfo={selectedAlertDriverInfo}
           alertDetails={selectedAlertReportDetails}

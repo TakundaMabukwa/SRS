@@ -82,8 +82,6 @@ export interface SavedAlertArtifact {
   documentName: string
   documentType: string
   storagePath?: string
-  bundleUrl?: string
-  bundlePath?: string
   closurePayload: Record<string, any>
 }
 
@@ -350,67 +348,20 @@ export async function saveAlertArtifactBundle({
     ...extraPayload,
   })
 
-  let bundleUrl = ''
-  let bundlePath = ''
-  try {
-    const bundleName = `${storagePrefix}/${safeBaseName}.json`
-    const bundleBlob = new Blob([JSON.stringify(closurePayload, null, 2)], {
-      type: 'application/json',
-    })
-    const { error: bundleError } = await supabase.storage
-      .from(storageBucket)
-      .upload(bundleName, bundleBlob, {
-        contentType: 'application/json',
-        upsert: true,
-      })
-    if (!bundleError) {
-      bundlePath = bundleName
-      const { data: bundlePublicData } = supabase.storage.from(storageBucket).getPublicUrl(bundleName)
-      bundleUrl = bundlePublicData?.publicUrl || ''
-      closurePayload.bundleUrl = bundleUrl
-    }
-  } catch (error) {
-    console.warn('Failed to save alert artifact bundle:', error)
-  }
-
-  const richInsert = {
+  // Index in reports table (fire-and-forget, no blocking)
+  supabase.from('reports').insert({
     vehicle_registration: driverInfo.registration || driverInfo.fleetNumber,
     driver_name: driverInfo.name,
     priority,
     report_type: reportType,
     document_url: documentUrl,
-  }
-
-  try {
-    const { error: richInsertError } = await supabase.from('reports').insert(richInsert)
-    if (richInsertError) {
-      const { error: fallbackInsertError } = await supabase.from('reports').insert({
-        url: documentUrl,
-      })
-      if (fallbackInsertError) {
-        console.warn('Failed to index saved report in reports table:', {
-          richInsertError,
-          fallbackInsertError,
-          documentUrl,
-          reportType,
-        })
-      }
-    }
-  } catch (error) {
-    console.warn('Unexpected reports table insert failure:', {
-      error,
-      documentUrl,
-      reportType,
-    })
-  }
+  }).then().catch(() => {})
 
   return {
     documentUrl,
     documentName: originalFileName,
     documentType: reportType,
     storagePath: storageFileName,
-    bundleUrl,
-    bundlePath,
     closurePayload,
   }
 }
@@ -551,33 +502,9 @@ function inlineElementStyles(element: HTMLElement) {
   })
 }
 
-async function resolveCrossOriginImages(element: HTMLElement) {
-  const imgs = element.querySelectorAll<HTMLImageElement>('img[src]')
-  await Promise.all(
-    Array.from(imgs).map(async (img) => {
-      const src = img.getAttribute('src') || ''
-      if (!src || src.startsWith('data:') || src.startsWith('blob:')) return
-      try {
-        const res = await fetch(src, { mode: 'cors', signal: AbortSignal.timeout(5000) })
-        if (!res.ok) return
-        const blob = await res.blob()
-        const dataUrl = await new Promise<string>((resolve, reject) => {
-          const reader = new FileReader()
-          reader.onload = () => resolve(reader.result as string)
-          reader.onerror = reject
-          reader.readAsDataURL(blob)
-        })
-        img.setAttribute('src', dataUrl)
-      } catch {
-        /* leave original src for html2canvas to handle via useCORS */
-      }
-    })
-  )
-}
-
 export function getSafeHtml2CanvasOptions(element: HTMLElement) {
   return {
-    scale: 2,
+    scale: 1,
     useCORS: true,
     allowTaint: false,
     logging: false,
@@ -590,7 +517,6 @@ export function getSafeHtml2CanvasOptions(element: HTMLElement) {
       injectDocumentStyles(document, clonedDoc)
       inlineElementStyles(clonedElement)
       sanitizeOklchStyles(clonedDoc)
-      await resolveCrossOriginImages(clonedElement)
     },
   }
 }

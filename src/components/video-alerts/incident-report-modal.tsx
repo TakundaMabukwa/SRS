@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import Image from 'next/image'
 import { Button } from '@/components/ui/button'
-import { Printer, X } from 'lucide-react'
+import { Loader2, Printer, X } from 'lucide-react'
 import EvidenceAnnexure from '@/components/video-alerts/evidence-annexure'
 import {
   ReportAlertDetails,
@@ -113,7 +113,7 @@ export default function IncidentReportModal({ isOpen, onClose, onSaved, driverIn
         <div className="border-b border-blue-900 bg-gradient-to-r from-blue-950 via-blue-900 to-sky-700 px-4 py-3 text-white flex items-center justify-between">
           <h2 className="text-base font-semibold">Incident Report</h2>
           <div className="flex gap-2">
-            <Button size="sm" onClick={handleSave} disabled={saving}>{saving ? 'Saving...' : 'Save Report'}</Button>
+            <Button size="sm" onClick={handleSave} disabled={saving}>{saving ? <><Loader2 className="w-4 h-4 mr-2 animate-spin inline" />Saving...</> : 'Save Report'}</Button>
             <Button size="sm" variant="outline" onClick={handlePrint}><Printer className="w-4 h-4 mr-2" />Print</Button>
             <Button size="sm" variant="ghost" onClick={onClose}><X className="w-4 h-4" /></Button>
           </div>

@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { ArrowLeft, AlertTriangle, Video, Download, XCircle, CheckCircle, X } from "lucide-react";
+import { ArrowLeft, AlertTriangle, Video, Download, XCircle, CheckCircle, X, FileText } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toSAST } from "@/lib/utils/date-formatter";
 import { UniversalVideoPlayer } from "@/components/dashboard/universal-video-player";
@@ -33,6 +33,15 @@ interface AlertDetailModalProps {
   ncrFormOptions: readonly { value: string; label: string }[];
   reportFormOptions: readonly { value: string; label: string }[];
   alertActionLoading: boolean;
+  pendingDocuments?: Array<{
+    type: string;
+    timestamp: string;
+    filled_by: string;
+    link: string;
+    documentName: string;
+    documentType: string;
+    formType: string;
+  }>;
   onClose: () => void;
   onFalseAlert: () => Promise<void>;
   onResolve: () => Promise<void>;
@@ -147,6 +156,7 @@ export function AlertDetailModal({
   ncrFormOptions,
   reportFormOptions,
   alertActionLoading,
+  pendingDocuments,
   onClose,
   onFalseAlert,
   onResolve,
@@ -469,9 +479,10 @@ export function AlertDetailModal({
 
               <div>
                 <select
-                  className="mb-2 h-7 w-full rounded-md border border-white/20 bg-white/10 px-2 text-xs text-white outline-none focus:border-white/40"
+                  className="mb-2 h-7 w-full rounded-md border border-white/20 bg-white/10 px-2 text-xs text-white outline-none focus:border-white/40 disabled:opacity-50"
                   value={alertReason}
                   onChange={(e) => onAlertReasonChange(e.target.value)}
+                  disabled={selectedAlert?.resolved}
                 >
                   <option value="" className="text-slate-900">SELECT REASON</option>
                   {alertReasonOptions.map((reason) => (
@@ -531,7 +542,7 @@ export function AlertDetailModal({
                     </select>
                   </div>
                 ) : (
-                  <div className="mb-2 space-y-0.5">
+                  <div className="mb-2 space-y-1">
                     <Badge className="border border-emerald-300 bg-emerald-100 text-emerald-800">Resolved</Badge>
                     {selectedAlert?.resolved_by ? (
                       <p className="text-[11px] text-slate-400">
@@ -539,6 +550,28 @@ export function AlertDetailModal({
                         {selectedAlert?.resolved_at ? ` at ${new Date(selectedAlert.resolved_at).toLocaleString()}` : ""}
                       </p>
                     ) : null}
+                    {(() => {
+                      const closedDocs = Array.isArray(selectedAlert?.documents) ? selectedAlert.documents : [];
+                      return closedDocs.length > 0 ? (
+                        <div className="mt-2 space-y-1">
+                          <p className="text-[11px] font-medium text-slate-300">Filed documents:</p>
+                          {closedDocs.map((doc: any, idx: number) => (
+                            <div key={idx} className="flex items-center gap-2 text-[11px] text-slate-400">
+                              <FileText className="w-3 h-3 shrink-0" />
+                              <span className="truncate">{doc.documentName || doc.documentType || doc.type || "Document"}</span>
+                              {doc.link ? (
+                                <button
+                                  className="shrink-0 text-cyan-400 hover:text-cyan-300 underline"
+                                  onClick={() => window.open(doc.link, "_blank")}
+                                >
+                                  Open
+                                </button>
+                              ) : null}
+                            </div>
+                          ))}
+                        </div>
+                      ) : null;
+                    })()}
                   </div>
                 )}
                 <div>
@@ -546,11 +579,13 @@ export function AlertDetailModal({
                     Additional comments
                   </label>
                   <textarea
-                    className="min-h-[58px] w-full rounded-md border border-white/20 bg-white/10 px-2 py-1.5 text-xs text-white outline-none placeholder:text-slate-300/80 focus:border-white/40"
+                    className="min-h-[58px] w-full rounded-md border border-white/20 bg-white/10 px-2 py-1.5 text-xs text-white outline-none placeholder:text-slate-300/80 focus:border-white/40 disabled:opacity-50"
                     value={alertNotesDraft}
                     onChange={(e) => onAlertNotesDraftChange(e.target.value)}
                     placeholder="Add extra context for this action (stored with alert resolution)"
                     maxLength={1200}
+                    disabled={selectedAlert?.resolved}
+                    readOnly={selectedAlert?.resolved}
                   />
                 </div>
               </div>
@@ -567,6 +602,7 @@ export function AlertDetailModal({
                   <TabsTrigger value="screenshots">Screenshots</TabsTrigger>
                   <TabsTrigger value="videos">Event Video</TabsTrigger>
                   <TabsTrigger value="timeline">Timeline</TabsTrigger>
+                  <TabsTrigger value="documents">Documents</TabsTrigger>
                 </TabsList>
 
                 {/* Screenshots Tab */}
@@ -794,6 +830,73 @@ export function AlertDetailModal({
                         No resolved history available for this vehicle yet
                       </div>
                     )}
+                  </Card>
+                </TabsContent>
+
+                {/* Documents Tab */}
+                <TabsContent value="documents" className="mt-4">
+                  <Card className="p-4 border-slate-200 bg-white shadow-sm">
+                    <h3 className="text-lg font-semibold text-slate-900 mb-4">
+                      {selectedAlert?.resolved ? "Filed Documents" : "Saved Documents"}
+                    </h3>
+                    {(() => {
+                      const docs = selectedAlert?.resolved
+                        ? (Array.isArray(selectedAlert?.documents) ? selectedAlert.documents : [])
+                        : (pendingDocuments || []);
+                      return docs.length > 0 ? (
+                        <div className="space-y-3">
+                          {docs.map((doc: any, idx: number) => (
+                            <Card key={idx} className="border-slate-200 bg-slate-50 p-3">
+                              <div className="flex items-start justify-between gap-3">
+                                <div className="flex items-center gap-2 min-w-0">
+                                  <FileText className="w-4 h-4 shrink-0 text-slate-400" />
+                                  <div className="min-w-0">
+                                    <p className="font-medium text-slate-900 text-sm truncate">
+                                      {doc.documentName || doc.documentType || doc.type || "Document"}
+                                    </p>
+                                    <p className="text-xs text-slate-500">
+                                      {doc.type === "ncr" ? "NCR" : "Report"} &middot; {doc.formType || doc.type || "N/A"}
+                                    </p>
+                                  </div>
+                                </div>
+                                <Badge variant="outline" className={cn(
+                                  "shrink-0 text-[10px]",
+                                  doc.type === "ncr"
+                                    ? "border-amber-200 bg-amber-50 text-amber-700"
+                                    : "border-blue-200 bg-blue-50 text-blue-700"
+                                )}>
+                                  {doc.type === "ncr" ? "NCR" : "Report"}
+                                </Badge>
+                              </div>
+                              <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
+                                <span>Filed by: {doc.filled_by || "Unknown"}</span>
+                                <span>&middot;</span>
+                                <span>{doc.timestamp ? new Date(doc.timestamp).toLocaleString() : "Unknown time"}</span>
+                              </div>
+                              {doc.link ? (
+                                <div className="mt-2">
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="h-7 border-cyan-300 bg-white text-xs text-cyan-700 hover:bg-cyan-50"
+                                    onClick={() => window.open(doc.link, "_blank")}
+                                  >
+                                    <Download className="w-3.5 h-3.5 mr-1.5" />
+                                    View Document
+                                  </Button>
+                                </div>
+                              ) : null}
+                            </Card>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="text-center py-12 text-slate-500">
+                          {selectedAlert?.resolved
+                            ? "No documents were filed for this alert."
+                            : "No documents saved yet. Fill an NCR or report to see it here."}
+                        </div>
+                      );
+                    })()}
                   </Card>
                 </TabsContent>
               </Tabs>

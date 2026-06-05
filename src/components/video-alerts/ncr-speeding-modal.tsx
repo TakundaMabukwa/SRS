@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import Image from 'next/image'
 import { Button } from '@/components/ui/button'
-import { Printer, X } from 'lucide-react'
+import { Loader2, Printer, X } from 'lucide-react'
 import EvidenceAnnexure from '@/components/video-alerts/evidence-annexure'
 import {
   buildAlertEventSummary,
@@ -153,7 +153,7 @@ export default function NCRSpeedingModal({ isOpen, onClose, onSaved, driverInfo,
         <div className="flex items-center justify-between p-4 border-b">
           <h2 className="text-xl font-bold">ncr-speeding</h2>
           <div className="flex gap-2">
-            <Button size="sm" onClick={handleSave} disabled={saving}>{saving ? 'Saving...' : 'Save Report'}</Button>
+            <Button size="sm" onClick={handleSave} disabled={saving}>{saving ? <><Loader2 className="w-4 h-4 mr-2 animate-spin inline" />Saving...</> : 'Save Report'}</Button>
             <Button size="sm" variant="outline" onClick={handlePrint}><Printer className="w-4 h-4 mr-2" />Print</Button>
             <Button size="sm" variant="ghost" onClick={onClose}><X className="w-4 h-4" /></Button>
           </div>

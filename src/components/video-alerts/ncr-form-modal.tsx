@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import Image from 'next/image'
 import { Button } from '@/components/ui/button'
-import { Printer, X } from 'lucide-react'
+import { Loader2, Printer, X } from 'lucide-react'
 import { normalizeReportScreenshots, renderElementToPdfBlob, resolveReportLocationText, SavedAlertArtifact, saveAlertArtifactBundle } from '@/components/video-alerts/report-support'
 
 interface AlertDetails {
@@ -120,7 +120,7 @@ export default function NCRFormModal({ isOpen, onClose, onSaved, driverInfo, ale
           <h2 className="text-xl font-bold">NCR Form - {driverInfo.name}</h2>
           <div className="flex gap-2">
             <Button size="sm" variant="default" onClick={handleSave} disabled={saving}>
-              {saving ? 'Saving...' : 'Save Report'}
+              {saving ? <><Loader2 className="w-4 h-4 mr-2 animate-spin inline" />Saving...</> : 'Save Report'}
             </Button>
             <Button size="sm" variant="outline" onClick={handlePrint}>
               <Printer className="w-4 h-4 mr-2" />
