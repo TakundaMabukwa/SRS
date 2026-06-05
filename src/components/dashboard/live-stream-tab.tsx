@@ -91,6 +91,7 @@ export default function LiveStreamTab({ selectedCostCenters = [] }: LiveStreamTa
   const [pinnedFeed, setPinnedFeed] = useState<PinnedFeed | null>(null);
   const [pipPosition, setPipPosition] = useState({ x: 24, y: 96 });
   const [isDraggingPip, setIsDraggingPip] = useState(false);
+  const [viewportW, setViewportW] = useState(1200);
   const pipDragOffsetRef = useRef({ x: 0, y: 0 });
   const dbVehiclesRef = useRef<DbVehicle[] | null>(null);
 
@@ -163,6 +164,12 @@ export default function LiveStreamTab({ selectedCostCenters = [] }: LiveStreamTa
   }, [fetchDbOnce]);
 
   useEffect(() => { loadVehicles(); }, [loadVehicles]);
+  useEffect(() => {
+    const update = () => setViewportW(window.innerWidth);
+    update();
+    window.addEventListener('resize', update);
+    return () => window.removeEventListener('resize', update);
+  }, []);
 
   const selectedCostCenterSet = useMemo(
     () => new Set(selectedCostCenters.map((v) => v.trim().toLowerCase()).filter(Boolean)),
@@ -257,6 +264,9 @@ export default function LiveStreamTab({ selectedCostCenters = [] }: LiveStreamTa
     const hasAttempted = channels !== undefined;
     const isLoading = streamLoading.has(vehicle.deviceId || "");
     const isDisabled = !vehicle.deviceId;
+    const isWide = viewportW >= 1024;
+    const compact = isWide && gridColumns > 4;
+    const minimal = isWide && gridColumns > 6;
 
     return (
       <Card
@@ -269,95 +279,124 @@ export default function LiveStreamTab({ selectedCostCenters = [] }: LiveStreamTa
               : "border-slate-200 bg-slate-50 opacity-75"
         }`}
       >
-        <div className="p-3">
-          <div className="flex items-start justify-between gap-2">
-            <div className="flex items-start gap-2 min-w-0 flex-1">
-              <div className={`shrink-0 rounded-lg p-2 text-white ${vehicle.online ? "bg-emerald-700" : "bg-slate-400"}`}>
-                <Video className="h-5 w-5" />
+        <div className={minimal ? "p-1.5" : "p-3"}>
+          <div className="flex items-center justify-between gap-1.5">
+            <div className={`flex items-center gap-1.5 min-w-0 flex-1 ${minimal ? "" : "gap-2"}`}>
+              <div className={`shrink-0 rounded-lg text-white ${minimal ? "p-1" : "p-2"} ${vehicle.online ? "bg-emerald-700" : "bg-slate-400"}`}>
+                <Video className={minimal ? "h-3.5 w-3.5" : "h-5 w-5"} />
               </div>
-              <div className="min-w-0 flex-1 self-center">
-                <p className="break-words text-sm font-bold leading-tight text-slate-900">
+              <div className="min-w-0 flex-1">
+                <p className={`break-words font-bold leading-tight text-slate-900 ${minimal ? "text-[10px]" : "text-sm"}`}>
                   {vehicle.fleetNumber} - {vehicle.registration}
                 </p>
               </div>
             </div>
-            <Badge
-              variant={vehicle.online ? "default" : "outline"}
-              className={`shrink-0 whitespace-nowrap ${vehicle.online ? "bg-emerald-600" : "border-slate-300 text-slate-500"}`}
-            >
-              {vehicle.online ? (
-                <><Wifi className="mr-1 h-3 w-3" /> Online</>
-              ) : (
-                <><WifiOff className="mr-1 h-3 w-3" /> Offline</>
-              )}
-            </Badge>
-          </div>
-          <div className="mt-3 flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2 truncate text-xs text-slate-600">
-              <Activity className="h-3.5 w-3.5 shrink-0" />
-              <span className="truncate">{selected && channelCount > 0
-                ? `${channelCount} channel(s) streaming`
-                : hasAttempted && channelCount === 0
-                  ? "No streams available"
-                  : isLoading
-                    ? "Starting stream..."
-                    : isDisabled
-                      ? "No EPS device"
-                      : "Tap to stream"}</span>
-            </div>
-            {selected ? (
-              <Button
-                size="sm"
-                variant="destructive"
-                className="h-7 text-xs"
-                onClick={() => stopStream(vehicle.deviceId!)}
-              >
-                <StopCircle className="mr-1 h-3.5 w-3.5" />
-                Stop
-              </Button>
-            ) : (
-              <Button
-                size="sm"
+            {!minimal && (
+              <Badge
                 variant={vehicle.online ? "default" : "outline"}
-                disabled={isDisabled || isLoading}
-                className={`h-7 text-xs ${
-                  vehicle.online
-                    ? "bg-emerald-700 hover:bg-emerald-800"
-                    : "border-slate-300 text-slate-500"
-                }`}
-                onClick={() => vehicle.deviceId && startStream(vehicle.deviceId)}
+                className={`shrink-0 whitespace-nowrap ${vehicle.online ? "bg-emerald-600" : "border-slate-300 text-slate-500"}`}
               >
-                {isLoading ? (
-                  <><Loader2 className="mr-1 h-3 w-3 animate-spin" /> Starting</>
-                ) : selected ? (
-                  "Stop"
+                {vehicle.online ? (
+                  <><Wifi className="mr-1 h-3 w-3" /> Online</>
                 ) : (
-                  <><Play className="mr-1 h-3 w-3" /> Stream</>
+                  <><WifiOff className="mr-1 h-3 w-3" /> Offline</>
                 )}
-              </Button>
+              </Badge>
+            )}
+            {minimal && (
+              <div className={`shrink-0 h-2 w-2 rounded-full ${vehicle.online ? "bg-emerald-500" : "bg-slate-400"}`} />
             )}
           </div>
-        </div>
-        {selected && channels && channelCount > 0 && (
-          <div className="border-t border-slate-200 bg-slate-100 px-3 py-2">
-            <div className="flex flex-wrap gap-1.5">
-              {channels.filter(c => c.success).map((ch) => (
-                <Badge key={ch.channelId} variant="secondary" className="text-[10px]">
-                  CH{ch.channelId} active
-                </Badge>
-              ))}
-              {channels.filter(c => !c.success).map((ch) => (
-                <Badge key={ch.channelId} variant="outline" className="text-[10px] text-slate-400">
-                  CH{ch.channelId} offline
-                </Badge>
-              ))}
+          {!compact && (
+            <div className="mt-2.5 flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 truncate text-xs text-slate-600">
+                <Activity className="h-3.5 w-3.5 shrink-0" />
+                <span className="truncate">{selected && channelCount > 0
+                  ? `${channelCount} channel(s) streaming`
+                  : hasAttempted && channelCount === 0
+                    ? "No streams available"
+                    : isLoading
+                      ? "Starting stream..."
+                      : isDisabled
+                        ? "No EPS device"
+                        : "Tap to stream"}</span>
+              </div>
+              {selected ? (
+                <Button
+                  size="sm"
+                  variant="destructive"
+                  className="h-7 text-xs shrink-0"
+                  onClick={() => stopStream(vehicle.deviceId!)}
+                >
+                  <StopCircle className="mr-1 h-3.5 w-3.5" />
+                  Stop
+                </Button>
+              ) : (
+                <Button
+                  size="sm"
+                  variant={vehicle.online ? "default" : "outline"}
+                  disabled={isDisabled || isLoading}
+                  className={`h-7 text-xs shrink-0 ${
+                    vehicle.online
+                      ? "bg-emerald-700 hover:bg-emerald-800"
+                      : "border-slate-300 text-slate-500"
+                  }`}
+                  onClick={() => vehicle.deviceId && startStream(vehicle.deviceId)}
+                >
+                  {isLoading ? (
+                    <><Loader2 className="mr-1 h-3 w-3 animate-spin" /> Starting</>
+                  ) : selected ? (
+                    "Stop"
+                  ) : (
+                    <><Play className="mr-1 h-3 w-3" /> Stream</>
+                  )}
+                </Button>
+              )}
             </div>
-          </div>
-        )}
+          )}
+          {compact && (
+            <div className="mt-1.5">
+              {selected ? (
+                <div className="flex flex-wrap gap-1">
+                  {channels?.filter(c => c.success).map((ch) => (
+                    <Badge key={ch.channelId} variant="secondary" className="text-[9px] px-1.5 py-0">
+                      CH{ch.channelId}
+                    </Badge>
+                  ))}
+                  <Button
+                    size="sm"
+                    variant="destructive"
+                    className="h-5 text-[9px] px-1.5 ml-auto"
+                    onClick={() => stopStream(vehicle.deviceId!)}
+                  >
+                    Stop
+                  </Button>
+                </div>
+              ) : (
+                <Button
+                  size="sm"
+                  variant={vehicle.online ? "default" : "outline"}
+                  disabled={isDisabled || isLoading}
+                  className={`h-6 text-[10px] w-full ${
+                    vehicle.online
+                      ? "bg-emerald-700 hover:bg-emerald-800"
+                      : "border-slate-300 text-slate-500"
+                  }`}
+                  onClick={() => vehicle.deviceId && startStream(vehicle.deviceId)}
+                >
+                  {isLoading ? (
+                    <><Loader2 className="mr-1 h-3 w-3 animate-spin" /> Starting</>
+                  ) : (
+                    <><Play className="mr-1 h-3 w-3" /> Stream</>
+                  )}
+                </Button>
+              )}
+            </div>
+          )}
+        </div>
       </Card>
     );
   };
-
   const renderVehicleTableSection = (title: string, sectionVehicles: typeof filteredVehicles) => {
     if (sectionVehicles.length === 0) return null;
     return (
@@ -420,29 +459,18 @@ export default function LiveStreamTab({ selectedCostCenters = [] }: LiveStreamTa
     );
   };
 
-  const gridClassName = (() => {
-    const cols = Math.min(streamEntries.length, gridColumns);
-    const base = "grid grid-cols-1 gap-4";
-    if (cols >= 2) return `${base} md:grid-cols-2`;
-    if (cols >= 3) return `${base} md:grid-cols-2 xl:grid-cols-3`;
-    if (cols >= 4) return `${base} md:grid-cols-2 xl:grid-cols-4`;
-    if (cols >= 5) return `${base} md:grid-cols-2 xl:grid-cols-5`;
-    return base;
-  })();
+  const streamGridStyle = useMemo(() => {
+    const gap = 16;
+    const minCardWidth = streamEntries.length <= 2 ? 400 : Math.max(280, Math.floor(viewportW / Math.min(streamEntries.length, gridColumns)));
+    return { gridTemplateColumns: `repeat(auto-fill, minmax(${minCardWidth}px, 1fr))`, gap: `${gap}px` } as React.CSSProperties;
+  }, [streamEntries.length, gridColumns, viewportW]);
 
-  const gridVariant = useMemo(() => {
-    switch (gridColumns) {
-      case 1: return "grid grid-cols-1 gap-3";
-      case 2: return "grid grid-cols-1 gap-3 md:grid-cols-2";
-      case 3: return "grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3";
-      case 4: return "grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4";
-      case 5: return "grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5";
-      case 6: return "grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-6";
-      case 7: return "grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-7";
-      case 8: return "grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-8";
-      default: return "grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4";
-    }
-  }, [gridColumns]);
+  const gridStyle = useMemo(() => {
+    const gap = 12;
+    const containerPad = 48;
+    const minCardWidth = Math.max(160, Math.floor((viewportW - containerPad - gap) / gridColumns));
+    return { gridTemplateColumns: `repeat(auto-fill, minmax(${minCardWidth}px, 1fr))`, gap: `${gap}px` } as React.CSSProperties;
+  }, [gridColumns, viewportW]);
 
   useEffect(() => {
     if (!isDraggingPip) return;
@@ -565,7 +593,7 @@ export default function LiveStreamTab({ selectedCostCenters = [] }: LiveStreamTa
               {selectedDevices.size} vehicle(s) · {streamEntries.length} stream(s)
             </Badge>
           </div>
-          <div className={gridClassName}>
+          <div className="grid" style={streamGridStyle}>
             {streamEntries
               .filter((e) => !pinnedFeed || e.id !== `${pinnedFeed.deviceId}-${pinnedFeed.channel}`)
               .map((entry) => (
@@ -638,7 +666,7 @@ export default function LiveStreamTab({ selectedCostCenters = [] }: LiveStreamTa
         ) : filteredVehicles.length === 0 ? (
           <Card className="p-8 text-center text-slate-500">No vehicles found</Card>
         ) : viewMode === "grid" ? (
-          <div className={gridVariant}>
+          <div className="grid" style={gridStyle}>
             {filteredVehicles.map(renderVehicleCard)}
           </div>
         ) : (
