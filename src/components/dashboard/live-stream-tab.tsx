@@ -270,13 +270,13 @@ export default function LiveStreamTab({ selectedCostCenters = [] }: LiveStreamTa
         }`}
       >
         <div className="p-3">
-          <div className="flex items-start justify-between gap-3">
-            <div className="flex items-start gap-3">
-              <div className={`rounded-lg p-2 text-white ${vehicle.online ? "bg-emerald-700" : "bg-slate-400"}`}>
+          <div className="flex items-start justify-between gap-2">
+            <div className="flex items-start gap-2 min-w-0 flex-1">
+              <div className={`shrink-0 rounded-lg p-2 text-white ${vehicle.online ? "bg-emerald-700" : "bg-slate-400"}`}>
                 <Video className="h-5 w-5" />
               </div>
-              <div className="min-w-0">
-                <p className="truncate text-sm font-bold text-slate-900">
+              <div className="min-w-0 flex-1">
+                <p className="break-words text-sm font-bold leading-tight text-slate-900">
                   {vehicle.fleetNumber} - {vehicle.registration}
                 </p>
                 {vehicle.deviceId && (
@@ -286,7 +286,7 @@ export default function LiveStreamTab({ selectedCostCenters = [] }: LiveStreamTa
             </div>
             <Badge
               variant={vehicle.online ? "default" : "outline"}
-              className={vehicle.online ? "bg-emerald-600" : "border-slate-300 text-slate-500"}
+              className={`shrink-0 whitespace-nowrap ${vehicle.online ? "bg-emerald-600" : "border-slate-300 text-slate-500"}`}
             >
               {vehicle.online ? (
                 <><Wifi className="mr-1 h-3 w-3" /> Online</>
@@ -295,10 +295,10 @@ export default function LiveStreamTab({ selectedCostCenters = [] }: LiveStreamTa
               )}
             </Badge>
           </div>
-          <div className="mt-3 flex items-center justify-between">
-            <div className="flex items-center gap-2 text-xs text-slate-600">
-              <Activity className="h-3.5 w-3.5" />
-              {selected && channelCount > 0
+          <div className="mt-3 flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 truncate text-xs text-slate-600">
+              <Activity className="h-3.5 w-3.5 shrink-0" />
+              <span className="truncate">{selected && channelCount > 0
                 ? `${channelCount} channel(s) streaming`
                 : hasAttempted && channelCount === 0
                   ? "No streams available"
@@ -306,7 +306,7 @@ export default function LiveStreamTab({ selectedCostCenters = [] }: LiveStreamTa
                     ? "Starting stream..."
                     : isDisabled
                       ? "No EPS device"
-                      : "Tap to stream"}
+                      : "Tap to stream"}</span>
             </div>
             {selected ? (
               <Button
@@ -386,10 +386,10 @@ export default function LiveStreamTab({ selectedCostCenters = [] }: LiveStreamTa
                 const isDisabled = !vehicle.deviceId;
                 return (
                   <tr key={vehicle.registration} className="border-t hover:bg-slate-50">
-                    <td className="px-4 py-3 font-medium text-slate-900">
-                      {vehicle.fleetNumber} - {vehicle.registration}
+                    <td className="max-w-0 px-4 py-3 font-medium text-slate-900">
+                      <span className="block truncate">{vehicle.fleetNumber} - {vehicle.registration}</span>
                     </td>
-                    <td className="px-4 py-3 font-mono text-xs text-slate-600">{vehicle.deviceId || "N/A"}</td>
+                    <td className="max-w-0 px-4 py-3 font-mono text-xs text-slate-600"><span className="block truncate">{vehicle.deviceId || "N/A"}</span></td>
                     <td className="px-4 py-3 text-center">
                       <Badge
                         variant={vehicle.online ? "default" : "outline"}
