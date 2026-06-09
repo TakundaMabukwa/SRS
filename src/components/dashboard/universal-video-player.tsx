@@ -3,7 +3,12 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import Hls from "hls.js";
 import { Button } from "@/components/ui/button";
+import { Download } from "lucide-react";
 import { resolveMediaUrlForCurrentOrigin } from "@/lib/video-alert-playback";
+
+function isFlvUrl(url: string): boolean {
+  return /\.flv(?:$|\?)/i.test(url) || /\.history\.flv/i.test(url);
+}
 
 interface UniversalVideoPlayerProps {
   url: string;
@@ -40,7 +45,10 @@ export function UniversalVideoPlayer({
   const [sourceIndex, setSourceIndex] = useState(0);
   const activeUrl = candidateSources[sourceIndex] || "";
   const isHlsUrl = /\.m3u8(?:$|\?)/i.test(activeUrl);
-  const isJobMp4Url = /\/api\/video-server\/videos\/jobs\/[^/]+\/file/i.test(activeUrl) && !isHlsUrl;
+  const isFlv = isFlvUrl(activeUrl);
+  const isJobMp4Url = /\/api\/video-server\/videos\/jobs\/[^/]+\/file/i.test(activeUrl) && !isHlsUrl && !isFlv;
+
+  const flvPlayerRef = useRef<any>(null);
 
   useEffect(() => {
     setPlaybackError("");
@@ -48,6 +56,7 @@ export function UniversalVideoPlayer({
     screenshotCapturedForRef.current = "";
   }, [url, fallbackUrls]);
 
+  // HLS playback
   useEffect(() => {
     const videoEl = videoRef.current;
     if (!videoEl || !activeUrl || !isHlsUrl) return;
@@ -59,10 +68,7 @@ export function UniversalVideoPlayer({
     if (videoEl.canPlayType("application/vnd.apple.mpegurl")) {
       videoEl.src = activeUrl;
     } else if (Hls.isSupported()) {
-      hls = new Hls({
-        enableWorker: true,
-        lowLatencyMode: true,
-      });
+      hls = new Hls({ enableWorker: true, lowLatencyMode: true });
       hls.loadSource(activeUrl);
       hls.attachMedia(videoEl);
       hls.on(Hls.Events.ERROR, (_, data) => {
@@ -76,18 +82,50 @@ export function UniversalVideoPlayer({
         }
       });
     } else {
-      if (sourceIndex < candidateSources.length - 1) {
-        setSourceIndex((prev) => prev + 1);
-      } else {
-        setPlaybackError("HLS is not supported in this browser.");
-        onPlayableChange?.(false);
-      }
+      if (sourceIndex < candidateSources.length - 1) { setSourceIndex((prev) => prev + 1); }
+      else { setPlaybackError("HLS is not supported in this browser."); onPlayableChange?.(false); }
     }
+    return () => { if (hls) hls.destroy(); };
+  }, [activeUrl, candidateSources.length, isHlsUrl, onPlayableChange, sourceIndex]);
+
+  // FLV playback via flv.js
+  useEffect(() => {
+    const videoEl = videoRef.current;
+    if (!videoEl || !activeUrl || !isFlv) return;
+
+    let destroyed = false;
+    videoEl.removeAttribute("src");
+    videoEl.load();
+
+    (async () => {
+      try {
+        const flvjs = (await import("flv.js")).default;
+        if (destroyed || !flvjs.isSupported()) {
+          if (!destroyed) setPlaybackError("FLV not supported in this browser.");
+          return;
+        }
+        const url = resolveMediaUrlForCurrentOrigin(activeUrl);
+        const player = flvjs.createPlayer({ type: "flv", url, isLive: false });
+        flvPlayerRef.current = player;
+        player.attachMediaElement(videoEl);
+        player.load();
+        player.on(flvjs.Events.ERROR, () => {
+          if (sourceIndex < candidateSources.length - 1) {
+            setSourceIndex((prev) => prev + 1);
+          } else {
+            setPlaybackError("FLV playback failed. Download the file instead.");
+            onPlayableChange?.(false);
+          }
+        });
+        player.on(flvjs.Events.METADATA_ARRIVED, () => onPlayableChange?.(true));
+      } catch { setPlaybackError("FLV player failed to load."); }
+    })();
 
     return () => {
-      if (hls) hls.destroy();
+      destroyed = true;
+      if (flvPlayerRef.current) { flvPlayerRef.current.detachMediaElement(); flvPlayerRef.current.destroy(); flvPlayerRef.current = null; }
     };
-  }, [activeUrl, candidateSources.length, isHlsUrl, onPlayableChange, sourceIndex]);
+  }, [activeUrl, candidateSources.length, isFlv, onPlayableChange, sourceIndex]);
 
   useEffect(() => {
     const videoEl = videoRef.current;
@@ -139,7 +177,7 @@ export function UniversalVideoPlayer({
         autoPlay={autoPlay}
         muted={autoPlay}
         className={className}
-        src={!activeUrl || isHlsUrl ? undefined : resolveMediaUrlForCurrentOrigin(activeUrl)}
+        src={!activeUrl || isHlsUrl || isFlv ? undefined : resolveMediaUrlForCurrentOrigin(activeUrl)}
         onLoadedMetadata={() => {
           onPlayableChange?.(true);
           tryAutoplay();
@@ -170,6 +208,30 @@ export function UniversalVideoPlayer({
           Trying source {sourceIndex + 1}/{candidateSources.length}
         </p>
       )}
+      {isFlv && (
+        <div className="flex justify-end gap-2 mt-1">
+          <Button
+            variant="outline"
+            size="sm"
+            className="border-slate-400 bg-slate-800 text-slate-200 hover:bg-slate-700"
+            onClick={async () => {
+              const u = resolveMediaUrlForCurrentOrigin(activeUrl);
+              try {
+                const r = await fetch(u);
+                const b = await r.blob();
+                const a = document.createElement("a");
+                a.href = URL.createObjectURL(b);
+                a.download = `alert-video-${Date.now()}.flv`;
+                a.click();
+                URL.revokeObjectURL(a.href);
+              } catch { window.open(u, "_blank"); }
+            }}
+          >
+            <Download className="w-3 h-3 mr-1" />
+            Download FLV
+          </Button>
+        </div>
+      )}
       {isJobMp4Url && (
         <div className="flex justify-end">
           <Button
@@ -181,6 +243,9 @@ export function UniversalVideoPlayer({
             Open In Browser
           </Button>
         </div>
+      )}
+      {isFlv && (
+        <p className="text-xs text-amber-600 mt-1">FLV format — use the Download button or flv.js-compatible player.</p>
       )}
       {looksLikeRawH264 && (
         <p className="text-xs text-amber-700">Raw H264 clip detected. If it does not play, use Download/Open.</p>

@@ -438,95 +438,95 @@ export function AlertDetailModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/70 backdrop-blur-sm p-2 sm:p-4 md:items-center md:p-6">
-      <div className="flex w-full max-w-[1200px] max-h-[92vh] min-h-0 flex-col overflow-hidden rounded-2xl border border-slate-300 bg-slate-50 shadow-2xl">
+      <div className="flex w-[90vw] h-[90vh] min-h-0 flex-col overflow-hidden rounded-2xl border border-slate-300 bg-slate-50 shadow-2xl">
         {/* Header */}
-        <div className="flex-shrink-0 border-b border-slate-200 bg-gradient-to-r from-slate-950 via-slate-900 to-red-950 px-3 py-3 md:px-4">
-          <div className="mb-2 flex items-center justify-between gap-2">
-            <Button variant="outline" size="sm" className="h-7 border-white/20 bg-white/10 px-2.5 text-white hover:bg-white/20 hover:text-white" onClick={onClose}>
-              <ArrowLeft className="w-3.5 h-3.5 mr-1.5" />
+        <div className="flex-shrink-0 border-b border-slate-200 bg-gradient-to-r from-slate-950 via-slate-900 to-red-950 px-3 py-2 md:px-3">
+          <div className="mb-1.5 flex items-center justify-between gap-2">
+            <Button variant="outline" size="sm" className="h-6 border-white/20 bg-white/10 px-2 text-white hover:bg-white/20 hover:text-white" onClick={onClose}>
+              <ArrowLeft className="w-3 h-3 mr-1" />
               Back
             </Button>
-            <p className="text-[11px] text-slate-300">Control room incident view</p>
+            <p className="text-[10px] text-slate-300">Control room incident view</p>
           </div>
 
-          <div className="rounded-xl border border-white/10 bg-white/[0.05] p-3">
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+          <div className="rounded-xl border border-white/10 bg-white/[0.05] p-2">
+            <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
-                  <h1 className="truncate text-lg font-bold tracking-tight text-white md:text-xl">
+                  <h1 className="truncate text-base font-bold tracking-tight text-white md:text-lg">
                     {selectedAlertVehicleDisplay}
                   </h1>
                   <Badge variant="outline" className={cn(
-                    "flex items-center gap-1 border text-[10px] px-2 py-0",
+                    "flex items-center gap-1 border text-[10px] px-1.5 py-0",
                     selectedAlertSeverity === 'critical' ? 'bg-red-100 text-red-800 border-red-300' :
                     selectedAlertSeverity === 'high' ? 'bg-orange-100 text-orange-800 border-orange-300' :
                     selectedAlertSeverity === 'medium' ? 'bg-yellow-100 text-yellow-800 border-yellow-300' :
                     'bg-blue-100 text-blue-800 border-blue-300'
                   )}>
-                    <AlertTriangle className="w-3 h-3" />
+                    <AlertTriangle className="w-2.5 h-2.5" />
                     {selectedAlertSeverity.toUpperCase()}
                   </Badge>
                 </div>
-                <p className="mt-1 truncate text-sm font-semibold text-slate-100">{selectedAlertTitle}</p>
-                <p className="mt-1 truncate font-mono text-[11px] text-slate-300">ID: {String(selectedAlert?.id || "N/A").trim()}</p>
-                <div className="mt-2 grid grid-cols-2 gap-1.5 text-[11px] text-slate-200">
-                  <span className="rounded border border-white/10 bg-white/5 px-2 py-1">Driver: {selectedAlertDriverInfo.name || "Unknown"}</span>
-                  <span className="rounded border border-white/10 bg-white/5 px-2 py-1">Speed: {selectedAlertSpeedDisplay}</span>
-                  <span className="rounded border border-white/10 bg-white/5 px-2 py-1">Last: {selectedAlertLastOccurrenceTs ? formatRawAlertTimestamp(selectedAlertLastOccurrenceTs, "datetime") : "N/A"}</span>
-                  <span className="rounded border border-white/10 bg-white/5 px-2 py-1">State: {selectedAlert?.resolved ? "Closed" : "Open"}</span>
+                <p className="truncate text-xs font-semibold text-slate-100">{selectedAlertTitle}</p>
+                <p className="truncate font-mono text-[10px] text-slate-300">ID: {String(selectedAlert?.id || "N/A").trim()}</p>
+                <div className="mt-1.5 grid grid-cols-2 gap-1 text-[10px] text-slate-200">
+                  <span className="rounded border border-white/10 bg-white/5 px-1.5 py-0.5">Driver: {selectedAlertDriverInfo.name || "Unknown"}</span>
+                  <span className="rounded border border-white/10 bg-white/5 px-1.5 py-0.5">Speed: {selectedAlertSpeedDisplay}</span>
+                  <span className="rounded border border-white/10 bg-white/5 px-1.5 py-0.5">Last: {selectedAlertLastOccurrenceTs ? formatRawAlertTimestamp(selectedAlertLastOccurrenceTs, "datetime") : "N/A"}</span>
+                  <span className="rounded border border-white/10 bg-white/5 px-1.5 py-0.5">State: {selectedAlert?.resolved ? "Closed" : "Open"}</span>
                 </div>
               </div>
 
               <div>
                 <select
-                  className="mb-2 h-7 w-full rounded-md border border-white/20 bg-white/10 px-2 text-xs text-white outline-none focus:border-white/40 disabled:opacity-50"
+                  className="mb-1.5 h-7 w-full rounded-md border border-slate-300 bg-white px-2 text-xs text-slate-900 outline-none focus:border-slate-400 disabled:opacity-50"
                   value={alertReason}
                   onChange={(e) => onAlertReasonChange(e.target.value)}
                   disabled={selectedAlert?.resolved}
                 >
-                  <option value="" className="text-slate-900">SELECT REASON</option>
+                  <option value="">SELECT REASON</option>
                   {alertReasonOptions.map((reason) => (
-                    <option key={reason} value={reason} className="text-slate-900">
+                    <option key={reason} value={reason}>
                       {String(reason).toUpperCase()}
                     </option>
                   ))}
                 </select>
                 {!selectedAlert?.resolved ? (
-                  <div className="mb-2 flex flex-wrap items-center gap-1.5">
+                  <div className="mb-1.5 flex flex-wrap items-center gap-1">
                     <Button
                       variant="outline"
-                      className="h-7 border-red-300/70 bg-white px-2.5 text-xs text-red-700 hover:bg-red-50"
+                      className="h-6 border-red-300/70 bg-white px-2 text-[10px] text-red-700 hover:bg-red-50"
                       disabled={alertActionLoading}
                       onClick={onFalseAlert}
                     >
-                      <XCircle className="w-3.5 h-3.5 mr-1.5" />
+                      <XCircle className="w-3 h-3 mr-1" />
                       {alertActionLoading ? "Saving..." : "False Alert"}
                     </Button>
                     <Button
                       variant="outline"
-                      className="h-7 border-emerald-300/70 bg-white px-2.5 text-xs text-emerald-700 hover:bg-emerald-50"
+                      className="h-6 border-emerald-300/70 bg-white px-2 text-[10px] text-emerald-700 hover:bg-emerald-50"
                       disabled={alertActionLoading}
                       onClick={onResolve}
                     >
                       {alertActionLoading ? "Saving..." : "Resolve"}
                     </Button>
                     <select
-                      className="h-7 min-w-[155px] rounded-md border border-white/20 bg-white/10 px-2 text-xs text-white outline-none focus:border-white/40"
+                      className="h-7 min-w-[125px] rounded-md border border-slate-300 bg-white px-2 text-xs text-slate-900 outline-none focus:border-slate-400"
                       onChange={(e) => {
                         const formType = e.target.value;
                         if (formType) onNcrFormSelect(formType);
                       }}
                       defaultValue=""
                     >
-                      <option value="" className="text-slate-900">SELECT NCR FORM</option>
+                      <option value="">SELECT NCR FORM</option>
                       {ncrFormOptions.map((option) => (
-                        <option key={option.value} value={option.value} className="text-slate-900">
+                        <option key={option.value} value={option.value}>
                           {option.label}
                         </option>
                       ))}
                     </select>
                     <select
-                      className="h-7 min-w-[130px] rounded-md border border-white/20 bg-white/10 px-2 text-xs text-white outline-none focus:border-white/40"
+                      className="h-7 min-w-[100px] rounded-md border border-slate-300 bg-white px-2 text-xs text-slate-900 outline-none focus:border-slate-400"
                       onChange={(e) => {
                         const formType = e.target.value;
                         if (formType) onReportFormSelect(formType);
@@ -542,10 +542,10 @@ export function AlertDetailModal({
                     </select>
                   </div>
                 ) : (
-                  <div className="mb-2 space-y-1">
+                  <div className="mb-1.5 space-y-1">
                     <Badge className="border border-emerald-300 bg-emerald-100 text-emerald-800">Resolved</Badge>
                     {selectedAlert?.resolved_by ? (
-                      <p className="text-[11px] text-slate-400">
+                      <p className="text-[10px] text-slate-400">
                         by {selectedAlert.resolved_by}
                         {selectedAlert?.resolved_at ? ` at ${new Date(selectedAlert.resolved_at).toLocaleString()}` : ""}
                       </p>
@@ -553,11 +553,11 @@ export function AlertDetailModal({
                     {(() => {
                       const closedDocs = Array.isArray(selectedAlert?.documents) ? selectedAlert.documents : [];
                       return closedDocs.length > 0 ? (
-                        <div className="mt-2 space-y-1">
-                          <p className="text-[11px] font-medium text-slate-300">Filed documents:</p>
+                        <div className="mt-1.5 space-y-1">
+                          <p className="text-[10px] font-medium text-slate-300">Filed documents:</p>
                           {closedDocs.map((doc: any, idx: number) => (
-                            <div key={idx} className="flex items-center gap-2 text-[11px] text-slate-400">
-                              <FileText className="w-3 h-3 shrink-0" />
+                            <div key={idx} className="flex items-center gap-2 text-[10px] text-slate-400">
+                              <FileText className="w-2.5 h-2.5 shrink-0" />
                               <span className="truncate">{doc.documentName || doc.documentType || doc.type || "Document"}</span>
                               {doc.link ? (
                                 <button
@@ -575,11 +575,11 @@ export function AlertDetailModal({
                   </div>
                 )}
                 <div>
-                  <label className="mb-1 block text-[11px] font-medium text-slate-200">
+                  <label className="mb-0.5 block text-[10px] font-medium text-slate-200">
                     Additional comments
                   </label>
                   <textarea
-                    className="min-h-[58px] w-full rounded-md border border-white/20 bg-white/10 px-2 py-1.5 text-xs text-white outline-none placeholder:text-slate-300/80 focus:border-white/40 disabled:opacity-50"
+                    className="min-h-[60px] w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-900 outline-none placeholder:text-slate-400 focus:border-slate-400 disabled:opacity-50"
                     value={alertNotesDraft}
                     onChange={(e) => onAlertNotesDraftChange(e.target.value)}
                     placeholder="Add extra context for this action (stored with alert resolution)"
@@ -618,41 +618,35 @@ export function AlertDetailModal({
                     </div>
 
                     {/* Alert screenshots */}
-                    <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
-                      {/* Screenshots from the alert's screenshotUrl field */}
-                      {Array.isArray(selectedAlert?.screenshotUrls) &&
-                        selectedAlert.screenshotUrls.map((url: string, idx: number) => (
-                          <div key={`alert-ss-${idx}`} className="group relative overflow-hidden rounded-lg border border-slate-200 bg-slate-50">
-                            <SafeImage
-                              src={url}
-                              alt={`Screenshot ${idx + 1}`}
-                              className="h-40 w-full object-cover"
-                            />
-                            {url && (
-                              <div className="absolute bottom-0 left-0 right-0 flex items-center justify-center gap-1 bg-gradient-to-t from-black/60 to-transparent p-2 opacity-0 transition-opacity group-hover:opacity-100">
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  className="h-7 bg-white/90 text-[10px] text-slate-800 hover:bg-white"
-                                  onClick={() => window.open(url, "_blank")}
-                                >
-                                  Open
-                                </Button>
-                              </div>
-                            )}
-                          </div>
-                        ))}
-                      {/* Screenshots from media property */}
+                    <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                      {/* Screenshots from media property (images + replay video) */}
                       {Array.isArray(selectedAlert?.media?.screenshots) && selectedAlert.media.screenshots.length > 0 &&
                         selectedAlert.media.screenshots.map((ss: any, idx: number) => {
                           const ssUrl = ss?.url || ss?.src || ss?.path || (typeof ss === "string" ? ss : "");
+                          const isVideo = ss?.type === 'video' || ss?.file_type === '02';
+                          const ts = ss?.timestamp ? new Date(ss.timestamp).toLocaleString() : '';
                           return ssUrl ? (
                             <div key={`media-ss-${idx}`} className="group relative overflow-hidden rounded-lg border border-slate-200 bg-slate-50">
-                              <SafeImage
-                                src={ssUrl}
-                                alt={`Media screenshot ${idx + 1}`}
-                                className="h-40 w-full object-cover"
-                              />
+                              {isVideo ? (
+                                <video
+                                  src={ssUrl}
+                                  controls
+                                  preload="metadata"
+                                  className="h-56 w-full object-cover bg-black"
+                                >
+                                  Your browser does not support the video element.
+                                </video>
+                              ) : (
+                                <SafeImage
+                                  src={ssUrl}
+                                  alt={`Screenshot ${idx + 1}`}
+                                  className="h-56 w-full object-cover"
+                                />
+                              )}
+                              <div className="absolute top-0 left-0 right-0 flex items-center justify-between bg-gradient-to-b from-black/60 to-transparent p-1.5 opacity-0 transition-opacity group-hover:opacity-100">
+                                <span className="text-[10px] text-white/90">{isVideo ? 'Replay' : 'Screenshot'}</span>
+                                {ts && <span className="text-[9px] text-white/70">{ts}</span>}
+                              </div>
                               <div className="absolute bottom-0 left-0 right-0 flex items-center justify-center gap-1 bg-gradient-to-t from-black/60 to-transparent p-2 opacity-0 transition-opacity group-hover:opacity-100">
                                 <Button
                                   variant="outline"
@@ -672,7 +666,7 @@ export function AlertDetailModal({
                           <SafeImage
                             src={ss.url}
                             alt={`Captured screenshot ${idx + 1}`}
-                            className="h-40 w-full object-cover"
+                            className="h-56 w-full object-cover"
                           />
                           <div className="absolute bottom-0 left-0 right-0 flex items-center justify-center gap-1 bg-gradient-to-t from-black/60 to-transparent p-2 opacity-0 transition-opacity group-hover:opacity-100">
                             <Button
@@ -810,7 +804,18 @@ export function AlertDetailModal({
                                           <Button
                                             variant="outline"
                                             size="sm"
-                                            onClick={() => window.open(resolveMediaUrlForCurrentOrigin(video.url), "_blank")}
+                                            onClick={async () => {
+                                              const u = resolveMediaUrlForCurrentOrigin(video.url);
+                                              try {
+                                                const r = await fetch(u);
+                                                const b = await r.blob();
+                                                const a = document.createElement("a");
+                                                a.href = URL.createObjectURL(b);
+                                                a.download = `alert-video-${Date.now()}.flv`;
+                                                a.click();
+                                                URL.revokeObjectURL(a.href);
+                                              } catch { window.open(u, "_blank"); }
+                                            }}
                                           >
                                             <Download className="mr-2 h-4 w-4" />
                                             Download
@@ -1103,9 +1108,20 @@ export function AlertDetailModal({
                 className="w-full rounded border border-slate-700 bg-black"
               />
               <div className="mt-3 flex justify-end">
-                <Button variant="outline" onClick={() => window.open(resolveMediaUrlForCurrentOrigin(videoPreview.url), "_blank")}>
+                <Button variant="outline" onClick={async () => {
+                  const u = resolveMediaUrlForCurrentOrigin(videoPreview.url);
+                  try {
+                    const r = await fetch(u);
+                    const b = await r.blob();
+                    const a = document.createElement("a");
+                    a.href = URL.createObjectURL(b);
+                    a.download = `alert-video-${Date.now()}.flv`;
+                    a.click();
+                    URL.revokeObjectURL(a.href);
+                  } catch { window.open(u, "_blank"); }
+                }}>
                   <Download className="w-4 h-4 mr-2" />
-                  Open Source
+                  Download
                 </Button>
               </div>
             </div>
