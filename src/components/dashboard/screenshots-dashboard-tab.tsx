@@ -4,7 +4,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { RefreshCw, MonitorPlay, Shield, RadioTower, ExternalLink } from "lucide-react";
+import { RefreshCw, MonitorPlay, Shield, RadioTower, ExternalLink, X } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { toSAST } from "@/lib/utils/date-formatter";
 
@@ -31,6 +31,7 @@ type VehicleCard = {
   costCenter: string;
   deviceId: string | null;
   online: boolean;
+  cameras: number;
   ch1Url: string | null;
   ch2Url: string | null;
   ch1Time: string | null;
@@ -87,6 +88,7 @@ export default function ScreenshotsDashboardTab({
   const [lastScreenshotAt, setLastScreenshotAt] = useState<Date | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [gridColumns, setGridColumns] = useState(4);
+  const [modalImage, setModalImage] = useState<string | null>(null);
   const activeRef = useRef(true);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const prevCardsRef = useRef<VehicleCard[]>([]);
@@ -125,9 +127,9 @@ export default function ScreenshotsDashboardTab({
       }).catch(() => null);
       if (!activeRef.current) return;
 
-      // Build registration -> {deviceId, online} map from EPS plateNames
+      // Build registration -> {deviceId, online, cameras} map from EPS plateNames
       // plateName format: "REGISTRATION - FLEET" e.g. "LDG095MP - FM02"
-      const regMap = new Map<string, { deviceId: string; online: boolean }>();
+      const regMap = new Map<string, { deviceId: string; online: boolean; cameras: number }>();
       if (onlineRes && onlineRes.ok) {
         const onlineData = await onlineRes.json();
         if (onlineData.success && onlineData.data?.devices) {
@@ -136,7 +138,7 @@ export default function ScreenshotsDashboardTab({
             const plate = (d.plateName || "").trim();
             const registration = plate.split(" - ")[0].trim();
             if (registration) {
-              regMap.set(registration.toUpperCase(), { deviceId: d.deviceId, online: d.online === true });
+                regMap.set(registration.toUpperCase(), { deviceId: d.deviceId, online: d.online === true, cameras: d.cameras || 1 });
             }
           }
         }
@@ -155,6 +157,7 @@ export default function ScreenshotsDashboardTab({
           costCenter: v.cost_center,
           deviceId,
           online,
+          cameras: match ? match.cameras : 0,
           ch1Url: null, ch2Url: null, ch1Time: null, ch2Time: null,
         };
       });
@@ -197,10 +200,10 @@ export default function ScreenshotsDashboardTab({
       // Auto-trigger captures for online vehicles with no screenshots (fire-and-forget)
       const needCapture = built.filter((c) => c.online && c.deviceId && !c.ch1Url && !c.ch2Url);
       if (needCapture.length > 0) {
-        const captures = needCapture.flatMap((c) => [
-          { deviceId: c.deviceId!, channelId: 1 },
-          { deviceId: c.deviceId!, channelId: 2 },
-        ]);
+        const captures = needCapture.flatMap((c) => {
+          const camCount = c.cameras || 1;
+          return Array.from({ length: camCount }, (_, i) => ({ deviceId: c.deviceId!, channelId: i + 1 }));
+        });
         fetch(`${EPS_API}/eps/gallery/capture`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -210,17 +213,13 @@ export default function ScreenshotsDashboardTab({
 
       if (!activeRef.current) return;
 
-      // Keep last images for vehicles that still have no new screenshots
+      // Keep last images per-channel if no new data arrived
       const prevImages = prevCardsRef.current;
       for (const card of built) {
-        if (!card.ch1Url && !card.ch2Url) {
-          const prev = prevImages.find((c) => c.registration === card.registration);
-          if (prev) {
-            card.ch1Url = prev.ch1Url;
-            card.ch2Url = prev.ch2Url;
-            card.ch1Time = prev.ch1Time;
-            card.ch2Time = prev.ch2Time;
-          }
+        const prev = prevImages.find((c) => c.registration === card.registration);
+        if (prev) {
+          if (!card.ch1Url && prev.ch1Url) { card.ch1Url = prev.ch1Url; card.ch1Time = prev.ch1Time; }
+          if (!card.ch2Url && prev.ch2Url) { card.ch2Url = prev.ch2Url; card.ch2Time = prev.ch2Time; }
         }
       }
 
@@ -397,39 +396,66 @@ export default function ScreenshotsDashboardTab({
                       </span>
                     </div>
                   </div>
-                  <div className="grid grid-cols-2 gap-2 p-2">
-                    {[1, 2].map((ch) => {
-                      const imgUrl = ch === 1 ? card.ch1Url : card.ch2Url;
-                      const imgTime = ch === 1 ? card.ch1Time : card.ch2Time;
-                      const hasImg = !!imgUrl;
-                      return (
-                        <div key={`${card.registration}-${ch}`} className="overflow-hidden rounded-md border border-slate-300 bg-slate-950 text-slate-100">
-                          <div className="relative" style={{ minHeight: 200 }}>
-                            {hasImg ? (
-                              <img
-                                src={withCacheBuster(imgUrl!)}
-                                alt={`${card.registration} CH${ch}`}
-                                className="w-full h-full object-cover"
-                                loading="lazy"
-                                style={{ minHeight: 200, maxHeight: 320 }}
-                              />
-                            ) : (
-                              <div className="flex items-center justify-center text-slate-500" style={{ minHeight: 200 }}>
-                                <MonitorPlay className="h-8 w-8" />
+                  {(() => {
+                    const chCount = Math.max(card.cameras || 1, card.ch2Url && card.ch2Url !== card.ch1Url ? 2 : 1);
+                    const channels: { ch: number; url: string | null }[] = [];
+                    for (let i = 1; i <= chCount; i++) {
+                      const url = i === 1 ? card.ch1Url : (card.ch2Url !== card.ch1Url ? card.ch2Url : null);
+                      channels.push({ ch: i, url });
+                    }
+                    const gridCols = chCount >= 2 ? "grid-cols-2" : "grid-cols-1";
+                    return (
+                      <div className={`grid ${gridCols} gap-2 p-2`}>
+                        {channels.map(({ ch, url }) => (
+                          <div key={`${card.registration}-${ch}`} className="overflow-hidden rounded-md border border-slate-300 bg-slate-950 text-slate-100">
+                              <div className="relative flex items-center justify-center" style={{ minHeight: 320 }}>
+                              {url ? (
+                                <img
+                                  src={withCacheBuster(url)}
+                                  alt={`${card.registration} CH${ch}`}
+                                  className="w-full h-full object-cover cursor-pointer"
+                                  loading="lazy"
+                                  style={{ minHeight: 320, maxHeight: 480 }}
+                                  onClick={() => setModalImage(url)}
+                                />
+                              ) : (
+                                <span className="text-xs text-slate-500 px-2 text-center">
+                                  {card.online ? "Waiting for screenshot..." : "Offline"}
+                                </span>
+                              )}
+                              <div className="absolute right-2 top-2 rounded bg-black/70 px-2 py-1 text-[11px] font-medium">
+                                CH {ch}
                               </div>
-                            )}
-                            <div className="absolute right-2 top-2 rounded bg-black/70 px-2 py-1 text-[11px] font-medium">
-                              CH {ch}
                             </div>
                           </div>
-                        </div>
-                      );
-                    })}
-                  </div>
+                        ))}
+                      </div>
+                    );
+                  })()}
                 </Card>
               );
             })}
           </div>
+        </div>
+      )}
+
+      {modalImage && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/90"
+          onClick={() => setModalImage(null)}
+        >
+          <button
+            className="absolute right-4 top-4 rounded-full bg-black/50 p-2 text-white hover:bg-black/70"
+            onClick={() => setModalImage(null)}
+          >
+            <X className="h-6 w-6" />
+          </button>
+          <img
+            src={withCacheBuster(modalImage)}
+            alt="Screenshot full view"
+            className="max-h-[90vh] max-w-[90vw] object-contain"
+            onClick={(e) => e.stopPropagation()}
+          />
         </div>
       )}
     </div>

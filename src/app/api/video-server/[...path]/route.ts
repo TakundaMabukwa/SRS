@@ -726,17 +726,23 @@ function filterAlertsByStatus(alerts: AnyRecord[], statusFilter: string): AnyRec
 
 async function fetchRecentAlertsFromGoHub(baseUrl: string, limit: number): Promise<AnyRecord[]> {
   const boundedLimit = Math.max(1, Math.min(limit, 10000));
-  const response = await fetch(`${baseUrl}/api/alerts/recent?limit=${boundedLimit}`, {
-    method: 'GET',
-    cache: 'no-store',
-    next: { revalidate: 0 },
-  });
-  if (!response.ok) {
-    throw new Error(`Alert hub recent endpoint returned ${response.status}`);
+  try {
+    const response = await fetch(`${baseUrl}/api/alerts/recent?limit=${boundedLimit}`, {
+      method: 'GET',
+      cache: 'no-store',
+      next: { revalidate: 0 },
+    });
+    if (!response.ok) {
+      console.warn(`[video-server] Alert hub recent endpoint returned ${response.status} — falling back to empty`);
+      return [];
+    }
+    const payload = await response.json().catch(() => ({}));
+    const rows = Array.isArray(payload?.alerts) ? payload.alerts : [];
+    return rows.map((row: AnyRecord) => mapRecentAlert(row, baseUrl)).sort(sortByLatest);
+  } catch (err) {
+    console.warn(`[video-server] Alert hub fetch failed: ${err instanceof Error ? err.message : err}`);
+    return [];
   }
-  const payload = await response.json().catch(() => ({}));
-  const rows = Array.isArray(payload?.alerts) ? payload.alerts : [];
-  return rows.map((row: AnyRecord) => mapRecentAlert(row, baseUrl)).sort(sortByLatest);
 }
 
 function selectAlertVideoEntries(alert: AnyRecord, baseUrl: string) {
@@ -1395,9 +1401,9 @@ export async function GET(
 
   const epsStreamingBase = getEpsStreamingServerBaseUrl()
   const isEpsStreamPath = path.startsWith('stream/') || path.startsWith('eps/')
-  const getTarget = isEpsStreamPath ? { name: 'epsStreaming', baseUrl: epsStreamingBase } : target
+  const getTarget = (isEpsStreamPath || firstSegment === 'alerts') ? { name: 'epsStreaming', baseUrl: epsStreamingBase } : target
   const epsPath = firstSegment === 'eps' ? path.slice(4) : path
-  const upstreamPath = (firstSegment === 'media' || firstSegment === 'captures') ? `/${path}` : (firstSegment === 'eps' ? `/api/${epsPath}` : `/api/${path}`)
+  const upstreamPath = (firstSegment === 'media' || firstSegment === 'captures') ? `/${path}` : (firstSegment === 'eps') ? `/api/${epsPath}` : (firstSegment === 'alerts') ? `/api/${path}` : `/api/${path}`
   const url = `${getTarget.baseUrl}${upstreamPath}${searchParams ? `?${searchParams}` : ''}`
   const lowerPath = `/${path}`.toLowerCase()
   const isDirectMediaRequest =
@@ -1405,9 +1411,6 @@ export async function GET(
     /\.(mp4|m3u8|ts|m4s|jpg|jpeg|png|webp)(?:$|\?)/i.test(lowerPath)
 
   try {
-    if (target.name === 'alertHub' && firstSegment === 'alerts') {
-      return handleAlertHubCompatGet(request, pathArray, target.baseUrl);
-    }
 
     const forwardedHeaders: Record<string, string> = {}
     const range = request.headers.get('range')
@@ -1501,16 +1504,13 @@ export async function POST(
   const path = pathArray.join('/')
   const epsStreamingBase = getEpsStreamingServerBaseUrl()
   const isEpsStreamPath = path.startsWith('stream/') || path.startsWith('eps/')
-  const target = isEpsStreamPath ? { name: 'epsStreaming', baseUrl: epsStreamingBase } : resolveVideoServerProxyBase(pathArray)
-  const epsPath = path.startsWith('eps/') ? path.slice(4) : path
+  const firstSegment = String(pathArray[0] || '').toLowerCase()
+  const target = (isEpsStreamPath || firstSegment === 'alerts') ? { name: 'epsStreaming', baseUrl: epsStreamingBase } : resolveVideoServerProxyBase(pathArray)
+  const epsPath = firstSegment === 'alerts' ? path : path.startsWith('eps/') ? path.slice(4) : path
   const url = `${target.baseUrl}/api/${epsPath}`
   const body = await request.json().catch(() => ({}))
-  const firstSegment = String(pathArray[0] || '').toLowerCase()
 
   try {
-    if (target.name === 'alertHub' && firstSegment === 'alerts') {
-      return handleAlertHubCompatPost(pathArray, target.baseUrl, body as AnyRecord);
-    }
 
     const response = await fetch(url, {
       method: 'POST',
