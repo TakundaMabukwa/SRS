@@ -619,34 +619,23 @@ export function AlertDetailModal({
 
                     {/* Alert screenshots */}
                     <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                      {/* Screenshots from media property (images + replay video) */}
+                      {/* Screenshots from media property (images only) */}
                       {Array.isArray(selectedAlert?.media?.screenshots) && selectedAlert.media.screenshots.length > 0 &&
                         selectedAlert.media.screenshots.map((ss: any, idx: number) => {
                           const ssUrl = ss?.url || ss?.src || ss?.path || (typeof ss === "string" ? ss : "");
-                          const isVideo = ss?.type === 'video' || ss?.file_type === '02';
                           const ts = ss?.timestamp ? new Date(ss.timestamp).toLocaleString() : '';
                           return ssUrl ? (
                             <div key={`media-ss-${idx}`} className="group relative overflow-hidden rounded-lg border border-slate-200 bg-slate-50">
-                              {isVideo ? (
-                                <video
-                                  src={ssUrl}
-                                  controls
-                                  preload="metadata"
-                                  className="h-56 w-full object-cover bg-black"
-                                >
-                                  Your browser does not support the video element.
-                                </video>
-                              ) : (
-                                <SafeImage
-                                  src={ssUrl}
-                                  alt={`Screenshot ${idx + 1}`}
-                                  className="h-56 w-full object-cover"
-                                />
+                              <SafeImage
+                                src={ssUrl}
+                                alt={`Screenshot ${idx + 1}`}
+                                className="h-56 w-full object-cover"
+                              />
+                              {ts && (
+                                <div className="absolute top-0 left-0 right-0 flex items-center justify-end bg-gradient-to-b from-black/60 to-transparent p-1.5">
+                                  <span className="text-[9px] text-white/70">{ts}</span>
+                                </div>
                               )}
-                              <div className="absolute top-0 left-0 right-0 flex items-center justify-between bg-gradient-to-b from-black/60 to-transparent p-1.5 opacity-0 transition-opacity group-hover:opacity-100">
-                                <span className="text-[10px] text-white/90">{isVideo ? 'Replay' : 'Screenshot'}</span>
-                                {ts && <span className="text-[9px] text-white/70">{ts}</span>}
-                              </div>
                               <div className="absolute bottom-0 left-0 right-0 flex items-center justify-center gap-1 bg-gradient-to-t from-black/60 to-transparent p-2 opacity-0 transition-opacity group-hover:opacity-100">
                                 <Button
                                   variant="outline"
