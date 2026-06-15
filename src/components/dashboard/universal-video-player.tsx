@@ -88,7 +88,7 @@ export function UniversalVideoPlayer({
     return () => { if (hls) hls.destroy(); };
   }, [activeUrl, candidateSources.length, isHlsUrl, onPlayableChange, sourceIndex]);
 
-  // FLV playback via flv.js
+  // FLV playback via flv.js (proxy through backend for CORS)
   useEffect(() => {
     const videoEl = videoRef.current;
     if (!videoEl || !activeUrl || !isFlv) return;
@@ -104,8 +104,12 @@ export function UniversalVideoPlayer({
           if (!destroyed) setPlaybackError("FLV not supported in this browser.");
           return;
         }
-        const url = resolveMediaUrlForCurrentOrigin(activeUrl);
-        const player = flvjs.createPlayer({ type: "flv", url, isLive: false });
+        // Proxy external FLV URLs through backend to avoid CORS issues
+        const isExternalUrl = /^https?:\/\//i.test(activeUrl) && !activeUrl.includes(window.location.host);
+        const proxyUrl = isExternalUrl
+          ? `/api/video-server/playback/flv-proxy?url=${encodeURIComponent(activeUrl)}`
+          : activeUrl;
+        const player = flvjs.createPlayer({ type: "flv", url: proxyUrl, isLive: false });
         flvPlayerRef.current = player;
         player.attachMediaElement(videoEl);
         player.load();

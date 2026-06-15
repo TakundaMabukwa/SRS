@@ -147,6 +147,14 @@ export function resolveVideoServerProxyBase(pathArray: string[]) {
     return { name: "playbackHub", baseUrl: getPlaybackHubBaseUrl() };
   }
 
+  const isPlaybackHistoryPath =
+    first === "playback" &&
+    (second === "history-list" || second === "history-upload" || second === "history-task" || second === "history-replay" || second === "flv-proxy");
+
+  if (isPlaybackHistoryPath) {
+    return { name: "epsStreaming", baseUrl: getEpsStreamingServerBaseUrl() };
+  }
+
   const isPlaybackPath =
     first === "playback" ||
     first === "storage" ||

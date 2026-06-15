@@ -1,445 +1,121 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import Hls from "hls.js";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Calendar, Clock3, PlayCircle, RefreshCw, Search, Video } from "lucide-react";
+import { Video, RefreshCw, Search, Wifi, WifiOff, Play, Loader2, X, ChevronLeft, Clock, Calendar } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { UniversalVideoPlayer } from "./universal-video-player";
+
+const EPS_API = "/api/video-server";
+const SOUTH_AFRICA_TIME_ZONE = "Africa/Johannesburg";
+
+type DbVehicle = {
+  registration_number: string;
+  fleet_number: string;
+  cost_center: string;
+  camera_sim_id: string;
+};
 
 type PlaybackVehicle = {
   vehicleId: string;
-  deviceIds: string[];
-  cameraSimId?: string | null;
-  clipCount: number;
-  earliestTime?: string | null;
-  latestTime?: string | null;
-  channels: number[];
-  vehicleRegistration?: string | null;
-  fleetNumber?: string | null;
-  make?: string | null;
-  model?: string | null;
-  costCenter?: string | null;
+  registration: string;
+  fleetNumber: string;
+  costCenter: string;
+  deviceId: string;
+  online: boolean;
 };
 
-type PlaybackClip = {
-  id: string;
+type HistoryFile = {
+  deviceName: string;
+  channelId: number;
+  fileSize: number;
   startTime: string;
-  endTime?: string | null;
-  durationSeconds?: number;
-  fileSize?: number;
-  videoType?: string;
+  endTime: string;
+  fileUrl: string | null;
 };
 
-type PlaybackChannelAvailability = {
-  channel: number;
-  clipCount: number;
-  earliestTime?: string | null;
-  latestTime?: string | null;
-  clips: PlaybackClip[];
-};
-
-type AvailabilityClipResponse = {
-  id?: string | number;
-  startTime?: string;
-  start_time?: string;
-  endTime?: string;
-  end_time?: string;
-  durationSeconds?: number;
-  duration_seconds?: number;
-  fileSize?: number;
-  file_size?: number;
-  videoType?: string;
-  video_type?: string;
-};
-
-type AvailabilityChannelResponse = {
-  channel?: number;
-  clipCount?: number;
-  clip_count?: number;
-  fileCount?: number;
-  file_count?: number;
-  earliestTime?: string;
-  earliest_time?: string;
-  latestTime?: string;
-  latest_time?: string;
-  from?: string;
-  to?: string;
-  clips?: AvailabilityClipResponse[];
-};
-
-type CoverageRowResponse = {
-  channel?: number;
-  packet_count?: number;
-  first_packet_time?: string;
-  last_packet_time?: string;
-  first_packet_timestamp_ms?: number;
-  last_packet_timestamp_ms?: number;
-};
-
-type PlaybackItem = {
-  channel: number;
-  url: string;
-  label: string;
-};
-
-type QuickRangeOption = {
-  key: string;
-  label: string;
-  start: string;
-  end: string;
-};
-
-type ParsedAvailableRange = {
-  startIso: string;
-  endIso: string;
-};
-
-type PlaybackCatalogRow = {
-  registration_number?: string | null;
-  fleet_number?: string | null;
-  camera_sim_id?: string | null;
-  camera_serial?: string | null;
-  make?: string | null;
-  model?: string | null;
-  cost_center?: string | null;
-};
-
-const SOUTH_AFRICA_TIME_ZONE = "Africa/Johannesburg";
-const SOUTH_AFRICA_UTC_OFFSET_MINUTES = 2 * 60;
-
-function channelHasStoredFiles(entry?: PlaybackChannelAvailability | null) {
-  if (!entry) return false;
-  const clipCount = Number(entry.clipCount || 0);
-  if (Number.isFinite(clipCount) && clipCount > 0) return true;
-  if (Array.isArray(entry.clips) && entry.clips.length > 0) return true;
-  const startMs = entry.earliestTime ? new Date(entry.earliestTime).getTime() : Number.NaN;
-  const endMs = entry.latestTime ? new Date(entry.latestTime).getTime() : Number.NaN;
-  return Number.isFinite(startMs) && Number.isFinite(endMs) && endMs >= startMs;
+function toSAST(date: Date): string {
+  return date.toLocaleString("en-ZA", { timeZone: SOUTH_AFRICA_TIME_ZONE, hour12: false });
 }
 
-function buildVehicleLookupKeys(value: unknown): string[] {
-  const raw = String(value || "").trim();
-  if (!raw) return [];
-  const stripped = raw.replace(/[_-]+$/, "");
-  const variants = [raw, raw.toLowerCase(), stripped, stripped.toLowerCase()];
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const key of variants) {
-    const normalized = String(key || "").trim();
-    if (!normalized || seen.has(normalized)) continue;
-    seen.add(normalized);
-    out.push(normalized);
-  }
-  return out;
+function formatTime(isoString: string): string {
+  const d = new Date(isoString);
+  if (Number.isNaN(d.getTime())) return "N/A";
+  return toSAST(d).slice(11, 19);
 }
 
-function hasMatchedVehicleIdentity(vehicle: PlaybackVehicle | null | undefined) {
-  if (!vehicle) return false;
-  return Boolean(String(vehicle.vehicleRegistration || "").trim() || String(vehicle.fleetNumber || "").trim());
+function formatDateTime(isoString: string): string {
+  const d = new Date(isoString);
+  if (Number.isNaN(d.getTime())) return "N/A";
+  return toSAST(d).slice(0, 16);
 }
 
 function normalizeCostCenter(value: unknown): string {
   return String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
 }
 
-function matchesCostCenterFilter(costCenter: string | null | undefined, selectedCostCenters: Set<string>) {
+function matchesCostCenterFilter(costCenter: string, selectedCostCenters: Set<string>) {
   if (selectedCostCenters.size === 0) return true;
   const normalized = normalizeCostCenter(costCenter);
-  if (!normalized) {
-    return selectedCostCenters.has("unassigned");
-  }
+  if (!normalized) return selectedCostCenters.has("unassigned");
   return selectedCostCenters.has(normalized);
 }
 
-function getSouthAfricaDateTimeParts(date: Date) {
+function getSouthAfricaDateParts(date: Date) {
   const formatter = new Intl.DateTimeFormat("en-GB", {
     timeZone: SOUTH_AFRICA_TIME_ZONE,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: false,
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false,
   });
   const parts = formatter.formatToParts(date);
-  const byType = new Map(parts.map((part) => [part.type, part.value]));
-  return {
-    year: String(byType.get("year") || ""),
-    month: String(byType.get("month") || ""),
-    day: String(byType.get("day") || ""),
-    hour: String(byType.get("hour") || ""),
-    minute: String(byType.get("minute") || ""),
-    second: String(byType.get("second") || ""),
+  const get = (type: string) => Number(parts.find((p) => p.type === type)?.value || 0);
+  return { year: get("year"), month: get("month"), day: get("day"), hour: get("hour"), minute: get("minute"), second: get("second") };
+}
+
+function sastNowYmd(): string {
+  const p = getSouthAfricaDateParts(new Date());
+  return `${p.year}-${String(p.month).padStart(2, "0")}-${String(p.day).padStart(2, "0")}`;
+}
+
+function sastNowHms(): string {
+  const p = getSouthAfricaDateParts(new Date());
+  return `${String(p.hour).padStart(2, "0")}:${String(p.minute).padStart(2, "0")}:${String(p.second).padStart(2, "0")}`;
+}
+
+function sastYesterdayYmd(): string {
+  const d = new Date();
+  d.setDate(d.getDate() - 1);
+  const p = getSouthAfricaDateParts(d);
+  return `${p.year}-${String(p.month).padStart(2, "0")}-${String(p.day).padStart(2, "0")}`;
+}
+
+function todayStartEnd(): { start: string; end: string } {
+  const now = new Date();
+  const p = getSouthAfricaDateParts(now);
+  const d = (h: number, m: number, s: number) => {
+    const guess = Date.UTC(p.year, p.month - 1, p.day, h, m, s, 0);
+    const utcDate = new Date(guess);
+    const sp = getSouthAfricaDateParts(utcDate);
+    const sastAsUtc = Date.UTC(p.year, p.month - 1, p.day, sp.hour, sp.minute, sp.second, 0);
+    const targetAsUtc = Date.UTC(p.year, p.month - 1, p.day, h, m, s, 0);
+    return new Date(guess + (targetAsUtc - sastAsUtc)).toISOString().replace("T", " ").slice(0, 19);
   };
+  return { start: d(0, 0, 0), end: d(23, 59, 59) };
 }
 
-function formatDateInputValue(value?: string | null) {
-  if (!value) return "";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "";
-  const parts = getSouthAfricaDateTimeParts(date);
-  if (!parts.year || !parts.month || !parts.day) return "";
-  return `${parts.year}-${parts.month}-${parts.day}`;
-}
-
-function southAfricaLocalToUtcMs(
-  year: number,
-  month: number,
-  day: number,
-  hours: number,
-  minutes: number,
-  seconds: number,
-  milliseconds = 0
-) {
-  const localAsUtc = Date.UTC(year, month - 1, day, hours, minutes, seconds, milliseconds);
-  return localAsUtc - SOUTH_AFRICA_UTC_OFFSET_MINUTES * 60 * 1000;
-}
-
-function buildCandidateVehicleIds(vehicle?: PlaybackVehicle | null, preferredId?: string | null): string[] {
-  const ordered = [
-    String(preferredId || "").trim(),
-    String(vehicle?.cameraSimId || "").trim(),
-    String(vehicle?.vehicleId || "").trim(),
-    ...((vehicle?.deviceIds || []).map((value) => String(value || "").trim())),
-    String(vehicle?.vehicleRegistration || "").trim(),
-    String(vehicle?.fleetNumber || "").trim(),
-  ];
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const value of ordered) {
-    if (!value) continue;
-    if (seen.has(value)) continue;
-    seen.add(value);
-    out.push(value);
-  }
-  return out;
-}
-
-function formatDateTime(value?: string | null) {
-  if (!value) return "N/A";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "N/A";
-  return `${date.toLocaleString(undefined, {
-    timeZone: SOUTH_AFRICA_TIME_ZONE,
-    hour12: false,
-  })} SAST`;
-}
-
-function formatVehicleRangeSummary(vehicle: PlaybackVehicle | null | undefined) {
-  if (!vehicle) return "No stored range yet";
-  const earliest = String(vehicle.earliestTime || "").trim();
-  const latest = String(vehicle.latestTime || "").trim();
-  if (earliest && latest) {
-    return `${formatDateTime(earliest)} - ${formatDateTime(latest)}`;
-  }
-  if (earliest) return `From ${formatDateTime(earliest)}`;
-  if (latest) return `Until ${formatDateTime(latest)}`;
-  return "No stored range yet";
-}
-
-function formatTimeInputValue(value?: string | null) {
-  if (!value) return "";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "";
-  const parts = getSouthAfricaDateTimeParts(date);
-  const hours = String(parts.hour || "").padStart(2, "0");
-  const minutes = String(parts.minute || "").padStart(2, "0");
-  const seconds = String(parts.second || "").padStart(2, "0");
-  return `${hours}:${minutes}:${seconds}`;
-}
-
-function combineDateAndTime(dateValue: string, timeValue: string) {
-  if (!dateValue || !timeValue) return "";
-  const dateMatch = String(dateValue).trim().match(/^([0-9]{4})-([0-9]{2})-([0-9]{2})$/);
-  if (!dateMatch) return "";
-
-  const timeParts = String(timeValue)
-    .trim()
-    .split(":")
-    .map((part) => Number(part));
-  if (timeParts.length < 2) return "";
-
-  const [, yearRaw, monthRaw, dayRaw] = dateMatch;
-  const year = Number(yearRaw);
-  const month = Number(monthRaw);
-  const day = Number(dayRaw);
-  const hours = Number(timeParts[0] ?? 0);
-  const minutes = Number(timeParts[1] ?? 0);
-  const seconds = Number(timeParts[2] ?? 0);
-
-  if (
-    !Number.isInteger(year) ||
-    !Number.isInteger(month) ||
-    !Number.isInteger(day) ||
-    !Number.isInteger(hours) ||
-    !Number.isInteger(minutes) ||
-    !Number.isInteger(seconds)
-  ) {
-    return "";
-  }
-
-  if (
-    month < 1 ||
-    month > 12 ||
-    day < 1 ||
-    day > 31 ||
-    hours < 0 ||
-    hours > 23 ||
-    minutes < 0 ||
-    minutes > 59 ||
-    seconds < 0 ||
-    seconds > 59
-  ) {
-    return "";
-  }
-
-  const ms = southAfricaLocalToUtcMs(year, month, day, hours, minutes, seconds, 0);
-  if (!Number.isFinite(ms)) return "";
-  return new Date(ms).toISOString();
-}
-
-function getUtcDayBounds(dateValue: string): { startMs: number; endMs: number } | null {
-  const match = String(dateValue || "").trim().match(/^([0-9]{4})-([0-9]{2})-([0-9]{2})$/);
-  if (!match) return null;
-  const year = Number(match[1]);
-  const month = Number(match[2]);
-  const day = Number(match[3]);
-  if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) return null;
-  const startMs = southAfricaLocalToUtcMs(year, month, day, 0, 0, 0, 0);
-  const endMs = southAfricaLocalToUtcMs(year, month, day, 23, 59, 59, 999);
-  if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) return null;
-  return { startMs, endMs };
-}
-
-function sourceLooksHls(url: string) {
-  return /\.m3u8(?:$|\?)/i.test(url);
-}
-
-function normalizeBackendMediaUrl(url: string, videoProxyBase: string) {
-  const value = String(url || "").trim();
-  if (!value) return "";
-  if (/^https?:\/\//i.test(value)) {
-    try {
-      const parsed = new URL(value);
-      if (parsed.pathname.startsWith("/api/video-server/")) {
-        return `${videoProxyBase}${parsed.pathname.slice("/api/video-server".length)}${parsed.search || ""}`;
-      }
-      if (parsed.pathname.startsWith("/api/")) {
-        return `${videoProxyBase}${parsed.pathname.slice(4)}${parsed.search || ""}`;
-      }
-      if (parsed.pathname.startsWith("/media/")) {
-        return `${videoProxyBase}${parsed.pathname}${parsed.search || ""}`;
-      }
-      return value;
-    } catch {
-      return value;
-    }
-  }
-  if (value.startsWith(`${videoProxyBase}/`)) return value;
-  if (value.startsWith("/media/")) return `${videoProxyBase}${value}`;
-  if (value.startsWith("/api/")) {
-    return `${videoProxyBase}${value.slice(4)}`;
-  }
-  if (value.startsWith("/")) return value;
-  return `${videoProxyBase}/${value.replace(/^\/+/, "")}`;
-}
-
-function readRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
-}
-
-function errorMessage(error: unknown, fallback: string) {
-  if (error instanceof Error) {
-    const message = String(error.message || "").trim();
-    return message || fallback;
-  }
-  const message = String(error || "").trim();
-  return message || fallback;
-}
-
-function isTimeoutLikeMessage(value: unknown) {
-  const message = String(value || "").toLowerCase();
-  return (
-    message.includes("timed out") ||
-    message.includes("timeout") ||
-    message.includes("signal timed out") ||
-    message.includes("aborted") ||
-    message.includes("aborterror")
-  );
-}
-
-function parseAvailableRangeFromMessage(value: unknown): ParsedAvailableRange | null {
-  const raw = String(value || "").trim();
-  if (!raw) return null;
-  const match = raw.match(
-    /Approx available range:\s*([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:\.\-+Z]+)\s+to\s+([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:\.\-+Z]+)/i
-  );
-  if (!match) return null;
-
-  const startRaw = String(match[1] || "").trim().replace(/[.,;]$/, "");
-  const endRaw = String(match[2] || "").trim().replace(/[.,;]$/, "");
-  const startMs = new Date(startRaw).getTime();
-  const endMs = new Date(endRaw).getTime();
-  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) return null;
-  return {
-    startIso: new Date(startMs).toISOString(),
-    endIso: new Date(endMs).toISOString(),
+function sastDateToRange(dateStr: string): { start: string; end: string } {
+  const [yearRaw, monthRaw, dayRaw] = dateStr.split("-").map(Number);
+  const d = (h: number, m: number, s: number) => {
+    const guess = Date.UTC(yearRaw, monthRaw - 1, dayRaw, h, m, s, 0);
+    const utcDate = new Date(guess);
+    const sp = getSouthAfricaDateParts(utcDate);
+    const sastAsUtc = Date.UTC(yearRaw, monthRaw - 1, dayRaw, sp.hour, sp.minute, sp.second, 0);
+    const targetAsUtc = Date.UTC(yearRaw, monthRaw - 1, dayRaw, h, m, s, 0);
+    return new Date(guess + (targetAsUtc - sastAsUtc)).toISOString().replace("T", " ").slice(0, 19);
   };
-}
-
-function PlaybackVideoPlayer({
-  url,
-  className = "w-full rounded-2xl border border-slate-800 bg-black shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]",
-}: {
-  url: string;
-  className?: string;
-}) {
-  const videoRef = useRef<HTMLVideoElement | null>(null);
-  const [error, setError] = useState("");
-
-  useEffect(() => {
-    const videoEl = videoRef.current;
-    if (!videoEl || !url) return;
-    setError("");
-
-    let hls: Hls | null = null;
-    const isHls = sourceLooksHls(url);
-
-    if (isHls) {
-      videoEl.removeAttribute("src");
-      videoEl.load();
-
-      if (videoEl.canPlayType("application/vnd.apple.mpegurl")) {
-        videoEl.src = url;
-      } else if (Hls.isSupported()) {
-        hls = new Hls({ enableWorker: true, lowLatencyMode: true });
-        hls.loadSource(url);
-        hls.attachMedia(videoEl);
-        hls.on(Hls.Events.ERROR, (_, data) => {
-          if (data?.fatal) setError("Playback stream failed.");
-        });
-      } else {
-        setError("HLS is not supported in this browser.");
-      }
-    } else {
-      videoEl.src = url;
-      videoEl.load();
-    }
-
-    return () => {
-      if (hls) hls.destroy();
-    };
-  }, [url]);
-
-  return (
-    <div className="space-y-2">
-      <video ref={videoRef} controls playsInline className={className} />
-      {error ? <p className="text-xs text-rose-600">{error}</p> : null}
-    </div>
-  );
+  return { start: d(0, 0, 0), end: d(23, 59, 59) };
 }
 
 type PlaybackDashboardTabProps = {
@@ -447,620 +123,88 @@ type PlaybackDashboardTabProps = {
 };
 
 export default function PlaybackDashboardTab({ selectedCostCenters = [] }: PlaybackDashboardTabProps) {
-  const videoProxyBase = "/api/video-server";
   const supabase = createClient();
   const [vehicles, setVehicles] = useState<PlaybackVehicle[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [searchQuery, setSearchQuery] = useState("");
+  const [vehicleSearch, setVehicleSearch] = useState("");
+  const initialLoadRef = useRef(false);
+
   const [selectedVehicle, setSelectedVehicle] = useState<PlaybackVehicle | null>(null);
-  const [selectedDate, setSelectedDate] = useState("");
-  const [availability, setAvailability] = useState<PlaybackChannelAvailability[]>([]);
-  const [availabilityLoading, setAvailabilityLoading] = useState(false);
   const [selectedChannel, setSelectedChannel] = useState(1);
-  const [playBothChannels, setPlayBothChannels] = useState(false);
-  const [startTime, setStartTime] = useState("");
-  const [endTime, setEndTime] = useState("");
-  const [playbackItems, setPlaybackItems] = useState<PlaybackItem[]>([]);
-  const [playbackState, setPlaybackState] = useState<"idle" | "loading" | "ready" | "error">("idle");
-  const [playbackError, setPlaybackError] = useState("");
-  const [rangeSummary, setRangeSummary] = useState("");
-  const [resolvedVehicleId, setResolvedVehicleId] = useState("");
-  const PLAYBACK_AVAILABILITY_TIMEOUT_MS = 15000;
-  const initialLoadStartedRef = useRef(false);
-
-  const vehicleDisplayLabel = useCallback((vehicle: PlaybackVehicle | null | undefined) => {
-    if (!vehicle) return "N/A";
-    if (vehicle.fleetNumber && vehicle.vehicleRegistration) {
-      return `${vehicle.fleetNumber} - ${vehicle.vehicleRegistration}`;
-    }
-    if (vehicle.vehicleRegistration) return vehicle.vehicleRegistration;
-    if (vehicle.fleetNumber) return vehicle.fleetNumber;
-    if (vehicle.vehicleId) return vehicle.vehicleId;
-    return "Unknown vehicle";
-  }, []);
-
-  const fetchJsonWithRetry = useCallback(async (url: string, timeoutMs: number, retries = 1) => {
-    let lastError: unknown = null;
-    for (let attempt = 0; attempt <= retries; attempt += 1) {
-      try {
-        const res = await fetch(url, {
-          cache: "no-store",
-          signal: AbortSignal.timeout(timeoutMs),
-        });
-        const json = await res.json().catch(() => ({}));
-        const hasSuccessFlag = json && typeof json === "object" && Object.prototype.hasOwnProperty.call(json, "success");
-        const isSuccess = hasSuccessFlag ? Boolean((json as { success?: unknown }).success) : true;
-        if (!res.ok || !isSuccess) {
-          throw new Error(json?.message || json?.error || `HTTP ${res.status}`);
-        }
-        return json;
-      } catch (error) {
-        lastError = error;
-        if (attempt >= retries) throw error;
-        await new Promise((resolve) => setTimeout(resolve, 800 * (attempt + 1)));
-      }
-    }
-    throw lastError || new Error("Request failed");
-  }, []);
+  const [selectedDate, setSelectedDate] = useState(sastNowYmd());
+  const [startTime, setStartTime] = useState("00:00:00");
+  const [endTime, setEndTime] = useState(sastNowHms());
+  const [searching, setSearching] = useState(false);
+  const [files, setFiles] = useState<HistoryFile[]>([]);
+  const [filesSearched, setFilesSearched] = useState(false);
+  const [replayUrl, setReplayUrl] = useState("");
+  const [replayLoading, setReplayLoading] = useState(false);
+  const [replayError, setReplayError] = useState("");
+  const [earliestFootage, setEarliestFootage] = useState<string | null>(null);
+  const [latestFootage, setLatestFootage] = useState<string | null>(null);
 
   const fetchVehicles = useCallback(async (): Promise<PlaybackVehicle[]> => {
-    const bySimId = new Map<string, PlaybackVehicle>();
-    type CatalogMeta = {
-      registration: string | null;
-      fleetNumber: string | null;
-      make: string | null;
-      model: string | null;
-      costCenter: string | null;
-      primaryId: string;
-      aliases: string[];
-    };
-    const catalogByLookup = new Map<string, CatalogMeta>();
-    const seedCatalogByKey = (key: string, meta: CatalogMeta) => {
-      for (const lookupKey of buildVehicleLookupKeys(key)) {
-        if (!catalogByLookup.has(lookupKey)) {
-          catalogByLookup.set(lookupKey, meta);
-        }
-      }
-    };
-
-    const toValidIso = (value: unknown) => {
-      const raw = String(value || "").trim();
-      if (!raw) return null;
-      const ms = new Date(raw).getTime();
-      return Number.isFinite(ms) ? new Date(ms).toISOString() : null;
-    };
-
     const { data: vehicleRows, error: vehiclesError } = await supabase
       .from("vehiclesc")
-      .select("registration_number, fleet_number, camera_sim_id, camera_serial, make, model, cost_center");
+      .select("registration_number, fleet_number, cost_center, camera_sim_id");
 
-    if (vehiclesError) {
-      throw new Error(vehiclesError.message || "Failed to load vehicles");
-    }
+    if (vehiclesError) throw new Error(vehiclesError.message || "Failed to load vehicles");
 
-    for (const rawRow of vehicleRows || []) {
-      const row = rawRow as PlaybackCatalogRow;
-      const primaryId = String(row?.camera_sim_id || row?.camera_serial || "").trim();
-      if (!primaryId) continue;
-      const serialId = String(row?.camera_serial || "").trim();
-      const simId = String(row?.camera_sim_id || "").trim();
-      const aliases = [simId, serialId].filter(Boolean);
-      const meta: CatalogMeta = {
-        registration: String(row?.registration_number || "").trim() || null,
-        fleetNumber: String(row?.fleet_number || "").trim() || null,
-        make: String(row?.make || "").trim() || null,
-        model: String(row?.model || "").trim() || null,
-        costCenter: String(row?.cost_center || "").trim() || null,
-        primaryId,
-        aliases,
-      };
-      for (const alias of aliases) {
-        seedCatalogByKey(alias, meta);
-      }
-      seedCatalogByKey(primaryId, meta);
-    }
-
-    const lookupCatalog = (...values: unknown[]) => {
-      for (const value of values) {
-        for (const lookupKey of buildVehicleLookupKeys(value)) {
-          const found = catalogByLookup.get(lookupKey);
-          if (found) return found;
-        }
-      }
-      return null;
-    };
-
-    try {
-      const inventoryJson = await fetchJsonWithRetry(
-        `${videoProxyBase}/storage/vehicles?limit=5000`,
-        PLAYBACK_AVAILABILITY_TIMEOUT_MS,
-        1
-      );
-      const inventoryRecord = readRecord(inventoryJson);
-      const inventoryData = readRecord(inventoryRecord.data);
-      const inventoryRows = Array.isArray(inventoryRecord.vehicles)
-        ? inventoryRecord.vehicles
-        : Array.isArray(inventoryData.vehicles)
-          ? inventoryData.vehicles
-          : [];
-
-      for (const rawVehicle of inventoryRows) {
-        const row = readRecord(rawVehicle);
-        const simId = String(
-          row?.sim || row?.vehicleId || row?.vehicle_id || row?.camera_sim_id || row?.id || ""
-        ).trim();
-        if (!simId) continue;
-        const serialId = String(row?.camera_serial || row?.serial || "").trim();
-        const catalogMeta = lookupCatalog(simId, serialId);
-
-        const channelEntries = Array.isArray(row?.channels)
-          ? row.channels.map((entry) => readRecord(entry))
-          : [];
-        const channels = Array.from(
-          new Set(
-            channelEntries
-              .map((entry) => Number(entry?.channel || 0))
-              .filter((value) => Number.isFinite(value) && value > 0)
-          )
-        ).sort((a, b) => a - b);
-
-        const earliestCandidates = [
-          row?.from,
-          row?.earliestTime,
-          row?.first_packet_time,
-          ...channelEntries.map((entry) => entry?.from || entry?.earliestTime || entry?.first_packet_time),
-        ]
-          .map(toValidIso)
-          .filter((value): value is string => !!value);
-
-        const latestCandidates = [
-          row?.to,
-          row?.latestTime,
-          row?.last_packet_time,
-          ...channelEntries.map((entry) => entry?.to || entry?.latestTime || entry?.last_packet_time),
-        ]
-          .map(toValidIso)
-          .filter((value): value is string => !!value);
-
-        const clipCount = channelEntries.reduce((total, entry) => {
-          const next = Number(
-            entry?.clipCount ??
-              entry?.clip_count ??
-              entry?.fileCount ??
-              entry?.file_count ??
-              entry?.count ??
-              0
-          );
-          return total + (Number.isFinite(next) && next > 0 ? next : 0);
-        }, 0);
-
-        const deviceIds = Array.from(
-          new Set(
-            [
-              simId,
-              serialId,
-              ...(catalogMeta?.aliases || []),
-              String(row?.vehicleId || "").trim(),
-              String(row?.vehicle_id || "").trim(),
-            ]
-              .map((value) => String(value || "").trim())
-              .filter(Boolean)
-          )
-        );
-
-        bySimId.set(simId, {
-          vehicleId: simId,
-          deviceIds: deviceIds.length > 0 ? deviceIds : [simId],
-          cameraSimId: simId,
-          clipCount,
-          earliestTime: earliestCandidates.sort()[0] || null,
-          latestTime: latestCandidates.sort().slice(-1)[0] || null,
-          channels: channels.length > 0 ? channels : [1, 2],
-          vehicleRegistration: catalogMeta?.registration || null,
-          fleetNumber: catalogMeta?.fleetNumber || null,
-          make: catalogMeta?.make || null,
-          model: catalogMeta?.model || null,
-          costCenter: catalogMeta?.costCenter || null,
-        });
-      }
-    } catch {
-      // Fall back to metadata inventory only if hub inventory is temporarily unavailable.
-    }
+    const catalogVehicles: PlaybackVehicle[] = [];
+    const seen = new Set<string>();
 
     for (const row of vehicleRows || []) {
-      const catalogRow = row as PlaybackCatalogRow;
-      const cameraSimId = String(catalogRow?.camera_sim_id || catalogRow?.camera_serial || "").trim();
-      if (!cameraSimId) continue;
-
-      const registration = String(catalogRow?.registration_number || "").trim();
-      const fleetNumber = String(catalogRow?.fleet_number || "").trim();
-      const make = String(catalogRow?.make || "").trim();
-      const model = String(catalogRow?.model || "").trim();
-      const costCenter = String(catalogRow?.cost_center || "").trim();
-      const serialId = String(catalogRow?.camera_serial || "").trim();
-      const existing = bySimId.get(cameraSimId);
-
-      if (!existing) {
-        bySimId.set(cameraSimId, {
-          vehicleId: cameraSimId,
-          deviceIds: Array.from(new Set([cameraSimId, serialId].filter(Boolean))),
-          cameraSimId: cameraSimId,
-          clipCount: 0,
-          earliestTime: null,
-          latestTime: null,
-          channels: [1, 2],
-          vehicleRegistration: registration || null,
-          fleetNumber: fleetNumber || null,
-          make: make || null,
-          model: model || null,
-          costCenter: costCenter || null,
-        });
-        continue;
-      }
-
-      existing.deviceIds = Array.from(
-        new Set([cameraSimId, serialId, ...existing.deviceIds].map((value) => String(value || "").trim()).filter(Boolean))
-      );
-      existing.cameraSimId = existing.cameraSimId || cameraSimId;
-      existing.vehicleId = existing.vehicleId || cameraSimId;
-      if (!existing.vehicleRegistration && registration) existing.vehicleRegistration = registration;
-      if (!existing.fleetNumber && fleetNumber) existing.fleetNumber = fleetNumber;
-      if (!existing.make && make) existing.make = make;
-      if (!existing.model && model) existing.model = model;
-      if (!existing.costCenter && costCenter) existing.costCenter = costCenter;
-      bySimId.set(cameraSimId, existing);
+      const simId = String((row as DbVehicle).camera_sim_id || "").trim();
+      if (!simId || seen.has(simId)) continue;
+      seen.add(simId);
+      catalogVehicles.push({
+        vehicleId: simId,
+        registration: String((row as DbVehicle).registration_number || "").trim(),
+        fleetNumber: String((row as DbVehicle).fleet_number || "").trim(),
+        costCenter: String((row as DbVehicle).cost_center || "").trim(),
+        deviceId: simId,
+        online: false,
+      });
     }
 
-    const rowsByVehicle = Array.from(bySimId.values()).sort((a, b) => {
-      const aRank = hasMatchedVehicleIdentity(a) ? 0 : 1;
-      const bRank = hasMatchedVehicleIdentity(b) ? 0 : 1;
-      if (aRank !== bRank) return aRank - bRank;
-      return vehicleDisplayLabel(a).localeCompare(vehicleDisplayLabel(b));
-    });
-
-    setVehicles(rowsByVehicle);
-    return rowsByVehicle;
-  }, [PLAYBACK_AVAILABILITY_TIMEOUT_MS, fetchJsonWithRetry, supabase, vehicleDisplayLabel, videoProxyBase]);
-
-  const fetchAvailability = useCallback(async (vehicle: PlaybackVehicle, date: string) => {
-    setAvailabilityLoading(true);
     try {
-      const candidateVehicleIds = buildCandidateVehicleIds(vehicle, resolvedVehicleId);
-      const dayBounds = getUtcDayBounds(date);
-      const dayStartMs = dayBounds?.startMs ?? Number.NaN;
-      const dayEndMs = dayBounds?.endMs ?? Number.NaN;
+      const onlineRes = await fetch(`${EPS_API}/eps/stream/online`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+        cache: "no-store",
+        signal: AbortSignal.timeout(10000),
+      }).catch(() => null);
 
-      const toMs = (value?: string | null) => {
-        const ms = value ? new Date(value).getTime() : Number.NaN;
-        return Number.isFinite(ms) ? ms : Number.NaN;
-      };
-
-      const parseAvailability = (json: unknown, candidateVehicleId: string): PlaybackChannelAvailability[] => {
-        const jsonRecord = readRecord(json);
-        const jsonData = readRecord(jsonRecord.data);
-        const channelsFromResponse = Array.isArray(jsonData.channels)
-          ? (jsonData.channels as AvailabilityChannelResponse[])
-          : Array.isArray(jsonRecord.channels)
-            ? (jsonRecord.channels as AvailabilityChannelResponse[])
-            : [];
-
-        if (channelsFromResponse.length > 0) {
-          return channelsFromResponse
-            .map((entry: AvailabilityChannelResponse) => {
-              const earliestTime =
-                String(entry?.earliestTime || entry?.earliest_time || entry?.from || "").trim() || null;
-              const latestTime =
-                String(entry?.latestTime || entry?.latest_time || entry?.to || "").trim() || null;
-              const normalizedClips = Array.isArray(entry?.clips)
-                ? entry.clips.map((clip: AvailabilityClipResponse, idx: number) => ({
-                    id: String(clip?.id || `${candidateVehicleId}_${entry?.channel || 1}_${idx}`),
-                    startTime: String(clip?.startTime || clip?.start_time || "").trim(),
-                    endTime: String(clip?.endTime || clip?.end_time || "").trim() || null,
-                    durationSeconds: Number(clip?.durationSeconds ?? clip?.duration_seconds ?? 0) || undefined,
-                    fileSize: Number(clip?.fileSize ?? clip?.file_size ?? 0) || undefined,
-                    videoType: String(clip?.videoType || clip?.video_type || "").trim() || undefined,
-                  }))
-                : [];
-              const clips = normalizedClips.length > 0
-                ? normalizedClips
-                : earliestTime && latestTime
-                  ? [
-                      {
-                        id: `${candidateVehicleId}_${entry?.channel || 1}_window`,
-                        startTime: earliestTime,
-                        endTime: latestTime,
-                      },
-                    ]
-                  : [];
-              const clipCountCandidate = Number(
-                entry?.clipCount ?? entry?.clip_count ?? entry?.fileCount ?? entry?.file_count ?? 0
-              );
-              return {
-                channel: Number(entry?.channel || 0),
-                clipCount: Number.isFinite(clipCountCandidate) && clipCountCandidate > 0 ? clipCountCandidate : clips.length,
-                earliestTime,
-                latestTime,
-                clips,
-              };
-            })
-            .filter((entry: PlaybackChannelAvailability) => Number.isFinite(entry.channel) && entry.channel > 0)
-            .sort((a, b) => a.channel - b.channel);
-        }
-
-        const rows = Array.isArray(jsonRecord.rows)
-          ? jsonRecord.rows
-          : Array.isArray(jsonData.rows)
-            ? jsonData.rows
-            : Array.isArray(jsonRecord.data)
-              ? jsonRecord.data
-              : [];
-
-        const channelMap = new Map<
-          number,
-          {
-            channel: number;
-            clipCount: number;
-            earliestTime: string | null;
-            latestTime: string | null;
+      if (onlineRes && onlineRes.ok) {
+        const onlineData = await onlineRes.json().catch(() => ({}));
+        if (onlineData.success && onlineData.data?.devices) {
+          const deviceMap = new Map<string, boolean>();
+          for (const d of onlineData.data.devices) {
+            if (d.deviceId) deviceMap.set(d.deviceId, d.online === true);
           }
-        >();
-
-        const pushRow = (row: Record<string, unknown>, applyDateBounds: boolean) => {
-          const channel = Number(row?.channel || 0);
-          if (!Number.isFinite(channel) || channel <= 0) return;
-
-          const firstRaw = String(
-            row?.approx_first_packet_time ||
-              row?.first_packet_time ||
-              row?.earliestTime ||
-              ""
-          ).trim();
-          const lastRaw = String(
-            row?.approx_last_packet_time ||
-              row?.last_packet_time ||
-              row?.latestTime ||
-              ""
-          ).trim();
-
-          let firstMs = toMs(firstRaw);
-          let lastMs = toMs(lastRaw);
-
-          if (applyDateBounds && Number.isFinite(dayStartMs) && Number.isFinite(dayEndMs) && Number.isFinite(firstMs) && Number.isFinite(lastMs)) {
-            if (lastMs < dayStartMs || firstMs > dayEndMs) return;
-            firstMs = Math.max(firstMs, dayStartMs);
-            lastMs = Math.min(lastMs, dayEndMs);
-          }
-
-          const firstIso = Number.isFinite(firstMs) ? new Date(firstMs).toISOString() : firstRaw || null;
-          const lastIso = Number.isFinite(lastMs) ? new Date(lastMs).toISOString() : lastRaw || null;
-
-          const existing = channelMap.get(channel) || {
-            channel,
-            clipCount: 0,
-            earliestTime: null,
-            latestTime: null,
-          };
-
-          const countCandidate = Number(row?.file_count ?? row?.clip_count ?? 1);
-          existing.clipCount += Number.isFinite(countCandidate) && countCandidate > 0 ? countCandidate : 1;
-
-          if (firstIso) {
-            const firstIsoMs = toMs(firstIso);
-            const existingFirstMs = toMs(existing.earliestTime);
-            if (!Number.isFinite(existingFirstMs) || (Number.isFinite(firstIsoMs) && firstIsoMs < existingFirstMs)) {
-              existing.earliestTime = firstIso;
-            }
-          }
-
-          if (lastIso) {
-            const lastIsoMs = toMs(lastIso);
-            const existingLastMs = toMs(existing.latestTime);
-            if (!Number.isFinite(existingLastMs) || (Number.isFinite(lastIsoMs) && lastIsoMs > existingLastMs)) {
-              existing.latestTime = lastIso;
-            }
-          }
-
-          channelMap.set(channel, existing);
-        };
-
-        rows.forEach((row) => pushRow(readRecord(row), true));
-        if (channelMap.size === 0) {
-          rows.forEach((row) => pushRow(readRecord(row), false));
-        }
-
-        return Array.from(channelMap.values())
-          .sort((a, b) => a.channel - b.channel)
-          .map((entry) => ({
-            channel: entry.channel,
-            clipCount: entry.clipCount,
-            earliestTime: entry.earliestTime,
-            latestTime: entry.latestTime,
-            clips:
-              entry.earliestTime && entry.latestTime
-                ? [
-                    {
-                      id: `${candidateVehicleId}_${entry.channel}_${date}`,
-                      startTime: entry.earliestTime,
-                      endTime: entry.latestTime,
-                    },
-                  ]
-                : [],
-          }));
-      };
-
-      const parseExactCoverage = (json: unknown, candidateVehicleId: string): PlaybackChannelAvailability[] => {
-        const jsonRecord = readRecord(json);
-        const jsonData = readRecord(jsonRecord.data);
-        const rows = Array.isArray(jsonRecord.rows)
-          ? jsonRecord.rows
-          : Array.isArray(jsonData.rows)
-            ? jsonData.rows
-            : Array.isArray(jsonRecord.data)
-              ? jsonRecord.data
-              : [];
-
-        return rows
-          .map((value) => readRecord(value) as CoverageRowResponse)
-          .map((row, index) => {
-            const channel = Number(row?.channel || 0);
-            if (!Number.isFinite(channel) || channel <= 0) return null;
-            const firstRaw = String(row?.first_packet_time || "").trim();
-            const lastRaw = String(row?.last_packet_time || "").trim();
-            const firstMs = firstRaw ? new Date(firstRaw).getTime() : Number.NaN;
-            const lastMs = lastRaw ? new Date(lastRaw).getTime() : Number.NaN;
-            const earliestTime = Number.isFinite(firstMs) ? new Date(firstMs).toISOString() : null;
-            const latestTime = Number.isFinite(lastMs) ? new Date(lastMs).toISOString() : null;
-            const hasRange = !!earliestTime && !!latestTime && new Date(latestTime).getTime() >= new Date(earliestTime).getTime();
-            return {
-              channel,
-              clipCount: hasRange ? 1 : 0,
-              earliestTime,
-              latestTime,
-              clips: hasRange
-                ? [
-                    {
-                      id: `${candidateVehicleId}_${channel}_coverage_${index}`,
-                      startTime: earliestTime,
-                      endTime: latestTime,
-                    },
-                  ]
-                : [],
-            } as PlaybackChannelAvailability;
-          })
-          .filter((entry): entry is PlaybackChannelAvailability => !!entry)
-          .sort((a, b) => a.channel - b.channel);
-      };
-
-      let hasSuccessfulResponse = false;
-      let lastError: unknown = null;
-
-      for (const candidateVehicleId of candidateVehicleIds) {
-        if (Number.isFinite(dayStartMs) && Number.isFinite(dayEndMs)) {
-          try {
-            const storageQuery = new URLSearchParams({
-              sim: candidateVehicleId,
-              from: new Date(dayStartMs).toISOString(),
-              to: new Date(dayEndMs).toISOString(),
-            });
-            const storageJson = await fetchJsonWithRetry(
-              `${videoProxyBase}/storage/availability?${storageQuery.toString()}`,
-              PLAYBACK_AVAILABILITY_TIMEOUT_MS,
-              0
-            );
-            hasSuccessfulResponse = true;
-            const storageChannels = parseAvailability(storageJson, candidateVehicleId).filter((entry) =>
-              channelHasStoredFiles(entry)
-            );
-            if (storageChannels.length > 0) {
-              setAvailability(storageChannels);
-              setResolvedVehicleId(candidateVehicleId);
-              const preferredChannel = storageChannels.find((entry) => channelHasStoredFiles(entry)) || storageChannels[0];
-              const nextChannel = Number(preferredChannel?.channel || 1);
-              setSelectedChannel(nextChannel);
-              const firstClip = preferredChannel?.clips?.[0];
-              const lastClip = preferredChannel?.clips?.[preferredChannel?.clips?.length - 1];
-              setStartTime(formatTimeInputValue(firstClip?.startTime || preferredChannel?.earliestTime));
-              setEndTime(formatTimeInputValue(lastClip?.endTime || lastClip?.startTime || preferredChannel?.latestTime));
-              return;
-            }
-          } catch (error) {
-            lastError = error;
-          }
-        }
-
-        if (Number.isFinite(dayStartMs) && Number.isFinite(dayEndMs)) {
-          try {
-            const exactCoverageQuery = new URLSearchParams({
-              from: new Date(dayStartMs).toISOString(),
-              to: new Date(dayEndMs).toISOString(),
-              vehicleId: candidateVehicleId,
-            });
-            const exactCoverageJson = await fetchJsonWithRetry(
-              `${videoProxyBase}/video/coverage?${exactCoverageQuery.toString()}`,
-              PLAYBACK_AVAILABILITY_TIMEOUT_MS,
-              0
-            );
-            hasSuccessfulResponse = true;
-            const exactChannels = parseExactCoverage(exactCoverageJson, candidateVehicleId).filter((entry) =>
-              channelHasStoredFiles(entry)
-            );
-            if (exactChannels.length > 0) {
-              setAvailability(exactChannels);
-              setResolvedVehicleId(candidateVehicleId);
-              const preferredChannel = exactChannels.find((entry) => channelHasStoredFiles(entry)) || exactChannels[0];
-              const nextChannel = Number(preferredChannel?.channel || 1);
-              setSelectedChannel(nextChannel);
-              const firstClip = preferredChannel?.clips?.[0];
-              const lastClip = preferredChannel?.clips?.[preferredChannel?.clips?.length - 1];
-              setStartTime(formatTimeInputValue(firstClip?.startTime || preferredChannel?.earliestTime));
-              setEndTime(formatTimeInputValue(lastClip?.endTime || lastClip?.startTime || preferredChannel?.latestTime));
-              return;
-            }
-          } catch (error) {
-            lastError = error;
-          }
-        }
-
-        const encodedVehicle = encodeURIComponent(candidateVehicleId);
-        const encodedDate = encodeURIComponent(date);
-        const availabilityUrls = [
-          `${videoProxyBase}/vehicles/${encodedVehicle}/videos/availability?date=${encodedDate}`,
-          `${videoProxyBase}/vehicles/${encodedVehicle}/video/availability?date=${encodedDate}`,
-        ];
-
-        for (const url of availabilityUrls) {
-          try {
-            const json = await fetchJsonWithRetry(url, PLAYBACK_AVAILABILITY_TIMEOUT_MS, 0);
-            hasSuccessfulResponse = true;
-            const channels = parseAvailability(json, candidateVehicleId);
-            if (channels.length > 0) {
-              setAvailability(channels);
-              setResolvedVehicleId(candidateVehicleId);
-              const preferredChannel = channels.find((entry) => channelHasStoredFiles(entry)) || channels[0];
-              const nextChannel = Number(preferredChannel?.channel || 1);
-              setSelectedChannel(nextChannel);
-              const firstClip = preferredChannel?.clips?.[0];
-              const lastClip = preferredChannel?.clips?.[preferredChannel?.clips?.length - 1];
-              setStartTime(formatTimeInputValue(firstClip?.startTime || preferredChannel?.earliestTime));
-              setEndTime(formatTimeInputValue(lastClip?.endTime || lastClip?.startTime || preferredChannel?.latestTime));
-              return;
-            }
-            break;
-          } catch (error) {
-            lastError = error;
+          for (const v of catalogVehicles) {
+            if (deviceMap.has(v.deviceId)) v.online = deviceMap.get(v.deviceId) || false;
           }
         }
       }
+    } catch {}
 
-      if (!hasSuccessfulResponse && lastError) {
-        throw lastError;
-      }
-
-      setAvailability([]);
-      setResolvedVehicleId(candidateVehicleIds[0] || "");
-      setSelectedChannel(1);
-      setStartTime("");
-      setEndTime("");
-    } finally {
-      setAvailabilityLoading(false);
-    }
-  }, [fetchJsonWithRetry, resolvedVehicleId, videoProxyBase]);
+    return catalogVehicles.sort((a, b) => {
+      const aLabel = [a.fleetNumber, a.registration].filter(Boolean).join(" - ");
+      const bLabel = [b.fleetNumber, b.registration].filter(Boolean).join(" - ");
+      return aLabel.localeCompare(bLabel);
+    });
+  }, [supabase]);
 
   const refreshAll = useCallback(async () => {
     setRefreshing(true);
     try {
-      await fetchVehicles();
-      setPlaybackError("");
-    } catch (error: unknown) {
-      console.error("Failed to load playback inventory:", error);
+      const result = await fetchVehicles();
+      setVehicles(result);
+    } catch {
       setVehicles([]);
-      const message = errorMessage(error, "");
-      if (/timed out|timeout|aborted/i.test(message)) {
-        setPlaybackError("Playback inventory request timed out. Please refresh to retry.");
-      } else {
-        setPlaybackError(message || "Failed to load playback inventory.");
-      }
     } finally {
       setRefreshing(false);
       setLoading(false);
@@ -1068,809 +212,374 @@ export default function PlaybackDashboardTab({ selectedCostCenters = [] }: Playb
   }, [fetchVehicles]);
 
   useEffect(() => {
-    if (initialLoadStartedRef.current) return;
-    initialLoadStartedRef.current = true;
+    if (initialLoadRef.current) return;
+    initialLoadRef.current = true;
     void refreshAll();
   }, [refreshAll]);
 
-  useEffect(() => {
-    if (!selectedVehicle || !selectedDate) return;
-    void fetchAvailability(selectedVehicle, selectedDate);
-  }, [fetchAvailability, selectedDate, selectedVehicle]);
-
   const selectedCostCenterSet = useMemo(
-    () =>
-      new Set(
-        selectedCostCenters
-          .map((value) => normalizeCostCenter(value))
-          .filter(Boolean)
-      ),
+    () => new Set(selectedCostCenters.map((v) => normalizeCostCenter(v)).filter(Boolean)),
     [selectedCostCenters]
   );
 
-  const scopedVehicles = useMemo(
-    () => vehicles.filter((vehicle) => matchesCostCenterFilter(vehicle.costCenter, selectedCostCenterSet)),
-    [selectedCostCenterSet, vehicles]
-  );
-
-  useEffect(() => {
-    if (!selectedVehicle) return;
-    const selectedId = String(selectedVehicle.vehicleId || "").trim();
-    const hasSelectedInScope = scopedVehicles.some((vehicle) => {
-      const vehicleId = String(vehicle.vehicleId || "").trim();
-      const vehicleSimId = String(vehicle.cameraSimId || "").trim();
-      return !!selectedId && (vehicleId === selectedId || vehicleSimId === selectedId);
-    });
-    if (!hasSelectedInScope) {
-      setSelectedVehicle(null);
-      setAvailability([]);
-      setPlaybackItems([]);
-      setPlaybackState("idle");
-      setPlaybackError("");
-      setRangeSummary("");
-    }
-  }, [scopedVehicles, selectedVehicle]);
-
   const filteredVehicles = useMemo(() => {
-    const needle = searchQuery.trim().toLowerCase();
-
-    const getMatchRank = (vehicle: PlaybackVehicle) => {
-      const reg = String(vehicle.vehicleRegistration || "").trim().toLowerCase();
-      const fleet = String(vehicle.fleetNumber || "").trim().toLowerCase();
-      const display = String(vehicleDisplayLabel(vehicle) || "").trim().toLowerCase();
-      const id = String(vehicle.vehicleId || "").trim().toLowerCase();
-      const aliases = (vehicle.deviceIds || []).map((value) => String(value || "").trim().toLowerCase());
-
-      if (!needle) return hasMatchedVehicleIdentity(vehicle) ? 0 : 1;
-      if (reg === needle || fleet === needle) return 0;
-      if (reg.startsWith(needle) || fleet.startsWith(needle)) return 1;
-      if (reg.includes(needle) || fleet.includes(needle)) return 2;
-      if (display.includes(needle)) return 3;
-      if (id.includes(needle) || aliases.some((value) => value.includes(needle))) return 4;
-      return 99;
-    };
-
-    return scopedVehicles
-      .filter((vehicle) => getMatchRank(vehicle) < 99)
-      .sort((a, b) => {
-        const rankDiff = getMatchRank(a) - getMatchRank(b);
-        if (rankDiff !== 0) return rankDiff;
-        const aIdentityRank = hasMatchedVehicleIdentity(a) ? 0 : 1;
-        const bIdentityRank = hasMatchedVehicleIdentity(b) ? 0 : 1;
-        if (aIdentityRank !== bIdentityRank) return aIdentityRank - bIdentityRank;
-        return vehicleDisplayLabel(a).localeCompare(vehicleDisplayLabel(b));
+    const needle = vehicleSearch.trim().toLowerCase();
+    return vehicles
+      .filter((v) => matchesCostCenterFilter(v.costCenter, selectedCostCenterSet))
+      .filter((v) => {
+        if (!needle) return true;
+        return v.registration.toLowerCase().includes(needle) || v.fleetNumber.toLowerCase().includes(needle) || v.deviceId.includes(needle);
       });
-  }, [scopedVehicles, searchQuery, vehicleDisplayLabel]);
+  }, [vehicles, vehicleSearch, selectedCostCenterSet]);
 
-  const canonicalSelectedVehicle = useMemo(() => {
-    if (!selectedVehicle) return null;
-    const selectedId = String(selectedVehicle.vehicleId || "").trim();
-    const selectedSimId = String(selectedVehicle.cameraSimId || "").trim();
-    const selectedReg = String(selectedVehicle.vehicleRegistration || "").trim().toLowerCase();
-    const selectedFleet = String(selectedVehicle.fleetNumber || "").trim().toLowerCase();
-
-    return (
-      scopedVehicles.find((vehicle) => {
-        const vehicleId = String(vehicle.vehicleId || "").trim();
-        const vehicleSimId = String(vehicle.cameraSimId || "").trim();
-        if (selectedId && (vehicleId === selectedId || vehicleSimId === selectedId)) return true;
-        if (selectedSimId && (vehicleId === selectedSimId || vehicleSimId === selectedSimId)) return true;
-        const vehicleReg = String(vehicle.vehicleRegistration || "").trim().toLowerCase();
-        const vehicleFleet = String(vehicle.fleetNumber || "").trim().toLowerCase();
-        return !!selectedReg && !!selectedFleet && vehicleReg === selectedReg && vehicleFleet === selectedFleet;
-      }) || selectedVehicle
-    );
-  }, [scopedVehicles, selectedVehicle]);
-
-  const selectedChannelAvailability = useMemo(
-    () => availability.find((entry) => Number(entry.channel) === Number(selectedChannel)) || null,
-    [availability, selectedChannel]
-  );
-
-  const availableChannelNumbersWithCoverage = useMemo(
-    () =>
-      availability
-        .filter((entry) => channelHasStoredFiles(entry))
-        .map((entry) => Number(entry.channel || 0))
-        .filter((channel) => Number.isFinite(channel) && channel > 0),
-    [availability]
-  );
-
-  const selectedChannelHasCoverage = useMemo(
-    () => channelHasStoredFiles(selectedChannelAvailability),
-    [selectedChannelAvailability]
-  );
-
-  const playbackChannels = useMemo(() => {
-    if (playBothChannels) return Array.from(new Set(availableChannelNumbersWithCoverage)).slice(0, 2);
-    return selectedChannelHasCoverage ? [selectedChannel] : [];
-  }, [availableChannelNumbersWithCoverage, playBothChannels, selectedChannel, selectedChannelHasCoverage]);
-
-  const selectedChannelNoFilesHint = useMemo(() => {
-    if (!selectedDate || availabilityLoading || availability.length === 0) return "";
-    if (selectedChannelHasCoverage) return "";
-    if (availableChannelNumbersWithCoverage.length > 0) {
-      return `No stored files for CH${selectedChannel} on ${selectedDate}. Available channels: ${availableChannelNumbersWithCoverage
-        .map((channel) => `CH${channel}`)
-        .join(", ")}.`;
-    }
-    return `No stored files found for ${selectedDate}. Try another date.`;
-  }, [availability.length, availabilityLoading, availableChannelNumbersWithCoverage, selectedChannel, selectedChannelHasCoverage, selectedDate]);
-
-  const quickRangeOptions = useMemo<QuickRangeOption[]>(() => {
-    if (!selectedChannelAvailability) return [];
-    const clips = selectedChannelAvailability.clips || [];
-    const latestClips = [...clips].slice(-6).reverse();
-    const options: QuickRangeOption[] = latestClips.map((clip, index) => ({
-      key: clip.id || `clip_${index}`,
-      label: index === 0 ? "Latest clip" : `Clip ${latestClips.length - index}`,
-      start: clip.startTime,
-      end: clip.endTime || clip.startTime,
-    }));
-
-    const earliest = clips[0]?.startTime || selectedChannelAvailability.earliestTime;
-    const latest = clips[clips.length - 1]?.endTime || clips[clips.length - 1]?.startTime || selectedChannelAvailability.latestTime;
-    if (earliest && latest) {
-      options.unshift({
-        key: "full_range",
-        label: "Full day range",
-        start: earliest,
-        end: latest,
-      });
-    }
-
-    return options;
-  }, [selectedChannelAvailability]);
-
-  const selectedChannelRangeSummary = useMemo(() => {
-    if (!selectedChannelAvailability) return "";
-    const clips = selectedChannelAvailability.clips || [];
-    const earliest = clips[0]?.startTime || selectedChannelAvailability.earliestTime;
-    const latest = clips[clips.length - 1]?.endTime || clips[clips.length - 1]?.startTime || selectedChannelAvailability.latestTime;
-    if (!earliest || !latest) return "";
-    return `CH${selectedChannel}: ${formatDateTime(earliest)} - ${formatDateTime(latest)}`;
-  }, [selectedChannel, selectedChannelAvailability]);
-
-  const alternateChannelRangeSummaries = useMemo(() => {
-    return availability
-      .filter((entry) => Number(entry.channel) !== Number(selectedChannel))
-      .filter((entry) => channelHasStoredFiles(entry))
-      .map((entry) => {
-        const clips = entry.clips || [];
-        const earliest = clips[0]?.startTime || entry.earliestTime;
-        const latest = clips[clips.length - 1]?.endTime || clips[clips.length - 1]?.startTime || entry.latestTime;
-        if (!earliest || !latest) return "";
-        return `CH${entry.channel}: ${formatDateTime(earliest)} - ${formatDateTime(latest)}`;
-      })
-      .filter(Boolean)
-      .slice(0, 2);
-  }, [availability, selectedChannel]);
-
-  useEffect(() => {
-    if (!selectedChannelAvailability) return;
-    if (!startTime) setStartTime(formatTimeInputValue(selectedChannelAvailability.earliestTime));
-    if (!endTime) setEndTime(formatTimeInputValue(selectedChannelAvailability.latestTime));
-  }, [selectedChannelAvailability, startTime, endTime]);
-
-  useEffect(() => {
-    if (!playBothChannels) return;
-    if (availableChannelNumbersWithCoverage.length < 2) {
-      setPlayBothChannels(false);
-    }
-  }, [availableChannelNumbersWithCoverage.length, playBothChannels]);
-
-  const applyClipRange = useCallback((start?: string | null, end?: string | null) => {
-    if (start) setStartTime(formatTimeInputValue(start));
-    if (end || start) setEndTime(formatTimeInputValue(end || start));
-    const startLabel = formatDateTime(start);
-    const endLabel = formatDateTime(end || start);
-    if (startLabel !== "N/A" || endLabel !== "N/A") {
-      setRangeSummary(`${startLabel} - ${endLabel}`);
-    }
-    setPlaybackItems([]);
-    setPlaybackState("idle");
-    setPlaybackError("");
+  const vehicleLabel = useCallback((v: PlaybackVehicle) => {
+    if (v.fleetNumber && v.registration) return `${v.fleetNumber} - ${v.registration}`;
+    return v.registration || v.fleetNumber || v.vehicleId;
   }, []);
 
-  const buildLatestRange = useCallback((seconds: number) => {
-    if (!selectedChannelAvailability) return;
-    const lastClip = selectedChannelAvailability.clips[selectedChannelAvailability.clips.length - 1];
-    const latestRaw = lastClip?.endTime || lastClip?.startTime || selectedChannelAvailability.latestTime;
-    if (!latestRaw) return;
-    const latest = new Date(latestRaw);
-    if (Number.isNaN(latest.getTime())) return;
-    const start = new Date(latest.getTime() - seconds * 1000);
-    return {
-      startIso: start.toISOString(),
-      endIso: latest.toISOString(),
-    };
-  }, [selectedChannelAvailability]);
-
-  const handlePlaybackRequestError = useCallback((error: unknown) => {
-    const message = errorMessage(error, "Failed to prepare playback.");
-    const availableRange = parseAvailableRangeFromMessage(message);
-    if (availableRange) {
-      setPlaybackError(`Available range: ${formatDateTime(availableRange.startIso)} - ${formatDateTime(availableRange.endIso)}`);
-      return;
-    }
-    setPlaybackError(message || "Failed to prepare playback.");
+  const selectVehicle = useCallback((vehicle: PlaybackVehicle) => {
+    setSelectedVehicle(vehicle);
+    setFiles([]);
+    setFilesSearched(false);
+    setReplayUrl("");
+    setReplayError("");
+    setEarliestFootage(null);
+    setLatestFootage(null);
+    setSelectedChannel(1);
+    setSelectedDate(sastNowYmd());
+    setStartTime("00:00:00");
+    setEndTime(sastNowHms());
   }, []);
 
-  const resolvePlaybackForChannel = useCallback(async (
-    candidateVehicleIds: string[],
-    vehicleLabel: string,
-    channel: number,
-    startIso: string,
-    endIso: string,
-    labelStart: string,
-    labelEnd: string
-  ): Promise<PlaybackItem> => {
-    const vehicleId = String(candidateVehicleIds[0] || "").trim();
-    if (!vehicleId) {
-      throw new Error(`No vehicle id available for CH${channel} playback.`);
-    }
+  const backToVehicles = useCallback(() => {
+    setSelectedVehicle(null);
+    setFiles([]);
+    setFilesSearched(false);
+    setReplayUrl("");
+    setReplayError("");
+    setEarliestFootage(null);
+    setLatestFootage(null);
+  }, []);
 
-    const query = new URLSearchParams({
-      sim: vehicleId,
-      channel: String(channel),
-      from: startIso,
-      to: endIso,
-      includeAudio: "false",
-      input: "auto",
-    });
-    const playbackUrl = `${videoProxyBase}/playback/mp4?${query.toString()}`;
-    const probeTimeoutMs = 30000;
-    const probeAttempts = 2;
-    let probeBypassedOnTimeout = false;
-    let lastProbeError: unknown = null;
+  const searchFootage = useCallback(async () => {
+    if (!selectedVehicle) return;
+    setSearching(true);
+    setReplayUrl("");
+    setReplayError("");
+    setFiles([]);
+    setFilesSearched(false);
+    setEarliestFootage(null);
+    setLatestFootage(null);
 
-    for (let attempt = 0; attempt < probeAttempts; attempt += 1) {
-      try {
-        const probe = await fetch(playbackUrl, {
-          method: "GET",
-          headers: {
-            range: "bytes=0-1",
-          },
-          cache: "no-store",
-          signal: AbortSignal.timeout(probeTimeoutMs),
-        });
+    const range = sastDateToRange(selectedDate);
 
-        const contentType = String(probe.headers.get("content-type") || "").toLowerCase();
-        if (!probe.ok) {
-          let message = `Playback probe failed for CH${channel} (HTTP ${probe.status}).`;
-          if (contentType.includes("application/json")) {
-            const payload = await probe.json().catch(() => ({}));
-            message = String(payload?.message || payload?.error || message).trim() || message;
-          }
-          throw new Error(message);
-        }
+    try {
+      const res = await fetch(`${EPS_API}/playback/history-list`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          deviceId: selectedVehicle.deviceId,
+          channelId: selectedChannel,
+          startTime: range.start,
+          endTime: range.end,
+        }),
+        cache: "no-store",
+        signal: AbortSignal.timeout(15000),
+      });
+      const json = await res.json().catch(() => ({}));
+      const fileList: HistoryFile[] = (json?.data?.files || []).map((f: HistoryFile) => ({ ...f, channelId: selectedChannel }));
+      setFiles(fileList);
+      setFilesSearched(true);
 
-        if (contentType.includes("application/json")) {
-          const payload = await probe.json().catch(() => ({}));
-          throw new Error(
-            String(payload?.message || payload?.error || `No playable video for CH${channel} in selected range.`)
-          );
-        }
-
-        lastProbeError = null;
-        break;
-      } catch (error) {
-        lastProbeError = error;
-        const message = errorMessage(error, "");
-        if (isTimeoutLikeMessage(message)) {
-          if (attempt < probeAttempts - 1) {
-            await new Promise((resolve) => setTimeout(resolve, 600 * (attempt + 1)));
-            continue;
-          }
-          probeBypassedOnTimeout = true;
-          console.warn(`[playback] probe timeout for CH${channel}; continuing with direct video load`);
-          break;
-        }
-        throw new Error(errorMessage(error, `No playable video for CH${channel} in selected range.`));
+      if (fileList.length > 0) {
+        setEarliestFootage(fileList[0].startTime);
+        setLatestFootage(fileList[fileList.length - 1].endTime || fileList[fileList.length - 1].startTime);
+        setStartTime(fileList[0].startTime.split(" ")[1] || "00:00:00");
+        setEndTime(fileList[fileList.length - 1].endTime?.split(" ")[1] || "23:59:59");
       }
+    } catch (e: any) {
+      setFilesSearched(true);
+      setReplayError(e.message || "Failed to search footage.");
+    } finally {
+      setSearching(false);
     }
+  }, [selectedVehicle, selectedChannel, selectedDate]);
 
-    if (lastProbeError && !probeBypassedOnTimeout) {
-      throw new Error(errorMessage(lastProbeError, `No playable video for CH${channel} in selected range.`));
-    }
+  const playVideo = useCallback(async () => {
+    if (!selectedVehicle) return;
+    setReplayLoading(true);
+    setReplayError("");
+    setReplayUrl("");
 
-    setResolvedVehicleId(vehicleId);
-    return {
-      channel,
-      url: playbackUrl,
-      label: `${vehicleLabel} CH${channel} ${labelStart} - ${labelEnd}`,
-    };
-  }, [videoProxyBase]);
-
-  const requestPlayback = useCallback(async () => {
-    if (!canonicalSelectedVehicle) return;
-    if (!selectedChannelHasCoverage && !playBothChannels) {
-      setPlaybackState("error");
-      setPlaybackError(
-        selectedChannelNoFilesHint || `No stored files for CH${selectedChannel} on ${selectedDate || "selected date"}.`
-      );
-      return;
-    }
-    if (playbackChannels.length === 0) {
-      setPlaybackState("error");
-      setPlaybackError(
-        selectedChannelNoFilesHint || `No stored files are available for playback on ${selectedDate || "the selected date"}.`
-      );
-      return;
-    }
-    const candidateVehicleIds = buildCandidateVehicleIds(canonicalSelectedVehicle, resolvedVehicleId);
-    const startIso = combineDateAndTime(selectedDate, startTime);
-    const endIso = combineDateAndTime(selectedDate, endTime);
-    if (!startIso || !endIso) {
-      setPlaybackState("error");
-      setPlaybackError("Select a valid date and time range.");
-      return;
-    }
-    if (new Date(endIso).getTime() <= new Date(startIso).getTime()) {
-      setPlaybackState("error");
-      setPlaybackError("End time must be after start time.");
-      return;
-    }
-
-    setPlaybackState("loading");
-    setPlaybackError("");
-    setPlaybackItems([]);
+    const startCombined = `${selectedDate} ${startTime}`;
+    const endCombined = `${selectedDate} ${endTime}`;
 
     try {
-      const items = await Promise.all(
-        playbackChannels.map((channel) =>
-          resolvePlaybackForChannel(candidateVehicleIds, vehicleDisplayLabel(canonicalSelectedVehicle), channel, startIso, endIso, startTime, endTime)
-        )
-      );
-      setPlaybackItems(items);
-      setRangeSummary(`${formatDateTime(startIso)} - ${formatDateTime(endIso)}`);
-      setPlaybackState("ready");
-    } catch (error: unknown) {
-      setPlaybackState("error");
-      handlePlaybackRequestError(error);
-    }
-  }, [
-    endTime,
-    handlePlaybackRequestError,
-    playbackChannels,
-    playBothChannels,
-    resolvePlaybackForChannel,
-    resolvedVehicleId,
-    selectedChannel,
-    selectedChannelHasCoverage,
-    selectedChannelNoFilesHint,
-    selectedDate,
-    canonicalSelectedVehicle,
-    startTime,
-    vehicleDisplayLabel,
-  ]);
+      const res = await fetch(`${EPS_API}/playback/history-replay`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          deviceId: selectedVehicle.deviceId,
+          channelId: selectedChannel,
+          startTime: startCombined,
+          endTime: endCombined,
+        }),
+        cache: "no-store",
+        signal: AbortSignal.timeout(30000),
+      });
+      const json = await res.json().catch(() => ({}));
 
-  const applyClipRangeAndPlay = useCallback(async (start?: string | null, end?: string | null) => {
-    applyClipRange(start, end);
-    if (!selectedChannelHasCoverage && !playBothChannels) {
-      setPlaybackState("error");
-      setPlaybackError(
-        selectedChannelNoFilesHint || `No stored files for CH${selectedChannel} on ${selectedDate || "selected date"}.`
-      );
-      return;
+      if (json.success && json.data?.replayUrl) {
+        setReplayUrl(json.data.replayUrl);
+      } else {
+        setReplayError(json.message || "No replay available. Device may be offline.");
+      }
+    } catch (e: any) {
+      setReplayError(e.message || "Failed to connect to device.");
+    } finally {
+      setReplayLoading(false);
     }
-    if (playbackChannels.length === 0) {
-      setPlaybackState("error");
-      setPlaybackError(
-        selectedChannelNoFilesHint || `No stored files are available for playback on ${selectedDate || "the selected date"}.`
-      );
-      return;
-    }
-    const candidateVehicleIds = buildCandidateVehicleIds(canonicalSelectedVehicle, resolvedVehicleId);
-    const resolvedStart = start ? formatTimeInputValue(start) : "";
-    const resolvedEnd = formatTimeInputValue(end || start);
-    const nextStart = resolvedStart || startTime;
-    const nextEnd = resolvedEnd || endTime;
-    const startIso = combineDateAndTime(selectedDate, nextStart);
-    const endIso = combineDateAndTime(selectedDate, nextEnd);
+  }, [selectedVehicle, selectedChannel, selectedDate, startTime, endTime]);
 
-    if (!canonicalSelectedVehicle || !startIso || !endIso) {
-      setPlaybackState("error");
-      setPlaybackError("Select a valid date and time range.");
-      return;
+  const playFullRange = useCallback(() => {
+    if (earliestFootage && latestFootage) {
+      setStartTime(earliestFootage.split(" ")[1] || "00:00:00");
+      setEndTime(latestFootage.split(" ")[1] || "23:59:59");
+      setTimeout(() => void playVideo(), 50);
     }
-    if (new Date(endIso).getTime() <= new Date(startIso).getTime()) {
-      setPlaybackState("error");
-      setPlaybackError("End time must be after start time.");
-      return;
-    }
+  }, [earliestFootage, latestFootage, playVideo]);
 
-    setPlaybackState("loading");
-    setPlaybackError("");
-    setPlaybackItems([]);
-
-    try {
-      const items = await Promise.all(
-        playbackChannels.map((channel) =>
-          resolvePlaybackForChannel(candidateVehicleIds, vehicleDisplayLabel(canonicalSelectedVehicle), channel, startIso, endIso, nextStart, nextEnd)
-        )
-      );
-      setPlaybackItems(items);
-      setRangeSummary(`${formatDateTime(startIso)} - ${formatDateTime(endIso)}`);
-      setPlaybackState("ready");
-    } catch (error: unknown) {
-      setPlaybackState("error");
-      handlePlaybackRequestError(error);
-    }
-  }, [
-    applyClipRange,
-    endTime,
-    handlePlaybackRequestError,
-    playbackChannels,
-    playBothChannels,
-    resolvePlaybackForChannel,
-    resolvedVehicleId,
-    selectedChannel,
-    selectedChannelHasCoverage,
-    selectedChannelNoFilesHint,
-    selectedDate,
-    canonicalSelectedVehicle,
-    startTime,
-    vehicleDisplayLabel,
-  ]);
+  const onlineCount = useMemo(() => filteredVehicles.filter((v) => v.online).length, [filteredVehicles]);
 
   return (
-    <div className="space-y-6">
-      <div className="rounded-3xl border border-slate-200 bg-gradient-to-r from-slate-950 via-slate-900 to-slate-800 p-6 text-white shadow-xl">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-          <div>
-          <div className="inline-flex items-center gap-2 rounded-full border border-cyan-400/20 bg-cyan-500/10 px-3 py-1 text-xs font-medium text-cyan-200"><Video className="h-3.5 w-3.5" /> Stored Review</div>
-            <h2 className="mt-3 text-3xl font-bold tracking-tight text-white">Playback Workspace</h2>
-          <p className="mt-2 max-w-3xl text-sm text-slate-300">
-            Review stored video by vehicle, channel, and exact time range.
-          </p>
+    <div className="flex h-[calc(100vh-120px)] gap-0 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+      <div className="flex w-[340px] shrink-0 flex-col border-r border-slate-200">
+        <div className="border-b border-slate-200 bg-slate-50 px-4 py-3">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-sm font-semibold text-slate-900">Devices</h3>
+            <div className="flex items-center gap-2">
+              <Badge variant="outline" className="text-[10px]">{filteredVehicles.length} vehicles</Badge>
+              <Button size="sm" variant="ghost" onClick={() => void refreshAll()} disabled={refreshing} className="h-7 w-7 p-0">
+                <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? "animate-spin" : ""}`} />
+              </Button>
+            </div>
+          </div>
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+            <input
+              value={vehicleSearch}
+              onChange={(e) => setVehicleSearch(e.target.value)}
+              placeholder="Search devices..."
+              className="h-9 w-full rounded-lg border border-slate-300 bg-white pl-9 pr-3 text-xs outline-none focus:border-cyan-400 focus:ring-2 focus:ring-cyan-100"
+            />
+          </div>
         </div>
-        <Button variant="outline" onClick={() => void refreshAll()} disabled={refreshing} className="border-slate-600 bg-slate-950/40 text-white hover:bg-slate-900">
-          <RefreshCw className={`mr-2 h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
-          Refresh
-        </Button>
+        <div className="flex-1 overflow-y-auto">
+          {loading ? (
+            <div className="space-y-2 p-3">
+              {Array.from({ length: 6 }).map((_, i) => (
+                <div key={i} className="animate-pulse rounded-lg border border-slate-200 bg-white p-3">
+                  <div className="h-3 w-3/4 rounded bg-slate-200" />
+                  <div className="mt-1.5 h-2.5 w-1/2 rounded bg-slate-200" />
+                </div>
+              ))}
+            </div>
+          ) : filteredVehicles.length === 0 ? (
+            <div className="p-6 text-center text-xs text-slate-500">No vehicles found.</div>
+          ) : (
+            <div className="divide-y divide-slate-100">
+              {filteredVehicles.map((vehicle) => {
+                const isSelected = selectedVehicle?.vehicleId === vehicle.vehicleId;
+                return (
+                  <button
+                    key={vehicle.vehicleId}
+                    onClick={() => selectVehicle(vehicle)}
+                    className={`flex w-full items-center gap-3 px-4 py-3 text-left transition-colors ${
+                      isSelected ? "bg-cyan-50 border-l-2 border-l-cyan-500" : "hover:bg-slate-50"
+                    }`}
+                  >
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs font-semibold text-slate-900 truncate">
+                        {vehicle.fleetNumber && vehicle.registration
+                          ? `${vehicle.fleetNumber} - ${vehicle.registration}`
+                          : vehicle.registration || vehicle.fleetNumber || vehicle.deviceId}
+                      </p>
+                      <p className="mt-0.5 text-[10px] text-slate-500 truncate">{vehicle.deviceId}</p>
+                    </div>
+                    <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${
+                      vehicle.online ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-500"
+                    }`}>
+                      {vehicle.online ? "Online" : "Offline"}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-6 xl:grid-cols-[360px_minmax(0,1fr)]">
-        <Card className="overflow-hidden border-slate-200 bg-white p-5 shadow-sm">
-          <div className="mb-5 flex items-center justify-between gap-3">
-            <div><h3 className="text-lg font-semibold text-slate-900">Find Vehicle</h3><p className="mt-1 text-sm text-slate-500">Search the stored library, then jump straight into playback.</p></div>
-            <Badge variant="outline" className="rounded-full px-3 py-1 text-xs">{filteredVehicles.length} vehicles</Badge>
-          </div>
-
-          <div className="relative mb-5">
-            <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-            <input
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && filteredVehicles[0]) {
-                  const first = filteredVehicles[0];
-                  setSelectedVehicle(first);
-                  setResolvedVehicleId(first.cameraSimId || first.vehicleId);
-                  const nextDate = formatDateInputValue(first.latestTime || new Date().toISOString());
-                  setSelectedDate(nextDate);
-                  setAvailability([]);
-                  setPlaybackState("idle");
-                  setPlaybackItems([]);
-                  setPlaybackError("");
-                  setRangeSummary("");
-                }
-              }}
-              placeholder="Search by fleet number or registration..."
-              className="h-12 w-full rounded-2xl border border-slate-200 bg-slate-50 pl-12 pr-4 text-sm shadow-sm outline-none transition focus:border-cyan-400 focus:bg-white focus:ring-4 focus:ring-cyan-100"
-            />
-          </div>
-
-          <div className="overflow-auto max-h-[70vh] rounded-2xl border border-slate-200">
-            <table className="w-full text-sm">
-              <thead className="sticky top-0 bg-slate-50/95 backdrop-blur">
-                <tr className="text-left text-slate-600">
-                  <th className="px-3 py-2 font-medium">Vehicle</th>
-                  <th className="px-3 py-2 font-medium text-right">Action</th>
-                </tr>
-              </thead>
-              <tbody>
-                {loading ? (
-                  <tr>
-                    <td className="px-3 py-8 text-center text-slate-500" colSpan={2}>Loading playback inventory...</td>
-                  </tr>
-                ) : filteredVehicles.length === 0 ? (
-                  <tr>
-                    <td className="px-3 py-8 text-center text-slate-500" colSpan={2}>No stored playback data found.</td>
-                  </tr>
-                ) : (
-                  filteredVehicles.map((vehicle) => {
-                    const selected = selectedVehicle?.vehicleId === vehicle.vehicleId;
-                    return (
-                      <tr key={vehicle.vehicleId} className={`border-t border-slate-100 transition ${selected ? "bg-cyan-50" : "bg-white hover:bg-slate-50"}`}>
-                        <td className="px-3 py-3 align-top">
-                          <div className="font-medium text-slate-900">{vehicleDisplayLabel(vehicle)}</div>
-                          <p className="mt-1 text-xs text-slate-500">
-                            Stored range: {formatVehicleRangeSummary(vehicle)}
-                          </p>
-                        </td>
-                        <td className="px-3 py-3 align-top text-right">
-                          <Button
-                            size="sm"
-                            variant={selected ? "default" : "outline"}
-                            onClick={() => {
-                              setSelectedVehicle(vehicle);
-                              setResolvedVehicleId(vehicle.cameraSimId || vehicle.vehicleId);
-                              const nextDate = formatDateInputValue(vehicle.latestTime || new Date().toISOString());
-                              setSelectedDate(nextDate);
-                              setAvailability([]);
-                              setPlaybackState("idle");
-                              setPlaybackItems([]);
-                              setPlaybackError("");
-                              setRangeSummary("");
-                            }}
-                          >
-                            View
-                          </Button>
-                        </td>
-                      </tr>
-                    );
-                  })
-                )}
-              </tbody>
-            </table>
-          </div>
-        </Card>
-
-        <Card className="border-slate-200 bg-white p-5 shadow-sm">
-          {!selectedVehicle ? (
-            <div className="grid min-h-[420px] place-items-center rounded-3xl border border-dashed border-slate-200 bg-slate-50 px-6 text-center text-slate-500">
-              Use the library on the left to load stored clips, then choose a time window and playback mode.
+      <div className="flex flex-1 flex-col overflow-hidden">
+        {!selectedVehicle ? (
+          <div className="flex flex-1 items-center justify-center">
+            <div className="text-center">
+              <Video className="mx-auto h-12 w-12 text-slate-300" />
+              <p className="mt-3 text-sm font-medium text-slate-500">Select a device to review footage</p>
+              <p className="mt-1 text-xs text-slate-400">{onlineCount} device{onlineCount !== 1 ? "s" : ""} online</p>
             </div>
-          ) : (
-            <div className="space-y-5">
-              <div className="flex flex-wrap items-center justify-between gap-3">
+          </div>
+        ) : (
+          <>
+            <div className="flex items-center gap-3 border-b border-slate-200 bg-slate-50 px-5 py-3">
+              <Button variant="ghost" size="sm" onClick={backToVehicles} className="h-8 w-8 p-0">
+                <ChevronLeft className="h-4 w-4" />
+              </Button>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-semibold text-slate-900 truncate">{vehicleLabel(selectedVehicle)}</p>
+                <p className="text-[11px] text-slate-500">{selectedVehicle.deviceId}</p>
+              </div>
+              <Badge variant={selectedVehicle.online ? "default" : "outline"} className={`text-[10px] ${selectedVehicle.online ? "bg-emerald-600" : ""}`}>
+                {selectedVehicle.online ? "Online" : "Offline"}
+              </Badge>
+            </div>
+
+            <div className="flex flex-1 overflow-hidden">
+              <div className="w-[280px] shrink-0 border-r border-slate-200 bg-slate-50/50 p-4 space-y-4 overflow-y-auto">
                 <div>
-                  <h3 className="text-2xl font-bold text-slate-900">{vehicleDisplayLabel(selectedVehicle)}</h3>
-                  <p className="mt-1 text-sm text-slate-600">Choose the day, channel, and time window. Quick picks below use real stored coverage.</p>
-                </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <Badge variant="outline" className="rounded-full bg-white">{selectedVehicle.channels.map((channel) => `CH${channel}`).join(", ") || "N/A"}</Badge>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
-                <label className="space-y-1">
-                  <span className="text-xs font-medium text-slate-600">Date (SAST)</span>
-                  <div className="relative">
-                    <Calendar className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                    <input
-                      type="date"
-                      className="h-12 w-full rounded-2xl border border-slate-200 bg-slate-50 pl-12 pr-4 text-sm shadow-sm outline-none transition focus:border-cyan-400 focus:bg-white focus:ring-4 focus:ring-cyan-100"
-                      value={selectedDate}
-                      onChange={(e) => setSelectedDate(e.target.value)}
-                    />
-                  </div>
-                </label>
-
-                <label className="space-y-1">
-                  <span className="text-xs font-medium text-slate-600">Primary Channel</span>
+                  <label className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-slate-600">Channel</label>
                   <select
-                    className="h-12 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-sm shadow-sm outline-none transition focus:border-cyan-400 focus:bg-white focus:ring-4 focus:ring-cyan-100"
                     value={selectedChannel}
-                    onChange={(e) => {
-                      const next = Number(e.target.value || 1);
-                      setSelectedChannel(next);
-                      const channelData = availability.find((entry) => Number(entry.channel) === next);
-                      setStartTime(formatTimeInputValue(channelData?.earliestTime));
-                      setEndTime(formatTimeInputValue(channelData?.latestTime));
-                    }}
+                    onChange={(e) => setSelectedChannel(Number(e.target.value))}
+                    className="h-9 w-full rounded-lg border border-slate-300 bg-white px-3 text-xs outline-none focus:border-cyan-400 focus:ring-2 focus:ring-cyan-100"
                   >
-                    {(availability.length > 0 ? availability : [{ channel: 1, clipCount: 0, clips: [] }]).map((entry) => (
-                      <option key={entry.channel} value={entry.channel}>CH{entry.channel}</option>
-                    ))}
+                    <option value={1}>CH1</option>
+                    <option value={2}>CH2</option>
                   </select>
-                </label>
-
-                <label className="space-y-1">
-                  <span className="text-xs font-medium text-slate-600">Start Time (SAST)</span>
-                  <div className="relative">
-                    <Clock3 className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                    <input
-                      type="time"
-                      step={1}
-                      className="h-12 w-full rounded-2xl border border-slate-200 bg-slate-50 pl-12 pr-4 text-sm shadow-sm outline-none transition focus:border-cyan-400 focus:bg-white focus:ring-4 focus:ring-cyan-100"
-                      value={startTime}
-                      onChange={(e) => setStartTime(e.target.value)}
-                    />
-                  </div>
-                </label>
-
-                <label className="space-y-1">
-                  <span className="text-xs font-medium text-slate-600">End Time (SAST)</span>
-                  <div className="relative">
-                    <Clock3 className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                    <input
-                      type="time"
-                      step={1}
-                      className="h-12 w-full rounded-2xl border border-slate-200 bg-slate-50 pl-12 pr-4 text-sm shadow-sm outline-none transition focus:border-cyan-400 focus:bg-white focus:ring-4 focus:ring-cyan-100"
-                      value={endTime}
-                      onChange={(e) => setEndTime(e.target.value)}
-                    />
-                  </div>
-                </label>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-2 rounded-3xl border border-slate-200 bg-slate-50 p-4">
-                <Button
-                  type="button"
-                  variant={playBothChannels ? "default" : "outline"}
-                  onClick={() => setPlayBothChannels((prev) => !prev)}
-                  disabled={availableChannelNumbersWithCoverage.length < 2}
-                >
-                  {playBothChannels ? "Dual-channel on" : "Play both channels"}
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => {
-                    const firstClip = selectedChannelAvailability?.clips?.[0];
-                    const lastClip = selectedChannelAvailability?.clips?.[selectedChannelAvailability.clips.length - 1];
-                    void applyClipRangeAndPlay(
-                      firstClip?.startTime || selectedChannelAvailability?.earliestTime,
-                      lastClip?.endTime || lastClip?.startTime || selectedChannelAvailability?.latestTime
-                    );
-                  }}
-                  disabled={!selectedChannelAvailability}
-                >
-                  Full available range
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => {
-                    const range = buildLatestRange(300);
-                    void applyClipRangeAndPlay(range?.startIso, range?.endIso);
-                  }}
-                  disabled={!selectedChannelAvailability}
-                >
-                  Latest 5 min
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => {
-                    const range = buildLatestRange(600);
-                    void applyClipRangeAndPlay(range?.startIso, range?.endIso);
-                  }}
-                  disabled={!selectedChannelAvailability}
-                >
-                  Latest 10 min
-                </Button>
-                <Button onClick={() => void requestPlayback()} disabled={playbackState === "loading" || availabilityLoading}>
-                  <PlayCircle className="mr-2 h-4 w-4" />
-                  {playbackState === "loading" ? "Preparing..." : "Start Playback"}
-                </Button>
-                {availabilityLoading ? <span className="text-xs text-slate-500">Loading channel coverage...</span> : null}
-                {!availabilityLoading && selectedChannelNoFilesHint ? (
-                  <span className="text-xs text-amber-700">{selectedChannelNoFilesHint}</span>
-                ) : null}
-              </div>
-
-              <div className="rounded-3xl border border-slate-200 bg-slate-50 p-5">
-                <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
-                  <div>
-                    <p className="text-sm font-semibold text-slate-900">Quick range picks</p>
-                    <p className="text-xs text-slate-500">
-                      One click below fills the range and starts playback.
-                    </p>
-                    {selectedChannelRangeSummary ? (
-                      <p className="mt-1 text-xs text-slate-600">
-                        Available range: {selectedChannelRangeSummary}
-                      </p>
-                    ) : alternateChannelRangeSummaries.length > 0 ? (
-                      <p className="mt-1 text-xs text-slate-600">
-                        Available range: {alternateChannelRangeSummaries.join(" | ")}
-                      </p>
-                    ) : null}
-                  </div>
-                  {selectedChannelAvailability ? (
-                    <Badge variant="outline">
-                      {`CH${selectedChannel} | ${selectedChannelAvailability.clipCount} stored segment(s)`}
-                    </Badge>
-                  ) : null}
                 </div>
 
-                {quickRangeOptions.length > 0 ? (
-                  <div className="flex flex-wrap gap-2">
-                    {quickRangeOptions.map((option) => (
-                      <Button
-                        key={option.key}
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        className="rounded-xl bg-white px-4 shadow-sm"
-                        onClick={() => void applyClipRangeAndPlay(option.start, option.end)}
-                      >
-                        {option.label}
-                      </Button>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="text-xs text-slate-500">
-                    {selectedChannelRangeSummary || alternateChannelRangeSummaries.length > 0
-                      ? "No quick clip ranges found yet. Use Full available range or switch channel."
-                      : "No stored ranges found yet for this date and channel."}
-                  </p>
-                )}
-              </div>
+                <div>
+                  <label className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-slate-600">Date</label>
+                  <input
+                    type="date"
+                    value={selectedDate}
+                    onChange={(e) => setSelectedDate(e.target.value)}
+                    className="h-9 w-full rounded-lg border border-slate-300 bg-white px-3 text-xs outline-none focus:border-cyan-400 focus:ring-2 focus:ring-cyan-100"
+                  />
+                </div>
 
-              <Card className="overflow-hidden border-slate-200 bg-[#070b16] text-slate-100 shadow-sm">
-                <div className="border-b border-slate-800 bg-[#0b1020] px-4 py-3">
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div className="flex items-center gap-3">
-                      <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-cyan-500/10 text-cyan-300 ring-1 ring-cyan-400/20">
-                        <Video className="h-5 w-5" />
-                      </div>
-                      <div>
-                        <p className="text-base font-semibold text-white">Playback Viewer</p>
-                        <p className="text-xs text-slate-300">
-                          {playbackItems.length > 0
-                            ? `${vehicleDisplayLabel(selectedVehicle)} ${playBothChannels ? "dual-channel review" : `CH${selectedChannel} playback`}`
-                            : "Choose a stored range to begin playback."}
+                <Button
+                  onClick={() => void searchFootage()}
+                  disabled={searching}
+                  className="w-full bg-blue-600 hover:bg-blue-700 text-white"
+                >
+                  {searching ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : <Search className="mr-2 h-3.5 w-3.5" />}
+                  {searching ? "Searching..." : "Search"}
+                </Button>
+
+                {filesSearched && (
+                  <div className="space-y-4">
+                    {files.length > 0 && (
+                      <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3">
+                        <p className="text-[11px] font-medium text-emerald-700">{files.length} segment{files.length !== 1 ? "s" : ""} found</p>
+                        <p className="mt-0.5 text-[10px] text-emerald-600">
+                          {formatTime(earliestFootage || "")} — {formatTime(latestFootage || "")} SAST
                         </p>
-                        {rangeSummary ? <p className="text-[11px] text-cyan-200/80">{rangeSummary}</p> : null}
+                        <Button size="sm" variant="outline" className="mt-2 h-7 w-full text-[10px] border-emerald-300 text-emerald-700 hover:bg-emerald-100" onClick={() => void playFullRange()}>
+                          <Play className="mr-1 h-3 w-3" /> Play Full Range
+                        </Button>
                       </div>
-                    </div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Badge className="border border-slate-700 bg-slate-900 text-slate-200 hover:bg-slate-900">
-                        {vehicleDisplayLabel(selectedVehicle)}
-                      </Badge>
-                      {playBothChannels && playbackItems.length > 1 ? (
-                        <Badge className="bg-cyan-500/15 text-cyan-200 hover:bg-cyan-500/15">
-                          Side-by-side compare
-                        </Badge>
-                      ) : null}
-                    </div>
-                  </div>
-                </div>
+                    )}
 
-                {playbackState === "ready" && playbackItems.length > 0 ? (
-                  <div className={`grid gap-4 p-4 ${playbackItems.length > 1 ? "grid-cols-1 2xl:grid-cols-2" : "grid-cols-1"}`}>
-                    {playbackItems.map((item) => (
-                      <div
-                        key={`${item.channel}:${item.url}`}
-                        className="space-y-3 rounded-2xl border border-slate-800 bg-[#0a1020] p-3 shadow-[0_10px_30px_rgba(0,0,0,0.25)]"
-                      >
-                        <div className="flex items-center justify-between gap-3">
-                          <div className="flex items-center gap-2">
-                            <Badge className="bg-cyan-500/15 text-cyan-200 hover:bg-cyan-500/15">CH{item.channel}</Badge>
-                            <span className="text-xs uppercase tracking-[0.18em] text-slate-500">Playback</span>
-                          </div>
-                          <span className="text-xs text-slate-400">{item.label}</span>
-                        </div>
-                        <PlaybackVideoPlayer url={item.url} className="aspect-video w-full rounded-2xl border border-slate-800 bg-black" />
-                        <div className="flex items-center justify-between rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2 text-xs text-slate-400">
-                          <span>Source window</span>
-                          <span className="text-slate-200">{rangeSummary || "Selected time range"}</span>
-                        </div>
+                    {files.length === 0 && !searching && (
+                      <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
+                        <p className="text-[11px] text-amber-700">No footage found for this date/channel.</p>
                       </div>
-                    ))}
-                  </div>
-                ) : playbackState === "loading" ? (
-                  <div className="p-4">
-                    <div className="aspect-video w-full rounded-2xl border border-slate-800 bg-slate-900 grid place-items-center text-slate-300">
-                      Preparing playback video...
+                    )}
+
+                    <div>
+                      <label className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-slate-600">Start Time</label>
+                      <input
+                        type="time"
+                        step={1}
+                        value={startTime}
+                        onChange={(e) => setStartTime(e.target.value)}
+                        className="h-9 w-full rounded-lg border border-slate-300 bg-white px-3 text-xs outline-none focus:border-cyan-400 focus:ring-2 focus:ring-cyan-100"
+                      />
                     </div>
-                  </div>
-                ) : (
-                  <div className="p-4">
-                    <div className="aspect-video w-full rounded-2xl border border-slate-800 bg-slate-900 grid place-items-center text-slate-400">
-                      {playbackError || "No playback selected yet."}
+
+                    <div>
+                      <label className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-slate-600">End Time</label>
+                      <input
+                        type="time"
+                        step={1}
+                        value={endTime}
+                        onChange={(e) => setEndTime(e.target.value)}
+                        className="h-9 w-full rounded-lg border border-slate-300 bg-white px-3 text-xs outline-none focus:border-cyan-400 focus:ring-2 focus:ring-cyan-100"
+                      />
+                    </div>
+
+                    <div className="flex gap-2">
+                      <Button
+                        onClick={() => void playVideo()}
+                        disabled={replayLoading}
+                        className="flex-1 bg-blue-600 hover:bg-blue-700 text-white"
+                      >
+                        {replayLoading ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : <Play className="mr-1 h-3.5 w-3.5" />}
+                        Play
+                      </Button>
+                      <Button
+                        variant="outline"
+                        onClick={() => { setReplayUrl(""); setReplayError(""); }}
+                        className="border-slate-300"
+                      >
+                        Close
+                      </Button>
                     </div>
                   </div>
                 )}
-              </Card>
+              </div>
+
+              <div className="flex flex-1 flex-col bg-slate-950 p-4">
+                {replayLoading && !replayUrl ? (
+                  <div className="flex flex-1 items-center justify-center">
+                    <div className="text-center">
+                      <Loader2 className="mx-auto h-8 w-8 animate-spin text-cyan-500" />
+                      <p className="mt-2 text-sm text-slate-400">Connecting to device stream...</p>
+                    </div>
+                  </div>
+                ) : replayError ? (
+                  <div className="flex flex-1 items-center justify-center">
+                    <div className="text-center px-6">
+                      <p className="text-sm font-medium text-red-400">{replayError}</p>
+                      <p className="mt-1 text-xs text-slate-500">Check if the device is online and try again.</p>
+                    </div>
+                  </div>
+                ) : replayUrl ? (
+                  <div className="flex flex-1 flex-col gap-3">
+                    <div className="flex items-center justify-between">
+                      <p className="text-xs text-slate-400">
+                        {selectedVehicle.fleetNumber} - {selectedVehicle.registration} · CH{selectedChannel} · {selectedDate}
+                      </p>
+                      <p className="text-[11px] text-slate-500">{startTime} — {endTime} SAST</p>
+                    </div>
+                    <UniversalVideoPlayer
+                      url={replayUrl}
+                      className="flex-1 w-full rounded-xl border border-slate-800 bg-black"
+                      autoPlay
+                    />
+                  </div>
+                ) : (
+                  <div className="flex flex-1 items-center justify-center">
+                    <div className="text-center">
+                      <Video className="mx-auto h-10 w-10 text-slate-700" />
+                      <p className="mt-2 text-sm text-slate-500">Search footage then click Play</p>
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
-          )}
-        </Card>
+          </>
+        )}
       </div>
     </div>
   );
