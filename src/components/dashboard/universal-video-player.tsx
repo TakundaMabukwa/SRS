@@ -218,24 +218,18 @@ export function UniversalVideoPlayer({
             variant="outline"
             size="sm"
             className="border-slate-400 bg-slate-800 text-slate-200 hover:bg-slate-700"
-            onClick={async () => {
+            onClick={() => {
               const isExternal = /^https?:\/\//i.test(activeUrl) && !activeUrl.includes(window.location.host);
-              const u = isExternal
-                ? `/api/video-server/playback/flv-proxy?url=${encodeURIComponent(activeUrl)}`
-                : resolveMediaUrlForCurrentOrigin(activeUrl);
-              try {
-                const r = await fetch(u);
-                const b = await r.blob();
-                const a = document.createElement("a");
-                a.href = URL.createObjectURL(b);
-                a.download = `alert-video-${Date.now()}.flv`;
-                a.click();
-                URL.revokeObjectURL(a.href);
-              } catch { window.open(u, "_blank"); }
+              if (isExternal) {
+                window.location.href = `/api/video-server/playback/download-mp4?url=${encodeURIComponent(activeUrl)}`;
+              } else {
+                const u = resolveMediaUrlForCurrentOrigin(activeUrl);
+                window.open(u, "_blank");
+              }
             }}
           >
             <Download className="w-3 h-3 mr-1" />
-            Download FLV
+            Download MP4
           </Button>
         </div>
       )}
@@ -252,7 +246,7 @@ export function UniversalVideoPlayer({
         </div>
       )}
       {isFlv && (
-        <p className="text-xs text-amber-600 mt-1">FLV format — use the Download button or flv.js-compatible player.</p>
+        <p className="text-xs text-amber-600 mt-1">FLV format — use Download MP4 to save a playable file.</p>
       )}
       {looksLikeRawH264 && (
         <p className="text-xs text-amber-700">Raw H264 clip detected. If it does not play, use Download/Open.</p>
