@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Video, RefreshCw, Search, Wifi, WifiOff, Play, Loader2, X, ChevronLeft, Clock, Calendar } from "lucide-react";
+import { Video, RefreshCw, Search, Wifi, WifiOff, Play, Loader2, X, ChevronLeft, Clock, Calendar, Download } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { UniversalVideoPlayer } from "./universal-video-player";
 
@@ -560,7 +560,20 @@ export default function PlaybackDashboardTab({ selectedCostCenters = [] }: Playb
                       <p className="text-xs text-slate-400">
                         {selectedVehicle.fleetNumber} - {selectedVehicle.registration} · CH{selectedChannel} · {selectedDate}
                       </p>
-                      <p className="text-[11px] text-slate-500">{startTime} — {endTime} SAST</p>
+                      <div className="flex items-center gap-3">
+                        <p className="text-[11px] text-slate-500">{startTime} — {endTime} SAST</p>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-7 gap-1.5 border-emerald-500/40 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20"
+                          onClick={() => {
+                            window.location.href = `/api/video-server/playback/download-mp4?url=${encodeURIComponent(replayUrl)}`;
+                          }}
+                        >
+                          <Download className="h-3.5 w-3.5" />
+                          Download MP4
+                        </Button>
+                      </div>
                     </div>
                     <UniversalVideoPlayer
                       url={replayUrl}
