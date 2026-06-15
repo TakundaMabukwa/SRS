@@ -219,7 +219,10 @@ export function UniversalVideoPlayer({
             size="sm"
             className="border-slate-400 bg-slate-800 text-slate-200 hover:bg-slate-700"
             onClick={async () => {
-              const u = resolveMediaUrlForCurrentOrigin(activeUrl);
+              const isExternal = /^https?:\/\//i.test(activeUrl) && !activeUrl.includes(window.location.host);
+              const u = isExternal
+                ? `/api/video-server/playback/flv-proxy?url=${encodeURIComponent(activeUrl)}`
+                : resolveMediaUrlForCurrentOrigin(activeUrl);
               try {
                 const r = await fetch(u);
                 const b = await r.blob();
