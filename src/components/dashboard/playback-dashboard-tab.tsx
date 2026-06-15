@@ -567,7 +567,12 @@ export default function PlaybackDashboardTab({ selectedCostCenters = [] }: Playb
                           size="sm"
                           className="h-7 gap-1.5 border-emerald-500/40 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20"
                           onClick={() => {
-                            window.location.href = `/api/video-server/playback/download-mp4?url=${encodeURIComponent(replayUrl)}`;
+                            const [sh, sm, ss] = startTime.split(":").map(Number);
+                            const [eh, em, es] = endTime.split(":").map(Number);
+                            const startSec = sh * 3600 + sm * 60 + ss;
+                            const endSec = eh * 3600 + em * 60 + es;
+                            const duration = Math.max(endSec - startSec, 60);
+                            window.location.href = `/api/video-server/playback/download-mp4?url=${encodeURIComponent(replayUrl)}&duration=${duration}`;
                           }}
                         >
                           <Download className="h-3.5 w-3.5" />
