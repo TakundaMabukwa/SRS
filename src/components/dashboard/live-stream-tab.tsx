@@ -318,7 +318,7 @@ export default function LiveStreamTab({ selectedCostCenters = [] }: LiveStreamTa
                     : isLoading
                       ? "Starting stream..."
                       : isDisabled
-                        ? "No EPS device"
+                        ? "Offline"
                         : "Tap to stream"}</span>
               </div>
               {selected ? (
