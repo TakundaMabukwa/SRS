@@ -1391,6 +1391,38 @@ export async function GET(
     return handleVehicleScreenshotProxy(request, pathArray, target.baseUrl)
   }
 
+  if (firstSegment === 'playback' && (secondSegment === 'flv-proxy' || secondSegment === 'image-proxy')) {
+    const urlParam = request.nextUrl.searchParams.get('url')
+    if (urlParam) {
+      try {
+        const headers: Record<string, string> = {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        }
+        const range = request.headers.get('range')
+        if (range) headers['range'] = range
+
+        const upstream = await fetch(urlParam, { headers, signal: AbortSignal.timeout(60000) })
+        if (!upstream.ok || !upstream.body) {
+          return Response.json({ success: false, message: `Upstream returned ${upstream.status}` }, { status: 502 })
+        }
+
+        const ct = upstream.headers.get('content-type') || ''
+        const isImage = ct.startsWith('image/')
+
+        const passHeaders = new Headers()
+        passHeaders.set('Content-Type', isImage ? (ct || 'image/jpeg') : (ct || 'video/x-flv'))
+        passHeaders.set('Cache-Control', isImage ? 'public, max-age=86400' : 'no-cache')
+        passHeaders.set('Access-Control-Allow-Origin', '*')
+        const cl = upstream.headers.get('content-length')
+        if (cl) passHeaders.set('content-length', cl)
+
+        return new Response(upstream.body, { status: upstream.status, headers: passHeaders })
+      } catch (err) {
+        return Response.json({ success: false, message: `Proxy failed: ${err instanceof Error ? err.message : err}` }, { status: 500 })
+      }
+    }
+  }
+
   if (
     firstSegment === 'vehicles' &&
     String(pathArray[2] || '').toLowerCase() === 'video' &&
