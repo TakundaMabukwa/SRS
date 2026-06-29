@@ -461,6 +461,7 @@ export function AlertDetailModal({
       .then((res) => res.json())
       .then((data) => {
         const serverScreenshots = data?.screenshots || [];
+        const serverVideos = data?.videos || [];
         if (serverScreenshots.length > 0) {
           setDerivedAlertScreenshots((prev) => {
             const existingUrls = new Set(prev.map((s) => s.url));
@@ -469,8 +470,26 @@ export function AlertDetailModal({
               .map((s: any) => ({ url: s.url, channel: s.channel, timestamp: s.timestamp }));
             return [...prev, ...newShots];
           });
+        } else if (serverVideos.length > 0 && serverScreenshots.length === 0) {
+          const videoUrl = serverVideos[0]?.url || serverVideos[0]?.flvProxyUrl || serverVideos[0]?.fileUrl;
+          if (videoUrl) {
+            fetch(`/api/video-server/playback/capture-frames?url=${encodeURIComponent(videoUrl)}&count=3`, { cache: "no-store" })
+              .then((r) => r.json())
+              .then((frameData) => {
+                const frames = frameData?.frames || [];
+                if (frames.length > 0) {
+                  setDerivedAlertScreenshots((prev) => {
+                    const existingUrls = new Set(prev.map((s) => s.url));
+                    const newShots = frames
+                      .filter((f: any) => f.url && !existingUrls.has(f.url))
+                      .map((f: any) => ({ url: f.url, channel: 0, timestamp: f.timestamp }));
+                    return [...prev, ...newShots];
+                  });
+                }
+              })
+              .catch(() => {});
+          }
         }
-        const serverVideos = data?.videos || [];
         if (serverVideos.length > 0) {
           setSelectedAlertPlaybackVideos((prev) => {
             if (prev.length > 0) return prev;
