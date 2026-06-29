@@ -149,7 +149,7 @@ export function resolveVideoServerProxyBase(pathArray: string[]) {
 
   const isPlaybackHistoryPath =
     first === "playback" &&
-    (second === "history-list" || second === "history-upload" || second === "history-task" || second === "history-replay" || second === "flv-proxy" || second === "image-proxy");
+    (second === "history-list" || second === "history-upload" || second === "history-task" || second === "history-replay" || second === "flv-proxy" || second === "image-proxy" || second === "stream-mp4");
 
   if (isPlaybackHistoryPath) {
     return { name: "epsStreaming", baseUrl: getEpsStreamingServerBaseUrl() };
