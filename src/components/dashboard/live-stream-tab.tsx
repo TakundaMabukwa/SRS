@@ -220,7 +220,7 @@ export default function LiveStreamTab({ selectedCostCenters = [] }: LiveStreamTa
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ deviceId }),
         cache: "no-store",
-        signal: AbortSignal.timeout(30000),
+        signal: AbortSignal.timeout(60000),
       });
       const data = await res.json();
       const channels = data.data?.channels || data.channels || [];
