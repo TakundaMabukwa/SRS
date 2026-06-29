@@ -328,10 +328,10 @@ export function AlertDetailModal({
   const [activeTab, setActiveTab] = useState("screenshots");
   const videoLoadInitiatedRef = useRef(false);
   const [videoPreview, setVideoPreview] = useState<{ url: string; label: string } | null>(null);
-  const [selectedAlertPlaybackVideos, setSelectedAlertPlaybackVideos] = useState<Array<{ key: string; label: string; url: string }>>([]);
+  const [selectedAlertPlaybackVideos, setSelectedAlertPlaybackVideos] = useState<Array<{ key: string; label: string; url: string; isFlv?: boolean }>>([]);
   const [selectedAlertPlaybackLoading, setSelectedAlertPlaybackLoading] = useState(false);
   const [selectedAlertPlaybackError, setSelectedAlertPlaybackError] = useState("");
-  const [timelinePlaybackByAlert, setTimelinePlaybackByAlert] = useState<Record<string, Array<{ key: string; label: string; url: string }>>>({});
+  const [timelinePlaybackByAlert, setTimelinePlaybackByAlert] = useState<Record<string, Array<{ key: string; label: string; url: string; isFlv?: boolean }>>>({});
   const [timelinePlaybackLoading, setTimelinePlaybackLoading] = useState<Record<string, boolean>>({});
   const [derivedAlertScreenshots, setDerivedAlertScreenshots] = useState<Array<{ url: string; channel?: number; timestamp?: string; offset?: number }>>([]);
   const [derivedAlertScreenshotLoading, setDerivedAlertScreenshotLoading] = useState(false);
@@ -411,7 +411,7 @@ export function AlertDetailModal({
     setSelectedAlertPlaybackLoading(true);
     setSelectedAlertPlaybackError("");
     try {
-      const res = await fetch(`/api/video-server/eps/alerts/${encodeURIComponent(alertId)}/media`);
+      const res = await fetch(`/api/video-server/eps/alerts/${encodeURIComponent(alertId)}/media?ensureMedia=true`);
       if (!res.ok) throw new Error(`Failed to load alert playback: ${res.status}`);
       const data = await res.json();
       const videos = (data?.videos || data?.media || []).map((v: any) => ({
@@ -437,6 +437,46 @@ export function AlertDetailModal({
       loadAlertPlaybackVideos();
     }
   }, [activeTab, loadAlertPlaybackVideos]);
+
+  // Request media on-demand when modal opens and no screenshots exist
+  const mediaRequestInitiatedRef = useRef(false);
+  useEffect(() => {
+    if (mediaRequestInitiatedRef.current) return;
+    const alertId = String(selectedAlert?.id || "").trim();
+    if (!alertId) return;
+    const hasScreenshots = (selectedAlert?.media?.screenshots?.length || 0) > 0
+      || (selectedAlert?.screenshotUrls?.length || 0) > 0
+      || derivedAlertScreenshots.length > 0;
+    if (hasScreenshots) return;
+    mediaRequestInitiatedRef.current = true;
+    fetch(`/api/video-server/eps/alerts/${encodeURIComponent(alertId)}/media?ensureMedia=true`, { cache: "no-store" })
+      .then((res) => res.json())
+      .then((data) => {
+        const serverScreenshots = data?.screenshots || [];
+        if (serverScreenshots.length > 0) {
+          setDerivedAlertScreenshots((prev) => {
+            const existingUrls = new Set(prev.map((s) => s.url));
+            const newShots = serverScreenshots
+              .filter((s: any) => s.url && !existingUrls.has(s.url))
+              .map((s: any) => ({ url: s.url, channel: s.channel, timestamp: s.timestamp }));
+            return [...prev, ...newShots];
+          });
+        }
+        const serverVideos = data?.videos || [];
+        if (serverVideos.length > 0) {
+          setSelectedAlertPlaybackVideos((prev) => {
+            if (prev.length > 0) return prev;
+            return serverVideos.map((v: any) => ({
+              key: v.key || v.id || v.url,
+              label: v.label || "Alert Media",
+              url: v.url || v.fileUrl,
+              isFlv: v.isFlv === true,
+            }));
+          });
+        }
+      })
+      .catch(() => {});
+  }, [selectedAlert?.id, selectedAlert?.media?.screenshots?.length, selectedAlert?.screenshotUrls?.length, derivedAlertScreenshots.length]);
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/70 backdrop-blur-sm p-2 sm:p-4 md:items-center md:p-6">
