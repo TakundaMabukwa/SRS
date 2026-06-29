@@ -766,34 +766,32 @@ export function AlertDetailModal({
                           </Card>
                         ))}
                       </div>
-                    ) : (
-                      mediaFetching ? (
-                        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-                          {[1, 2].map((i) => (
-                            <div key={i} className="overflow-hidden rounded-lg border border-slate-200 bg-slate-950 animate-pulse">
-                              <div className="h-[48vh] min-h-[320px] w-full bg-slate-800" />
-                              <div className="p-3 space-y-2 bg-slate-900">
-                                <div className="h-3 bg-slate-700 rounded w-1/3" />
-                                <div className="h-2 bg-slate-700 rounded w-1/2" />
-                              </div>
+                    ) : mediaFetching ? (
+                      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+                        {[1, 2].map((i) => (
+                          <div key={i} className="overflow-hidden rounded-lg border border-slate-200 bg-slate-950 animate-pulse">
+                            <div className="h-[48vh] min-h-[320px] w-full bg-slate-800" />
+                            <div className="p-3 space-y-2 bg-slate-900">
+                              <div className="h-3 bg-slate-700 rounded w-1/3" />
+                              <div className="h-2 bg-slate-700 rounded w-1/2" />
                             </div>
-                          ))}
-                          <div className="col-span-full text-center py-2 text-xs text-slate-400">
-                            Requesting video from device...
                           </div>
+                        ))}
+                        <div className="col-span-full text-center py-2 text-xs text-slate-400">
+                          Requesting video from device...
                         </div>
-                      ) : (
-                        <div className="text-center py-12 text-slate-500">
-                          <p>
-                            {selectedAlertPlaybackLoading
-                              ? "Preparing alert video from stored footage..."
-                              : "Waiting for video"}
-                          </p>
-                          {selectedAlertPlaybackError ? (
-                            <p className="mt-2 text-sm text-rose-600">{selectedAlertPlaybackError}</p>
-                          ) : null}
-                        </div>
-                      )
+                      </div>
+                    ) : (
+                      <div className="text-center py-12 text-slate-500">
+                        <p>
+                          {selectedAlertPlaybackLoading
+                            ? "Preparing alert video from stored footage..."
+                            : "Waiting for video"}
+                        </p>
+                        {selectedAlertPlaybackError ? (
+                          <p className="mt-2 text-sm text-rose-600">{selectedAlertPlaybackError}</p>
+                        ) : null}
+                      </div>
                     )}
                   </Card>
                 </TabsContent>
