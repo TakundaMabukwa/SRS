@@ -321,7 +321,7 @@ export default function LiveStreamTab({ selectedCostCenters = [] }: LiveStreamTa
                 <span className="truncate">{selected && channelCount > 0
                   ? `${channelCount} channel(s) streaming`
                   : hasAttempted && channelCount === 0
-                    ? "No streams available"
+                    ? (channels.find(c => c.message && c.message !== "OK")?.message || "No streams available")
                     : isLoading
                       ? "Starting stream..."
                       : isDisabled
