@@ -336,6 +336,7 @@ export function AlertDetailModal({
   const [derivedAlertScreenshots, setDerivedAlertScreenshots] = useState<Array<{ url: string; channel?: number; timestamp?: string; offset?: number }>>([]);
   const [derivedAlertScreenshotLoading, setDerivedAlertScreenshotLoading] = useState(false);
   const [alertScreenshotsExpanded, setAlertScreenshotsExpanded] = useState(false);
+  const [mediaFetching, setMediaFetching] = useState(false);
   const alertVideoRequestStateRef = useRef<Record<string, any>>({});
   const alertMediaFetchBackoffRef = useRef<Record<string, number>>({});
   const videoProxyBase = "/api/video-server";
@@ -441,6 +442,10 @@ export function AlertDetailModal({
   // Request media on-demand when modal opens and no screenshots exist
   const mediaRequestInitiatedRef = useRef(false);
   useEffect(() => {
+    mediaRequestInitiatedRef.current = false;
+    setMediaFetching(false);
+  }, [selectedAlert?.id]);
+  useEffect(() => {
     if (mediaRequestInitiatedRef.current) return;
     const alertId = String(selectedAlert?.id || "").trim();
     if (!alertId) return;
@@ -449,6 +454,7 @@ export function AlertDetailModal({
       || derivedAlertScreenshots.length > 0;
     if (hasScreenshots) return;
     mediaRequestInitiatedRef.current = true;
+    setMediaFetching(true);
     fetch(`/api/video-server/eps/alerts/${encodeURIComponent(alertId)}/media?ensureMedia=true`, { cache: "no-store" })
       .then((res) => res.json())
       .then((data) => {
@@ -475,7 +481,8 @@ export function AlertDetailModal({
           });
         }
       })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => setMediaFetching(false));
   }, [selectedAlert?.id, selectedAlert?.media?.screenshots?.length, selectedAlert?.screenshotUrls?.length, derivedAlertScreenshots.length]);
 
   return (
@@ -714,9 +721,26 @@ export function AlertDetailModal({
                     </div>
 
                     {!selectedAlert?.screenshotUrls?.length && !selectedAlert?.media?.screenshots?.length && derivedAlertScreenshots.length === 0 && (
-                      <div className="text-center py-8 text-slate-500">
-                        <p>No screenshots available for this alert.</p>
-                      </div>
+                      mediaFetching ? (
+                        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                          {[1, 2].map((i) => (
+                            <div key={i} className="overflow-hidden rounded-lg border border-slate-200 bg-slate-100 animate-pulse">
+                              <div className="h-56 w-full bg-slate-200" />
+                              <div className="p-3 space-y-2">
+                                <div className="h-3 bg-slate-200 rounded w-1/3" />
+                                <div className="h-2 bg-slate-200 rounded w-1/2" />
+                              </div>
+                            </div>
+                          ))}
+                          <div className="col-span-full text-center py-2 text-xs text-slate-400">
+                            Requesting media from device...
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="text-center py-8 text-slate-500">
+                          <p>No screenshots available for this alert.</p>
+                        </div>
+                      )
                     )}
                   </Card>
                 </TabsContent>
@@ -743,16 +767,33 @@ export function AlertDetailModal({
                         ))}
                       </div>
                     ) : (
-                      <div className="text-center py-12 text-slate-500">
-                        <p>
-                          {selectedAlertPlaybackLoading
-                            ? "Preparing alert video from stored footage..."
-                            : "Waiting for video"}
-                        </p>
-                        {selectedAlertPlaybackError ? (
-                          <p className="mt-2 text-sm text-rose-600">{selectedAlertPlaybackError}</p>
-                        ) : null}
-                      </div>
+                      mediaFetching ? (
+                        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+                          {[1, 2].map((i) => (
+                            <div key={i} className="overflow-hidden rounded-lg border border-slate-200 bg-slate-950 animate-pulse">
+                              <div className="h-[48vh] min-h-[320px] w-full bg-slate-800" />
+                              <div className="p-3 space-y-2 bg-slate-900">
+                                <div className="h-3 bg-slate-700 rounded w-1/3" />
+                                <div className="h-2 bg-slate-700 rounded w-1/2" />
+                              </div>
+                            </div>
+                          ))}
+                          <div className="col-span-full text-center py-2 text-xs text-slate-400">
+                            Requesting video from device...
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="text-center py-12 text-slate-500">
+                          <p>
+                            {selectedAlertPlaybackLoading
+                              ? "Preparing alert video from stored footage..."
+                              : "Waiting for video"}
+                          </p>
+                          {selectedAlertPlaybackError ? (
+                            <p className="mt-2 text-sm text-rose-600">{selectedAlertPlaybackError}</p>
+                          ) : null}
+                        </div>
+                      )
                     )}
                   </Card>
                 </TabsContent>
