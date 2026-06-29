@@ -444,6 +444,8 @@ export function AlertDetailModal({
   useEffect(() => {
     mediaRequestInitiatedRef.current = false;
     setMediaFetching(false);
+    setDerivedAlertScreenshots([]);
+    setSelectedAlertPlaybackVideos([]);
   }, [selectedAlert?.id]);
   useEffect(() => {
     if (mediaRequestInitiatedRef.current) return;

@@ -113,14 +113,20 @@ export function UniversalVideoPlayer({
           ? `/api/video-server/playback/flv-proxy?url=${encodeURIComponent(activeUrl)}`
           : activeUrl;
         const player = flvjs.createPlayer(
-          { type: "flv", url: proxyUrl, isLive: false },
-          { enableWorker: false, enableStashBuffer: false, stashInitialSize: 128 }
+          { type: "flv", url: proxyUrl, isLive: true },
+          { enableWorker: false, enableStashBuffer: true, stashInitialSize: 384, liveBufferLatencyChasing: true, liveBufferLatencyMaxLatency: 3 }
         );
         flvPlayerRef.current = player;
         player.attachMediaElement(videoEl);
         player.load();
+        let loadTimeout: ReturnType<typeof setTimeout> | null = null;
+        loadTimeout = setTimeout(() => {
+          if (destroyed) return;
+          try { player.play(); } catch {}
+        }, 3000);
         player.on(flvjs.Events.ERROR, (errorType, errorDetail, errorInfo) => {
           console.error('[FLV]', errorType, errorDetail, errorInfo);
+          if (loadTimeout) clearTimeout(loadTimeout);
           if (sourceIndex < candidateSources.length - 1) {
             setSourceIndex((prev) => prev + 1);
           } else {
@@ -128,7 +134,7 @@ export function UniversalVideoPlayer({
             onPlayableChange?.(false);
           }
         });
-        player.on(flvjs.Events.LOADING_COMPLETE, () => onPlayableChange?.(true));
+        player.on(flvjs.Events.STATISTICS_INFO, () => onPlayableChange?.(true));
         player.on(flvjs.Events.METADATA_ARRIVED, () => onPlayableChange?.(true));
       } catch { setPlaybackError("FLV player failed to load."); }
     })();
