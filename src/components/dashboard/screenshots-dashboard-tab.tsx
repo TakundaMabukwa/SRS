@@ -127,8 +127,8 @@ export default function ScreenshotsDashboardTab({
       }).catch(() => null);
       if (!activeRef.current) return;
 
-      // Build registration -> {deviceId, online, cameras} map from EPS plateNames
-      // plateName format: "REGISTRATION - FLEET" e.g. "LDG095MP - FM02"
+      // Build fleet/reg -> {deviceId, online, cameras} map from EPS plateNames
+      // plateName format: "FLEET - REG" e.g. "FM02 - LDG095MP"
       const regMap = new Map<string, { deviceId: string; online: boolean; cameras: number }>();
       if (onlineRes && onlineRes.ok) {
         const onlineData = await onlineRes.json();
@@ -136,18 +136,25 @@ export default function ScreenshotsDashboardTab({
           for (const d of onlineData.data.devices) {
             if (!d.deviceId) continue;
             const plate = (d.plateName || "").trim();
-            const registration = plate.split(" - ")[0].trim();
-            if (registration) {
-                regMap.set(registration.toUpperCase(), { deviceId: d.deviceId, online: d.online === true, cameras: d.cameras || 1 });
+            const parts = plate.split(" - ");
+            const fleetNum = (parts[0] || "").trim();
+            const regNum = (parts[1] || "").trim();
+            if (fleetNum) {
+              regMap.set(fleetNum.toUpperCase(), { deviceId: d.deviceId, online: d.online === true, cameras: d.cameras || 1 });
+            }
+            if (regNum) {
+              regMap.set(regNum.toUpperCase(), { deviceId: d.deviceId, online: d.online === true, cameras: d.cameras || 1 });
             }
           }
         }
       }
 
-      // Build vehicle cards from DB, matching registration_number -> plateName
+      // Build vehicle cards from DB, matching fleet_number or registration_number -> plateName
       const matchedDeviceIds: string[] = [];
       const built: VehicleCard[] = dbVehicles.map((v) => {
-        const match = regMap.get(v.registration_number.toUpperCase());
+        const fleetMatch = regMap.get((v.fleet_number || "").toUpperCase());
+        const regMatch = regMap.get((v.registration_number || "").toUpperCase());
+        const match = fleetMatch || regMatch;
         const deviceId = match ? match.deviceId : null;
         if (deviceId) matchedDeviceIds.push(deviceId);
         const online = match ? match.online : false;

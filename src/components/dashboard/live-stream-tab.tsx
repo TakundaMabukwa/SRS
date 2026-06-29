@@ -136,16 +136,23 @@ export default function LiveStreamTab({ selectedCostCenters = [] }: LiveStreamTa
           for (const d of onlineData.data.devices) {
             if (!d.deviceId) continue;
             const plate = (d.plateName || "").trim();
-            const registration = plate.split(" - ")[0].trim();
-            if (registration) {
-              regMap.set(registration.toUpperCase(), { deviceId: d.deviceId, online: d.online === true });
+            const parts = plate.split(" - ");
+            const fleetNum = (parts[0] || "").trim();
+            const regNum = (parts[1] || "").trim();
+            if (fleetNum) {
+              regMap.set(fleetNum.toUpperCase(), { deviceId: d.deviceId, online: d.online === true });
+            }
+            if (regNum) {
+              regMap.set(regNum.toUpperCase(), { deviceId: d.deviceId, online: d.online === true });
             }
           }
         }
       }
 
       const built = dbVehicles.map((v) => {
-        const match = regMap.get(v.registration_number.toUpperCase());
+        const fleetMatch = regMap.get((v.fleet_number || "").toUpperCase());
+        const regMatch = regMap.get((v.registration_number || "").toUpperCase());
+        const match = fleetMatch || regMatch;
         return {
           registration: v.registration_number,
           fleetNumber: v.fleet_number,
