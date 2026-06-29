@@ -1407,7 +1407,14 @@ export async function GET(
         const range = request.headers.get('range')
         if (range) headers['range'] = range
 
-        const upstream = await fetch(urlParam, { headers, signal: AbortSignal.timeout(60000) })
+        const controller = new AbortController()
+        const connectTimer = setTimeout(() => controller.abort(), 15000)
+        let upstream: Response
+        try {
+          upstream = await fetch(urlParam, { headers, signal: controller.signal })
+        } finally {
+          clearTimeout(connectTimer)
+        }
         if (!upstream.ok || !upstream.body) {
           return Response.json({ success: false, message: `Upstream returned ${upstream.status}` }, { status: 502 })
         }
