@@ -17,6 +17,7 @@ interface UniversalVideoPlayerProps {
   onPlayableChange?: (playable: boolean) => void;
   onScreenshotCapture?: (blob: Blob) => void;
   autoPlay?: boolean;
+  isFlv?: boolean;
 }
 
 export function UniversalVideoPlayer({
@@ -26,6 +27,7 @@ export function UniversalVideoPlayer({
   onPlayableChange,
   onScreenshotCapture,
   autoPlay = false,
+  isFlv: forcedFlv = false,
 }: UniversalVideoPlayerProps) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const [playbackError, setPlaybackError] = useState("");
@@ -45,7 +47,7 @@ export function UniversalVideoPlayer({
   const [sourceIndex, setSourceIndex] = useState(0);
   const activeUrl = candidateSources[sourceIndex] || "";
   const isHlsUrl = /\.m3u8(?:$|\?)/i.test(activeUrl);
-  const isFlv = isFlvUrl(activeUrl);
+  const isFlv = forcedFlv || isFlvUrl(activeUrl);
   const isJobMp4Url = /\/api\/video-server\/videos\/jobs\/[^/]+\/file/i.test(activeUrl) && !isHlsUrl && !isFlv;
 
   const flvPlayerRef = useRef<any>(null);
@@ -106,7 +108,8 @@ export function UniversalVideoPlayer({
         }
         // Proxy external FLV URLs through backend to avoid CORS issues
         const isExternalUrl = /^https?:\/\//i.test(activeUrl) && !activeUrl.includes(window.location.host);
-        const proxyUrl = isExternalUrl
+        const needsProxy = isExternalUrl || forcedFlv;
+        const proxyUrl = needsProxy
           ? `/api/video-server/playback/flv-proxy?url=${encodeURIComponent(activeUrl)}`
           : activeUrl;
         const player = flvjs.createPlayer({ type: "flv", url: proxyUrl, isLive: false });

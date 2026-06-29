@@ -4,9 +4,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { RefreshCw, MonitorPlay, Shield, RadioTower, ExternalLink, X } from "lucide-react";
+import { RefreshCw, Shield, ExternalLink, X } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
-import { toSAST } from "@/lib/utils/date-formatter";
 
 type DbVehicle = {
   registration_number: string;
@@ -87,7 +86,7 @@ export default function ScreenshotsDashboardTab({
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
   const [lastScreenshotAt, setLastScreenshotAt] = useState<Date | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [gridColumns, setGridColumns] = useState(4);
+  const [gridColumns, setGridColumns] = useState(2);
   const [modalImage, setModalImage] = useState<string | null>(null);
   const activeRef = useRef(true);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -277,17 +276,12 @@ export default function ScreenshotsDashboardTab({
   const onlineCount = useMemo(() => scopedCards.filter((c) => c.online).length, [scopedCards]);
 
   const gridClassName = useMemo(() => {
-    switch (gridColumns) {
-      case 1: return "grid grid-cols-1 gap-3";
-      case 2: return "grid grid-cols-1 gap-3 md:grid-cols-2";
-      case 3: return "grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3";
-      case 4: return "grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4";
-      case 5: return "grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5";
-      case 6: return "grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-6";
-      case 7: return "grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-7";
-      case 8: return "grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-8";
-      default: return "grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4";
-    }
+    const gap = gridColumns <= 4 ? "gap-2" : "gap-1";
+    if (gridColumns <= 2) return `grid grid-cols-1 ${gap} md:grid-cols-2`;
+    if (gridColumns <= 4) return `grid grid-cols-2 ${gap} md:grid-cols-3 xl:grid-cols-4`;
+    if (gridColumns <= 6) return `grid grid-cols-3 ${gap} md:grid-cols-4 xl:grid-cols-6`;
+    if (gridColumns <= 8) return `grid grid-cols-4 ${gap} md:grid-cols-6 xl:grid-cols-8`;
+    return `grid grid-cols-5 ${gap} md:grid-cols-7 xl:grid-cols-10 2xl:grid-cols-10`;
   }, [gridColumns]);
 
   const liveCount = useMemo(() => {
@@ -300,150 +294,111 @@ export default function ScreenshotsDashboardTab({
   }, [scopedCards]);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-3">
       <Card className="overflow-hidden border-slate-800 bg-gradient-to-r from-slate-950 via-slate-900 to-slate-800 text-slate-100 shadow-xl">
-        <div className="p-6 md:p-7">
-          <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
-            <div>
+        <div className="p-4">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex items-center gap-3">
               <div className="inline-flex items-center gap-2 rounded-full border border-cyan-400/30 bg-cyan-500/10 px-3 py-1 text-xs font-medium text-cyan-300">
                 <Shield className="h-3.5 w-3.5" />
-                Vehicle Screenshot Monitoring
+                Monitoring
               </div>
-              <h2 className="mt-3 text-3xl font-bold tracking-tight">Screenshots</h2>
-            </div>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-              <div className="rounded-lg border border-slate-700 bg-slate-900/70 px-4 py-3">
-                <p className="text-[11px] uppercase tracking-wide text-slate-400">Vehicles</p>
-                <p className="mt-1 text-2xl font-bold text-emerald-300">{scopedCards.length}</p>
-                <p className="mt-1 text-[11px] text-slate-400">{onlineCount} online</p>
-              </div>
-              <div className="rounded-lg border border-slate-700 bg-slate-900/70 px-4 py-3">
-                <p className="text-[11px] uppercase tracking-wide text-slate-400">Live Channels</p>
-                <p className="mt-1 text-2xl font-bold text-cyan-300">{liveCount}</p>
-              </div>
-              <div className="rounded-lg border border-slate-700 bg-slate-900/70 px-4 py-3">
-                <p className="text-[11px] uppercase tracking-wide text-slate-400">Last Update</p>
-                <p className="mt-1 text-sm font-semibold text-slate-100">
-                  {lastScreenshotAt ? toSAST(lastScreenshotAt).toLocaleTimeString() : (lastRefresh ? toSAST(lastRefresh).toLocaleTimeString() : "Waiting...")}
-                </p>
+              <h2 className="text-xl font-bold tracking-tight">Screenshots</h2>
+              <div className="flex items-center gap-3 text-xs text-slate-400">
+                <span>{scopedCards.length} vehicles</span>
+                <span className="text-emerald-400">{onlineCount} online</span>
+                <span>{liveCount} live</span>
               </div>
             </div>
-          </div>
-          <div className="mt-4 flex flex-wrap items-center gap-2">
-            <Button onClick={() => void refreshAll()} disabled={refreshing} className="bg-cyan-600 hover:bg-cyan-700">
-              <RefreshCw className={`mr-2 h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
-              Refresh
-            </Button>
-
-            {detachable && (
-              <Button
-                variant="outline"
-                onClick={() => window.open("/dashboard/screenshots-monitor", "screenshots-monitor", "popup=yes,width=1600,height=1000,resizable=yes,scrollbars=yes")}
-                className="border-slate-600 bg-slate-900 text-slate-100 hover:bg-slate-800"
-              >
-                <ExternalLink className="mr-2 h-4 w-4" />
-                Pop Out Monitor
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex items-center gap-1">
+                <span className="text-[10px] font-medium uppercase tracking-wide text-slate-500">Grid</span>
+                {[2, 4, 6, 8, 10].map((cols) => (
+                  <Button
+                    key={cols}
+                    type="button"
+                    size="sm"
+                    variant={gridColumns === cols ? "default" : "outline"}
+                    className={`h-7 px-2 text-[11px] ${gridColumns === cols ? "bg-slate-700 text-white hover:bg-slate-600" : "border-slate-600 bg-slate-800 text-slate-400 hover:bg-slate-700"}`}
+                    onClick={() => setGridColumns(cols)}
+                  >
+                    {cols}
+                  </Button>
+                ))}
+              </div>
+              <Button onClick={() => void refreshAll()} disabled={refreshing} size="sm" className="h-7 bg-cyan-600 hover:bg-cyan-700">
+                <RefreshCw className={`mr-1 h-3 w-3 ${refreshing ? "animate-spin" : ""}`} />
+                Refresh
               </Button>
-            )}
+              {detachable && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 border-slate-600 bg-slate-800 text-slate-400 hover:bg-slate-700"
+                  onClick={() => window.open("/dashboard/screenshots-monitor", "screenshots-monitor", "popup=yes,width=1600,height=1000,resizable=yes,scrollbars=yes")}
+                >
+                  <ExternalLink className="mr-1 h-3 w-3" />
+                  Pop Out
+                </Button>
+              )}
+            </div>
           </div>
         </div>
       </Card>
 
       {error && (
-        <Card className="border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</Card>
+        <div className="rounded bg-red-900/50 border border-red-800 px-3 py-2 text-xs text-red-300">{error}</div>
       )}
 
       {loading ? (
-        <Card className="p-10 text-center text-slate-600">Loading screenshot monitor...</Card>
+        <div className="p-10 text-center text-slate-500 text-sm">Loading screenshot monitor...</div>
       ) : scopedCards.length === 0 ? (
-        <Card className="p-10 text-center text-slate-600">No vehicles found in the database.</Card>
+        <div className="p-10 text-center text-slate-500 text-sm">No vehicles found in the database.</div>
       ) : (
-        <div className="space-y-4">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-            <div className="flex items-center gap-2">
-              <RadioTower className="h-5 w-5 text-slate-700" />
-              <h3 className="text-lg font-semibold text-slate-900">Vehicle Screenshot Grid</h3>
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-xs font-medium uppercase tracking-wide text-slate-500">Grid</span>
-              {[1, 2, 3, 4, 5, 6, 7, 8].map((cols) => (
-                <Button
-                  key={cols}
-                  type="button"
-                  size="sm"
-                  variant={gridColumns === cols ? "default" : "outline"}
-                  className={gridColumns === cols ? "bg-slate-900 text-white hover:bg-slate-800" : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"}
-                  onClick={() => setGridColumns(cols)}
-                >
-                  {cols}x{cols}
-                </Button>
-              ))}
-            </div>
-          </div>
-          <div className={gridClassName}>
+        <div className={gridClassName}>
             {scopedCards.map((card) => {
               const hasScreenshot = !!(card.ch1Url || card.ch2Url);
-              const latestTs = Math.max(parseDate(card.ch1Time), parseDate(card.ch2Time));
               return (
-                <Card key={card.registration} className="overflow-hidden border-slate-300 bg-white text-slate-900">
-                  <div className="border-b border-slate-200 px-3 py-2">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-semibold">{card.fleetNumber} - {card.registration}</p>
-                        <p className="mt-1 text-[11px] text-slate-500">
-                          {card.online
-                            ? (hasScreenshot ? `Online - ${toSAST(latestTs).toLocaleTimeString()}` : "Online - No screenshots")
-                            : "Offline"}
-                        </p>
-                      </div>
-                      <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium ${
-                        card.online ? (hasScreenshot ? "bg-emerald-100 text-emerald-700" : "bg-blue-100 text-blue-700") : "bg-slate-100 text-slate-600"
-                      }`}>
-                        {card.online ? (hasScreenshot ? "Live" : "Online") : "Offline"}
-                      </span>
-                    </div>
-                  </div>
-                  {(() => {
-                    const chCount = Math.max(card.cameras || 1, card.ch2Url && card.ch2Url !== card.ch1Url ? 2 : 1);
-                    const channels: { ch: number; url: string | null }[] = [];
-                    for (let i = 1; i <= chCount; i++) {
-                      const url = i === 1 ? card.ch1Url : (card.ch2Url !== card.ch1Url ? card.ch2Url : null);
-                      channels.push({ ch: i, url });
-                    }
-                    const gridCols = chCount >= 2 ? "grid-cols-2" : "grid-cols-1";
-                    return (
-                      <div className={`grid ${gridCols} gap-2 p-2`}>
-                        {channels.map(({ ch, url }) => (
-                          <div key={`${card.registration}-${ch}`} className="overflow-hidden rounded-md border border-slate-300 bg-slate-950 text-slate-100">
-                              <div className="relative flex items-center justify-center" style={{ minHeight: 320 }}>
-                              {url ? (
-                                <img
-                                  src={withCacheBuster(url)}
-                                  alt={`${card.registration} CH${ch}`}
-                                  className="w-full h-full object-cover cursor-pointer"
-                                  loading="lazy"
-                                  style={{ minHeight: 320, maxHeight: 480 }}
-                                  onClick={() => setModalImage(url)}
-                                />
-                              ) : (
-                                <span className="text-xs text-slate-500 px-2 text-center">
-                                  {card.online ? "Waiting for screenshot..." : "Offline"}
-                                </span>
-                              )}
-                              <div className="absolute right-2 top-2 rounded bg-black/70 px-2 py-1 text-[11px] font-medium">
-                                CH {ch}
-                              </div>
+                <div key={card.registration} className="group relative overflow-hidden rounded bg-slate-900 border border-slate-700/50">
+                  <div className="grid grid-cols-2 gap-px bg-slate-800">
+                    {[1, 2].map((ch) => {
+                      const url = ch === 1 ? card.ch1Url : (card.ch2Url !== card.ch1Url ? card.ch2Url : null);
+                      return (
+                        <div key={`${card.registration}-${ch}`} className="relative bg-slate-950 aspect-video">
+                          {url ? (
+                            <img
+                              src={withCacheBuster(url)}
+                              alt={`${card.registration} CH${ch}`}
+                              className="absolute inset-0 w-full h-full object-cover cursor-pointer"
+                              loading="lazy"
+                              onClick={() => setModalImage(url)}
+                            />
+                          ) : (
+                            <div className="absolute inset-0 flex items-center justify-center">
+                              <span className="text-[10px] text-slate-600">
+                                {card.online ? "Waiting" : "Offline"}
+                              </span>
                             </div>
+                          )}
+                          <div className="absolute right-1 top-1 rounded bg-black/70 px-1 py-0.5 text-[9px] font-medium text-white/80">
+                            CH{ch}
                           </div>
-                        ))}
-                      </div>
-                    );
-                  })()}
-                </Card>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div className="absolute left-0 top-0 right-0 flex items-center justify-between bg-gradient-to-b from-black/80 via-black/40 to-transparent px-2 py-1.5 pointer-events-none">
+                    <span className="text-[11px] font-semibold text-white truncate">{card.fleetNumber || card.registration}</span>
+                    <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-medium ${
+                      card.online ? (hasScreenshot ? "bg-emerald-500/90 text-white" : "bg-blue-500/90 text-white") : "bg-slate-600/90 text-slate-300"
+                    }`}>
+                      {card.online ? (hasScreenshot ? "LIVE" : "ON") : "OFF"}
+                    </span>
+                  </div>
+                </div>
               );
             })}
           </div>
-        </div>
       )}
 
       {modalImage && (

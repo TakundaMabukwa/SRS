@@ -386,6 +386,7 @@ export function AlertDetailModal({
         key: v.key || v.id || v.url,
         label: v.label || v.name || v.channel || "Video",
         url: v.url || v.streamUrl || v.hlsUrl,
+        isFlv: v.isFlv === true,
       }));
       setTimelinePlaybackByAlert((prev) => ({ ...prev, [entryId]: videos }));
     } catch (err) {
@@ -417,6 +418,7 @@ export function AlertDetailModal({
         key: v.key || v.id || v.url,
         label: v.label || v.name || v.channel || "Video",
         url: v.url || v.streamUrl || v.hlsUrl,
+        isFlv: v.isFlv === true,
       }));
       setSelectedAlertPlaybackVideos(videos);
     } catch (err: any) {
@@ -693,6 +695,7 @@ export function AlertDetailModal({
                             <UniversalVideoPlayer
                               url={video.url}
                               autoPlay={true}
+                              isFlv={video.isFlv}
                               onScreenshotCapture={(blob) => handleDerivedAlertScreenshotCapture(idx, blob)}
                               className="w-full h-[48vh] min-h-[320px] max-h-[620px] rounded-none border-0 bg-black object-contain"
                             />
@@ -774,6 +777,7 @@ export function AlertDetailModal({
                                       <UniversalVideoPlayer
                                         url={video.url}
                                         autoPlay={idx === 0}
+                                        isFlv={video.isFlv}
                                         className="w-full rounded mb-3 border border-slate-700"
                                       />
                                       <div className="flex items-center justify-between gap-2">
