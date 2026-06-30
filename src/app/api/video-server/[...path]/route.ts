@@ -49,10 +49,10 @@ function normalizeProxiedMediaUrls(value: unknown, baseUrl: string): unknown {
           if (parsed.origin === targetBase.origin && parsed.pathname.startsWith('/api/')) {
             return `/api/video-server${parsed.pathname.slice(4)}${parsed.search || ''}`;
           }
-          if (/\.(jpe?g|png|webp|gif|bmp|svg)(?:$|\?)/i.test(parsed.pathname) || parsed.hostname.includes('files.imettax.com') || parsed.hostname.includes('imettax')) {
+          if (parsed.hostname.includes('files.imettax.com') || parsed.hostname.includes('imettax')) {
             return `/api/video-server/playback/image-proxy?url=${encodeURIComponent(raw)}`;
           }
-          if (/\.(flv|m3u8|ts)(?:$|\?)/i.test(parsed.pathname) || parsed.hostname.includes('mettaxiot.com')) {
+          if (parsed.hostname.includes('mettaxiot.com') && /\.(flv|m3u8|ts)(?:$|\?)/i.test(parsed.pathname)) {
             return `/api/video-server/playback/flv-proxy?url=${encodeURIComponent(raw)}`;
           }
         } catch {
