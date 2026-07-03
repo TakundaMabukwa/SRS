@@ -1442,7 +1442,7 @@ export async function GET(
   }
 
   const epsStreamingBase = getEpsStreamingServerBaseUrl()
-  const isEpsStreamPath = path.startsWith('stream/') || path.startsWith('eps/')
+  const isEpsStreamPath = path.startsWith('eps/')
   const getTarget = (isEpsStreamPath || firstSegment === 'alerts') ? { name: 'epsStreaming', baseUrl: epsStreamingBase } : target
   const epsPath = firstSegment === 'eps' ? path.slice(4) : path
   const upstreamPath = (firstSegment === 'media' || firstSegment === 'captures') ? `/${path}` : (firstSegment === 'eps') ? `/api/${epsPath}` : (firstSegment === 'alerts') ? `/api/${path}` : `/api/${path}`
@@ -1545,7 +1545,7 @@ export async function POST(
   const { path: pathArray } = await params
   const path = pathArray.join('/')
   const epsStreamingBase = getEpsStreamingServerBaseUrl()
-  const isEpsStreamPath = path.startsWith('stream/') || path.startsWith('eps/')
+  const isEpsStreamPath = path.startsWith('eps/')
   const firstSegment = String(pathArray[0] || '').toLowerCase()
   const target = (isEpsStreamPath || firstSegment === 'alerts') ? { name: 'epsStreaming', baseUrl: epsStreamingBase } : resolveVideoServerProxyBase(pathArray)
   const epsPath = firstSegment === 'alerts' ? path : path.startsWith('eps/') ? path.slice(4) : path
