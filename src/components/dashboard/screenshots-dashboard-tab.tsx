@@ -38,7 +38,7 @@ type VehicleCard = {
 };
 
 const EPS_API = "/api/video-server";
-const REFRESH_INTERVAL_MS = 30000;
+const REFRESH_INTERVAL_MS = 120000;
 const SCREENSHOT_WINDOW_MS = 10 * 60 * 1000;
 
 function normalizeCostCenter(value: unknown): string {
@@ -180,8 +180,8 @@ export default function ScreenshotsDashboardTab({
           body: JSON.stringify({ pageSize: 500, pageIndex: 1, deviceIds: matchedDeviceIds.join(","), startTime: start, endTime: end, queryType: "Device" }),
           cache: "no-store",
           signal: AbortSignal.timeout(20000),
-        });
-        if (galRes.ok) {
+        }).catch(() => null);
+        if (galRes && galRes.ok) {
           const galData = await galRes.json();
           const files: GalleryFile[] = galData.data?.files || [];
           const byDevice: Record<string, Record<number, GalleryFile>> = {};
