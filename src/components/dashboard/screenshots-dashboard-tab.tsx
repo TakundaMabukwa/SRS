@@ -38,7 +38,6 @@ type VehicleCard = {
 };
 
 const EPS_API = "/api/video-server";
-const REFRESH_INTERVAL_MS = 120000;
 const RETRY_INTERVAL_MS = 30000;
 const SCREENSHOT_WINDOW_MS = 10 * 60 * 1000;
 
@@ -84,14 +83,12 @@ export default function ScreenshotsDashboardTab({
   const [cards, setCards] = useState<VehicleCard[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
   const [lastScreenshotAt, setLastScreenshotAt] = useState<Date | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [gridColumns, setGridColumns] = useState(2);
   const [modalImage, setModalImage] = useState<string | null>(null);
   const [failedImages, setFailedImages] = useState<Set<string>>(new Set());
   const activeRef = useRef(true);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const failedImagesRef = useRef<Set<string>>(new Set());
   const prevCardsRef = useRef<VehicleCard[]>([]);
@@ -239,7 +236,6 @@ export default function ScreenshotsDashboardTab({
 
       prevCardsRef.current = built;
       setCards(built);
-      setLastRefresh(new Date());
       if (built.some((c) => c.ch1Url || c.ch2Url)) setLastScreenshotAt(new Date());
       setError(null);
       setLoading(false);
@@ -271,10 +267,8 @@ export default function ScreenshotsDashboardTab({
   useEffect(() => {
     activeRef.current = true;
     fetchData().finally(() => setLoading(false));
-    timerRef.current = setInterval(() => fetchData(), REFRESH_INTERVAL_MS);
     return () => {
       activeRef.current = false;
-      if (timerRef.current) clearInterval(timerRef.current);
       if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
     };
   }, [fetchData]);
