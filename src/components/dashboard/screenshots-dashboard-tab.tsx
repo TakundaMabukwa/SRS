@@ -39,6 +39,7 @@ type VehicleCard = {
 
 const EPS_API = "/api/video-server";
 const REFRESH_INTERVAL_MS = 120000;
+const RETRY_INTERVAL_MS = 30000;
 const SCREENSHOT_WINDOW_MS = 10 * 60 * 1000;
 
 function normalizeCostCenter(value: unknown): string {
@@ -88,8 +89,11 @@ export default function ScreenshotsDashboardTab({
   const [error, setError] = useState<string | null>(null);
   const [gridColumns, setGridColumns] = useState(2);
   const [modalImage, setModalImage] = useState<string | null>(null);
+  const [failedImages, setFailedImages] = useState<Set<string>>(new Set());
   const activeRef = useRef(true);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const failedImagesRef = useRef<Set<string>>(new Set());
   const prevCardsRef = useRef<VehicleCard[]>([]);
 
   const fetchDbOnce = useCallback(async () => {
@@ -169,6 +173,7 @@ export default function ScreenshotsDashboardTab({
       });
 
       // Fetch gallery screenshots for matched devices
+      let galFailed = false;
       if (matchedDeviceIds.length > 0) {
         const now = new Date();
         const end = now.toISOString().replace("T", " ").slice(0, 19);
@@ -179,7 +184,7 @@ export default function ScreenshotsDashboardTab({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ pageSize: 500, pageIndex: 1, deviceIds: matchedDeviceIds.join(","), startTime: start, endTime: end, queryType: "Device" }),
           cache: "no-store",
-          signal: AbortSignal.timeout(20000),
+          signal: AbortSignal.timeout(45000),
         }).catch(() => null);
         if (galRes && galRes.ok) {
           const galData = await galRes.json();
@@ -200,6 +205,8 @@ export default function ScreenshotsDashboardTab({
             if (dev[1]) { card.ch1Url = toProxiedUrl(dev[1].fileUrl); card.ch1Time = dev[1].createTime; }
             if (dev[2]) { card.ch2Url = toProxiedUrl(dev[2].fileUrl); card.ch2Time = dev[2].createTime; }
           }
+        } else {
+          galFailed = true;
         }
       }
 
@@ -219,13 +226,14 @@ export default function ScreenshotsDashboardTab({
 
       if (!activeRef.current) return;
 
-      // Keep last images per-channel if no new data arrived
+      // Keep last images per-channel if no new data arrived, but skip failed ones
       const prevImages = prevCardsRef.current;
+      const currentFailed = failedImagesRef.current;
       for (const card of built) {
         const prev = prevImages.find((c) => c.registration === card.registration);
         if (prev) {
-          if (!card.ch1Url && prev.ch1Url) { card.ch1Url = prev.ch1Url; card.ch1Time = prev.ch1Time; }
-          if (!card.ch2Url && prev.ch2Url) { card.ch2Url = prev.ch2Url; card.ch2Time = prev.ch2Time; }
+          if (!card.ch1Url && prev.ch1Url && !currentFailed.has(prev.ch1Url)) { card.ch1Url = prev.ch1Url; card.ch1Time = prev.ch1Time; }
+          if (!card.ch2Url && prev.ch2Url && !currentFailed.has(prev.ch2Url)) { card.ch2Url = prev.ch2Url; card.ch2Time = prev.ch2Time; }
         }
       }
 
@@ -235,6 +243,11 @@ export default function ScreenshotsDashboardTab({
       if (built.some((c) => c.ch1Url || c.ch2Url)) setLastScreenshotAt(new Date());
       setError(null);
       setLoading(false);
+
+      // If gallery failed, retry sooner
+      if (galFailed) {
+        scheduleRetry();
+      }
     } catch (e: any) {
       if (e.name === "AbortError") return;
       if (!activeRef.current) return;
@@ -242,6 +255,13 @@ export default function ScreenshotsDashboardTab({
       setLoading(false);
     }
   }, [fetchDbOnce]);
+
+  const scheduleRetry = useCallback(() => {
+    if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
+    retryTimerRef.current = setTimeout(() => {
+      if (activeRef.current) fetchData();
+    }, RETRY_INTERVAL_MS);
+  }, [fetchData]);
 
   const refreshAll = useCallback(async () => {
     setRefreshing(true);
@@ -255,8 +275,13 @@ export default function ScreenshotsDashboardTab({
     return () => {
       activeRef.current = false;
       if (timerRef.current) clearInterval(timerRef.current);
+      if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
     };
   }, [fetchData]);
+
+  useEffect(() => {
+    failedImagesRef.current = failedImages;
+  }, [failedImages]);
 
   const selectedCostCenterSet = useMemo(
     () => new Set(selectedCostCenters.map((v) => normalizeCostCenter(v)).filter(Boolean)),
@@ -357,12 +382,16 @@ export default function ScreenshotsDashboardTab({
       ) : (
         <div className={gridClassName}>
             {scopedCards.map((card) => {
-              const hasScreenshot = !!(card.ch1Url || card.ch2Url);
+              const hasScreenshot = !!(
+                (card.ch1Url && !failedImages.has(card.ch1Url)) ||
+                (card.ch2Url && !failedImages.has(card.ch2Url))
+              );
               return (
                 <div key={card.registration} className="group relative overflow-hidden rounded bg-slate-900 border border-slate-700/50">
                   <div className="grid grid-cols-2 gap-px bg-slate-800">
                     {[1, 2].map((ch) => {
-                      const url = ch === 1 ? card.ch1Url : (card.ch2Url !== card.ch1Url ? card.ch2Url : null);
+                      const rawUrl = ch === 1 ? card.ch1Url : (card.ch2Url !== card.ch1Url ? card.ch2Url : null);
+                      const url = rawUrl && !failedImages.has(rawUrl) ? rawUrl : null;
                       return (
                         <div key={`${card.registration}-${ch}`} className="relative bg-slate-950 aspect-video">
                           {url ? (
@@ -372,6 +401,13 @@ export default function ScreenshotsDashboardTab({
                               className="absolute inset-0 w-full h-full object-cover cursor-pointer"
                               loading="lazy"
                               onClick={() => setModalImage(url)}
+                              onError={() => {
+                                setFailedImages((prev) => {
+                                  const next = new Set(prev);
+                                  next.add(url);
+                                  return next;
+                                });
+                              }}
                             />
                           ) : (
                             <div className="absolute inset-0 flex items-center justify-center">
