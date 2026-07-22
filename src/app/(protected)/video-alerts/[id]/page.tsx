@@ -851,7 +851,34 @@ export default function AlertDetailPage({ params }) {
                           ? "Waiting for event video to be ready before taking the screenshot..."
                           : screenshotsLoading || derivedScreenshotLoading
                           ? "Taking screenshot from event video..."
-                          : "No screenshots available yet"}
+                          : (
+                            <div>
+                              <p className="mb-3">No screenshots available yet</p>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="border-cyan-300 text-cyan-700 hover:bg-cyan-50"
+                                onClick={async () => {
+                                  if (!alertId) return;
+                                  try {
+                                    await fetch(`/api/video-server/eps/alerts/${encodeURIComponent(alertId)}/capture`, {
+                                      method: "POST",
+                                      headers: { "Content-Type": "application/json" },
+                                    });
+                                    // Wait for device to process, then re-fetch
+                                    setTimeout(() => {
+                                      void fetchAlertScreenshots(true);
+                                    }, 6000);
+                                  } catch {
+                                    // silent
+                                  }
+                                }}
+                              >
+                                Request Screenshots
+                              </Button>
+                            </div>
+                          )
+                        }
                       </div>
                     )}
                   </div>

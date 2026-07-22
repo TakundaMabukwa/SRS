@@ -337,6 +337,7 @@ export function AlertDetailModal({
   const [derivedAlertScreenshotLoading, setDerivedAlertScreenshotLoading] = useState(false);
   const [alertScreenshotsExpanded, setAlertScreenshotsExpanded] = useState(false);
   const [mediaFetching, setMediaFetching] = useState(false);
+  const [captureRequestTrigger, setCaptureRequestTrigger] = useState(0);
   const alertVideoRequestStateRef = useRef<Record<string, any>>({});
   const alertMediaFetchBackoffRef = useRef<Record<string, number>>({});
   const videoProxyBase = "/api/video-server";
@@ -504,7 +505,7 @@ export function AlertDetailModal({
       })
       .catch(() => {})
       .finally(() => setMediaFetching(false));
-  }, [selectedAlert?.id, selectedAlert?.media?.screenshots?.length, selectedAlert?.screenshotUrls?.length, derivedAlertScreenshots.length]);
+  }, [selectedAlert?.id, selectedAlert?.media?.screenshots?.length, selectedAlert?.screenshotUrls?.length, derivedAlertScreenshots.length, captureRequestTrigger]);
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/70 backdrop-blur-sm p-2 sm:p-4 md:items-center md:p-6">
@@ -759,7 +760,33 @@ export function AlertDetailModal({
                         </div>
                       ) : (
                         <div className="text-center py-8 text-slate-500">
-                          <p>No screenshots available for this alert.</p>
+                          <p className="mb-3">No screenshots available for this alert.</p>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="border-cyan-300 text-cyan-700 hover:bg-cyan-50"
+                            onClick={async () => {
+                              if (!selectedAlert?.id) return;
+                              setMediaFetching(true);
+                              try {
+                                await fetch(`/api/video-server/eps/alerts/${encodeURIComponent(selectedAlert.id)}/capture`, {
+                                  method: "POST",
+                                  headers: { "Content-Type": "application/json" },
+                                });
+                                // Wait for device to process capture, then re-fetch
+                                await new Promise((r) => setTimeout(r, 6000));
+                                mediaRequestInitiatedRef.current = false;
+                                setDerivedAlertScreenshots([]);
+                                setCaptureRequestTrigger((n) => n + 1);
+                              } catch {
+                                // silent
+                              } finally {
+                                setMediaFetching(false);
+                              }
+                            }}
+                          >
+                            Request Screenshots
+                          </Button>
                         </div>
                       )
                     )}
