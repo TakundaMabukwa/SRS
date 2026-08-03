@@ -1443,9 +1443,10 @@ export async function GET(
 
   const epsStreamingBase = getEpsStreamingServerBaseUrl()
   const isEpsStreamPath = path.startsWith('eps/')
-  const getTarget = (isEpsStreamPath || firstSegment === 'alerts') ? { name: 'epsStreaming', baseUrl: epsStreamingBase } : target
+  const isAlertConfigPath = firstSegment === 'alert-config'
+  const getTarget = (isEpsStreamPath || firstSegment === 'alerts' || isAlertConfigPath) ? { name: 'epsStreaming', baseUrl: epsStreamingBase } : target
   const epsPath = firstSegment === 'eps' ? path.slice(4) : path
-  const upstreamPath = (firstSegment === 'media' || firstSegment === 'captures') ? `/${path}` : (firstSegment === 'eps') ? `/api/${epsPath}` : (firstSegment === 'alerts') ? `/api/${path}` : `/api/${path}`
+  const upstreamPath = (firstSegment === 'media' || firstSegment === 'captures') ? `/${path}` : (firstSegment === 'eps') ? `/api/${epsPath}` : `/api/${path}`
   const url = `${getTarget.baseUrl}${upstreamPath}${searchParams ? `?${searchParams}` : ''}`
   const lowerPath = `/${path}`.toLowerCase()
   const isDirectMediaRequest =
@@ -1547,8 +1548,8 @@ export async function POST(
   const epsStreamingBase = getEpsStreamingServerBaseUrl()
   const isEpsStreamPath = path.startsWith('eps/')
   const firstSegment = String(pathArray[0] || '').toLowerCase()
-  const target = (isEpsStreamPath || firstSegment === 'alerts') ? { name: 'epsStreaming', baseUrl: epsStreamingBase } : resolveVideoServerProxyBase(pathArray)
-  const epsPath = firstSegment === 'alerts' ? path : path.startsWith('eps/') ? path.slice(4) : path
+  const target = (isEpsStreamPath || firstSegment === 'alerts' || firstSegment === 'alert-config') ? { name: 'epsStreaming', baseUrl: epsStreamingBase } : resolveVideoServerProxyBase(pathArray)
+  const epsPath = (firstSegment === 'alerts' || firstSegment === 'alert-config') ? path : path.startsWith('eps/') ? path.slice(4) : path
   const url = `${target.baseUrl}/api/${epsPath}`
   const body = await request.json().catch(() => ({}))
 
@@ -1571,6 +1572,86 @@ export async function POST(
       {
         success: false,
         message: `Failed to post to ${target.name}`,
+        error: message,
+        target: target.name,
+        targetUrl: url
+      },
+      { status: 500 }
+    )
+  }
+}
+
+export async function PUT(
+  request: NextRequest,
+  { params }: { params: Promise<{ path: string[] }> }
+) {
+  const { path: pathArray } = await params
+  const path = pathArray.join('/')
+  const epsStreamingBase = getEpsStreamingServerBaseUrl()
+  const isEpsStreamPath = path.startsWith('eps/')
+  const firstSegment = String(pathArray[0] || '').toLowerCase()
+  const target = (isEpsStreamPath || firstSegment === 'alerts' || firstSegment === 'alert-config') ? { name: 'epsStreaming', baseUrl: epsStreamingBase } : resolveVideoServerProxyBase(pathArray)
+  const epsPath = (firstSegment === 'alerts' || firstSegment === 'alert-config') ? path : path.startsWith('eps/') ? path.slice(4) : path
+  const url = `${target.baseUrl}/api/${epsPath}`
+  const body = await request.json().catch(() => ({}))
+
+  try {
+    const response = await fetch(url, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    })
+
+    const data = await response.json()
+    const normalizedData = normalizeProxiedMediaUrls(data, target.baseUrl)
+    return Response.json(normalizedData, { status: response.status })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    return Response.json(
+      {
+        success: false,
+        message: `Failed to put to ${target.name}`,
+        error: message,
+        target: target.name,
+        targetUrl: url
+      },
+      { status: 500 }
+    )
+  }
+}
+
+export async function DELETE(
+  request: NextRequest,
+  { params }: { params: Promise<{ path: string[] }> }
+) {
+  const { path: pathArray } = await params
+  const path = pathArray.join('/')
+  const epsStreamingBase = getEpsStreamingServerBaseUrl()
+  const isEpsStreamPath = path.startsWith('eps/')
+  const firstSegment = String(pathArray[0] || '').toLowerCase()
+  const target = (isEpsStreamPath || firstSegment === 'alerts' || firstSegment === 'alert-config') ? { name: 'epsStreaming', baseUrl: epsStreamingBase } : resolveVideoServerProxyBase(pathArray)
+  const epsPath = (firstSegment === 'alerts' || firstSegment === 'alert-config') ? path : path.startsWith('eps/') ? path.slice(4) : path
+  const url = `${target.baseUrl}/api/${epsPath}`
+
+  try {
+    const response = await fetch(url, {
+      method: 'DELETE',
+    })
+
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}))
+      return Response.json(data, { status: response.status })
+    }
+
+    return new Response(null, { status: 204 })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    return Response.json(
+      {
+        success: false,
+        message: `Failed to delete from ${target.name}`,
         error: message,
         target: target.name,
         targetUrl: url
