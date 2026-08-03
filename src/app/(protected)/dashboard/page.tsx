@@ -127,6 +127,10 @@ const PlaybackDashboardTab = dynamic(
   () => import("@/components/dashboard/playback-dashboard-tab"),
   { ssr: false, loading: () => <div className="h-40 animate-pulse rounded-lg bg-slate-100" /> }
 );
+const AlertConfigTab = dynamic(
+  () => import("@/components/dashboard/alert-config-tab"),
+  { ssr: false, loading: () => <div className="h-40 animate-pulse rounded-lg bg-slate-100" /> }
+);
 const FinancialsPanel = dynamic(
   () => import("@/components/financials/FinancialsPanel"),
   { ssr: false, loading: () => <div className="h-40 animate-pulse rounded-lg bg-slate-100" /> }
@@ -2421,7 +2425,7 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
     return `${selectedCostCenters.length} Cost Centers`;
   }, [selectedCostCenters]);
   const showCostCenterFilter = useMemo(
-    () => ["video-alerts", "screenshots", "playback", "live-stream"].includes(activeTab),
+    () => ["video-alerts", "screenshots", "playback", "alert-config", "live-stream"].includes(activeTab),
     [activeTab]
   );
   const alertReasonOptions = [
@@ -4608,6 +4612,12 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
               >
                 Playback
               </TabsTrigger>
+              <TabsTrigger
+                value="alert-config"
+                className="px-6 py-2 text-sm font-medium rounded-md data-[state=active]:bg-white data-[state=active]:shadow-sm"
+              >
+                Alert Config
+              </TabsTrigger>
             </TabsList>
           </Tabs>
         </div>
@@ -4665,6 +4675,10 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
 
         {activeTab === "playback" && (
           <PlaybackDashboardTab selectedCostCenters={selectedCostCenters} />
+        )}
+
+        {activeTab === "alert-config" && (
+          <AlertConfigTab />
         )}
 
         <div style={{ display: activeTab === "live-stream" ? "" : "none" }} className="w-full">
