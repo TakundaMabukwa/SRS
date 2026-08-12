@@ -327,7 +327,7 @@ export default function AlertDetailPage({ params }) {
 
     const [detailEps, mediaEps] = await Promise.all([
       fetchJson(`/api/video-server/eps/alerts/${encodeURIComponent(alertId)}`),
-      fetchJson(`/api/video-server/eps/alerts/${encodeURIComponent(alertId)}/media`),
+      fetchJson(`/api/video-server/eps/alerts/${encodeURIComponent(alertId)}/media?ensureMedia=true`),
     ]);
 
     let epsVideos = [
@@ -352,7 +352,7 @@ export default function AlertDetailPage({ params }) {
     setScreenshotsLoading(true);
     try {
       const fetchRows = async () => {
-        const res = await fetch(`/api/video-server/eps/alerts/${encodeURIComponent(alertId)}/screenshots`, {
+        const res = await fetch(`/api/video-server/eps/alerts/${encodeURIComponent(alertId)}/screenshots?ensureMedia=true`, {
           cache: "no-store",
         });
         const json = await res.json().catch(() => ({}));
@@ -861,14 +861,14 @@ export default function AlertDetailPage({ params }) {
                                 onClick={async () => {
                                   if (!alertId) return;
                                   try {
-                                    await fetch(`/api/video-server/eps/alerts/${encodeURIComponent(alertId)}/capture`, {
-                                      method: "POST",
-                                      headers: { "Content-Type": "application/json" },
+                                    // Fetch media from skycamx API
+                                    await fetch(`/api/video-server/eps/alerts/${encodeURIComponent(alertId)}/media?ensureMedia=true`, {
+                                      cache: "no-store",
                                     });
-                                    // Wait for device to process, then re-fetch
+                                    // Re-fetch screenshots
                                     setTimeout(() => {
                                       void fetchAlertScreenshots(true);
-                                    }, 6000);
+                                    }, 2000);
                                   } catch {
                                     // silent
                                   }

@@ -1,281 +1,650 @@
-"use client"
+"use client";
 
-import type React from "react"
+import React, { useState, useEffect, useCallback } from "react";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Plus,
+  Pencil,
+  Trash2,
+  Shield,
+  AlertTriangle,
+  Camera,
+  Cpu,
+  X,
+  Save,
+  Settings,
+  Users,
+} from "lucide-react";
+import { cn } from "@/lib/utils";
+import { toast } from "sonner";
 
-import { useState, useEffect } from "react"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Button } from "@/components/ui/button"
-import { SecureButton } from "@/components/SecureButton"
-import { Input } from "@/components/ui/input"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Switch } from "@/components/ui/switch"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { MapPin, Plus } from "lucide-react"
-import { toast } from "sonner"
-import { Label } from "@radix-ui/react-label"
-import UpdatePswrd from "@/components/updatePwrd"
-import { createClient } from "@/lib/supabase/client"
-import { profile } from "console"
-import MapView from "@/components/map/display-map"
+const ALERT_CONFIG_API = "/api/video-server/alert-config";
+const DRIVER_CONFIG_API = "/api/video-server/driver-config";
 
-interface User {
-    id: string
-    name: string
-    email: string
-    role: "call-center" | "fleet-manager" | "cost-center" | "customer" | "admin"
-    status: "active" | "inactive"
-    lastLogin: string
-    permissions: string[]
-}
+const SEVERITY_OPTIONS = ["CRITICAL", "HIGH", "MEDIUM", "LOW"] as const;
+type Severity = typeof SEVERITY_OPTIONS[number];
 
-interface Role {
-    id: string
-    name: string
-    description: string
-    permissions: string[]
-}
+const SEVERITY_COLORS: Record<Severity, string> = {
+  CRITICAL: "bg-red-100 text-red-800 border-red-200",
+  HIGH: "bg-orange-100 text-orange-800 border-orange-200",
+  MEDIUM: "bg-yellow-100 text-yellow-800 border-yellow-200",
+  LOW: "bg-blue-100 text-blue-800 border-blue-200",
+};
 
-interface SystemSetting {
-    id: string
-    category: string
-    name: string
-    value: string
-    description: string
-    type: "text" | "number" | "boolean" | "select"
-    options?: string[]
-}
+type AlertDefinition = {
+  id: number;
+  name: string;
+  category: "telematics" | "video";
+  description: string;
+  signal_code: string;
+  severity: Severity;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+type AlertGroupConfig = {
+  id: number;
+  name: string;
+  severity: Severity;
+  description: string;
+  is_active: boolean;
+  members: AlertDefinition[];
+  created_at: string;
+  updated_at: string;
+};
+
+type DriverConfigCriterion = {
+  id: number;
+  name: string;
+  selected_weighting: number;
+  actual_weighting: number;
+  risk_tiers: number;
+  no_incidents: number;
+  statuses: string[];
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+};
 
 export default function SettingsPage() {
-    const [users, setUsers] = useState<User[]>([])
-    const [roles, setRoles] = useState<Role[]>([])
-    const [settings, setSettings] = useState<SystemSetting[]>([])
-    const supabase = createClient()
+  const [activeTab, setActiveTab] = useState("alert-config");
 
-    useEffect(() => {
+  return (
+    <div className="min-h-screen bg-gray-50">
+      <div className="bg-white border-b px-6 py-4">
+        <h1 className="text-2xl font-bold">System Settings</h1>
+        <p className="text-sm text-gray-600">Configure alerts, driver monitoring, and system preferences</p>
+      </div>
 
-        const UserData = async () => {
-            const { data: session, error } = await supabase.auth.getSession()
-            const userId = session.session?.user.id;
+      <div className="px-6 py-4">
+        <Tabs value={activeTab} onValueChange={setActiveTab}>
+          <TabsList className="mb-4">
+            <TabsTrigger value="alert-config" className="flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4" />
+              Alert Config
+            </TabsTrigger>
+            <TabsTrigger value="driver-config" className="flex items-center gap-2">
+              <Users className="w-4 h-4" />
+              Driver Config
+            </TabsTrigger>
+          </TabsList>
 
-            if (userId) {
-                const { data: user, error: userError } = await supabase
-                    .from("users")
-                    .select("*")
-                    .eq("id", userId)
-                    .single();
-                setUsers(user as any)
-                if (userError) {
-                    console.error("Error fetching user:", userError);
-                    return;
-                }
-            }
-        }
-        UserData();
-        setRoles([
-            {
-                id: "1",
-                name: "Administrator",
-                description: "Full system access and configuration",
-                permissions: ["all"],
-            },
-            {
-                id: "2",
-                name: "Fleet Manager",
-                description: "Manage vehicles, drivers, and approve jobs",
-                permissions: ["manage_vehicles", "manage_drivers", "approve_jobs", "view_reports"],
-            },
-            {
-                id: "3",
-                name: "Call Center",
-                description: "Handle breakdown requests and dispatch technicians",
-                permissions: ["view_breakdowns", "dispatch_technicians", "manage_technicians"],
-            },
-            {
-                id: "4",
-                name: "Cost Center",
-                description: "Create and manage quotations",
-                permissions: ["create_quotations", "view_jobs", "manage_costs"],
-            },
-            {
-                id: "5",
-                name: "Customer",
-                description: "Request breakdown services and view own requests",
-                permissions: ["request_breakdown", "view_own_requests", "approve_quotations"],
-            },
-        ])
+          <TabsContent value="alert-config">
+            <AlertConfigSection />
+          </TabsContent>
 
-        setSettings([
-            {
-                id: "1",
-                category: "General",
-                name: "Company Name",
-                value: "",
-                description: "The name of your company",
-                type: "text",
-            },
-            {
-                id: "2",
-                category: "General",
-                name: "Default Location",
-                value: "Johannesburg, South Africa",
-                description: "Default location for new breakdowns",
-                type: "text",
-            },
-            {
-                id: "3",
-                category: "Notifications",
-                name: "Email Notifications",
-                value: "true",
-                description: "Enable email notifications for breakdowns",
-                type: "boolean",
-            },
-            {
-                id: "4",
-                category: "Notifications",
-                name: "SMS Notifications",
-                value: "false",
-                description: "Enable SMS notifications for urgent breakdowns",
-                type: "boolean",
-            },
-            {
-                id: "5",
-                category: "System",
-                name: "Auto-assign Technicians",
-                value: "true",
-                description: "Automatically assign nearest available technician",
-                type: "boolean",
-            },
-            {
-                id: "6",
-                category: "System",
-                name: "Breakdown Timeout",
-                value: "30",
-                description: "Minutes before escalating unassigned breakdowns",
-                type: "number",
-            },
-        ])
-    }, [])
+          <TabsContent value="driver-config">
+            <DriverConfigSection />
+          </TabsContent>
+        </Tabs>
+      </div>
+    </div>
+  );
+}
 
-    const handleUpdateSetting = (settingId: string, newValue: string) => {
-        setSettings((prev) => prev.map((setting) => (setting.id === settingId ? { ...setting, value: newValue } : setting)))
-        toast.success("The setting has been updated successfully.")
+function AlertConfigSection() {
+  const [activeSection, setActiveSection] = useState<"definitions" | "groups">("definitions");
+  const [definitions, setDefinitions] = useState<AlertDefinition[]>([]);
+  const [groups, setGroups] = useState<AlertGroupConfig[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const [showDefForm, setShowDefForm] = useState(false);
+  const [editingDef, setEditingDef] = useState<AlertDefinition | null>(null);
+  const [defForm, setDefForm] = useState({ name: "", category: "telematics" as "telematics" | "video", description: "", signal_code: "", severity: "MEDIUM" as Severity });
+
+  const [showGroupForm, setShowGroupForm] = useState(false);
+  const [editingGroup, setEditingGroup] = useState<AlertGroupConfig | null>(null);
+  const [groupForm, setGroupForm] = useState({ name: "", severity: "MEDIUM" as Severity, description: "", memberIds: [] as number[] });
+  const [showMemberPicker, setShowMemberPicker] = useState(false);
+
+  const fetchDefinitions = useCallback(async () => {
+    try {
+      const res = await fetch(`${ALERT_CONFIG_API}/definitions`, { cache: "no-store" });
+      const data = await res.json();
+      setDefinitions(data?.data || []);
+    } catch {
+      setDefinitions([]);
     }
+  }, []);
 
-    const groupedSettings = settings.reduce(
-        (acc, setting) => {
-            if (!acc[setting.category]) {
-                acc[setting.category] = []
-            }
-            acc[setting.category].push(setting)
-            return acc
-        },
-        {} as Record<string, SystemSetting[]>,
-    )
+  const fetchGroups = useCallback(async () => {
+    try {
+      const res = await fetch(`${ALERT_CONFIG_API}/groups`, { cache: "no-store" });
+      const data = await res.json();
+      setGroups(data?.data || []);
+    } catch {
+      setGroups([]);
+    }
+  }, []);
 
-    return (
-        <>
-            <div className="flex-1 space-y-4 p-4 pt-6">
-                <div className="flex items-center justify-between">
-                    <h2 className="text-3xl font-bold tracking-tight">Settings & Administration</h2>
+  useEffect(() => {
+    setLoading(true);
+    Promise.all([fetchDefinitions(), fetchGroups()])
+      .finally(() => setLoading(false));
+  }, [fetchDefinitions, fetchGroups]);
+
+  const handleSaveDef = async () => {
+    const url = editingDef ? `${ALERT_CONFIG_API}/definitions/${editingDef.id}` : `${ALERT_CONFIG_API}/definitions`;
+    const method = editingDef ? "PUT" : "POST";
+    try {
+      await fetch(url, {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(defForm),
+      });
+      toast.success(editingDef ? "Alert type updated" : "Alert type created");
+      setShowDefForm(false);
+      setEditingDef(null);
+      setDefForm({ name: "", category: "telematics", description: "", signal_code: "", severity: "MEDIUM" });
+      fetchDefinitions();
+      fetchGroups();
+    } catch {
+      toast.error("Failed to save");
+    }
+  };
+
+  const handleDeleteDef = async (id: number) => {
+    if (!confirm("Delete this alert type?")) return;
+    try {
+      await fetch(`${ALERT_CONFIG_API}/definitions/${id}`, { method: "DELETE" });
+      toast.success("Deleted");
+      fetchDefinitions();
+      fetchGroups();
+    } catch {
+      toast.error("Failed to delete");
+    }
+  };
+
+  const handleSaveGroup = async () => {
+    const url = editingGroup ? `${ALERT_CONFIG_API}/groups/${editingGroup.id}` : `${ALERT_CONFIG_API}/groups`;
+    const method = editingGroup ? "PUT" : "POST";
+    try {
+      await fetch(url, {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...groupForm, member_ids: groupForm.memberIds }),
+      });
+      toast.success(editingGroup ? "Alert group updated" : "Alert group created");
+      setShowGroupForm(false);
+      setEditingGroup(null);
+      setGroupForm({ name: "", severity: "MEDIUM", description: "", memberIds: [] });
+      fetchGroups();
+    } catch {
+      toast.error("Failed to save");
+    }
+  };
+
+  const handleDeleteGroup = async (id: number) => {
+    if (!confirm("Delete this alert group?")) return;
+    try {
+      await fetch(`${ALERT_CONFIG_API}/groups/${id}`, { method: "DELETE" });
+      toast.success("Deleted");
+      fetchGroups();
+    } catch {
+      toast.error("Failed to delete");
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-lg font-semibold">Alert Types & Groups</h2>
+          <p className="text-sm text-gray-500">Configure alert definitions and grouping rules</p>
+        </div>
+        <div className="flex gap-2">
+          <Button
+            variant={activeSection === "definitions" ? "default" : "outline"}
+            size="sm"
+            onClick={() => setActiveSection("definitions")}
+            className="flex items-center gap-2"
+          >
+            <Cpu className="w-4 h-4" />
+            Alert Types
+          </Button>
+          <Button
+            variant={activeSection === "groups" ? "default" : "outline"}
+            size="sm"
+            onClick={() => setActiveSection("groups")}
+            className="flex items-center gap-2"
+          >
+            <Shield className="w-4 h-4" />
+            Alert Groups
+          </Button>
+        </div>
+      </div>
+
+      {activeSection === "definitions" && (
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between">
+            <CardTitle>Alert Types</CardTitle>
+            <Button size="sm" onClick={() => { setShowDefForm(true); setEditingDef(null); setDefForm({ name: "", category: "telematics", description: "", signal_code: "", severity: "MEDIUM" }); }}>
+              <Plus className="w-4 h-4 mr-1" /> Add Alert Type
+            </Button>
+          </CardHeader>
+          <CardContent>
+            {showDefForm && (
+              <div className="mb-4 p-4 border rounded-lg bg-gray-50 space-y-3">
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-sm font-medium">Name</label>
+                    <Input value={defForm.name} onChange={(e) => setDefForm({ ...defForm, name: e.target.value })} placeholder="e.g. Harsh Braking" />
+                  </div>
+                  <div>
+                    <label className="text-sm font-medium">Category</label>
+                    <Select value={defForm.category} onValueChange={(v: "telematics" | "video") => setDefForm({ ...defForm, category: v })}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="telematics">Telematics</SelectItem>
+                        <SelectItem value="video">Video</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <label className="text-sm font-medium">Signal Code</label>
+                    <Input value={defForm.signal_code} onChange={(e) => setDefForm({ ...defForm, signal_code: e.target.value })} placeholder="e.g. HARSH_BRAKE" />
+                  </div>
+                  <div>
+                    <label className="text-sm font-medium">Severity</label>
+                    <Select value={defForm.severity} onValueChange={(v: Severity) => setDefForm({ ...defForm, severity: v })}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {SEVERITY_OPTIONS.map((s) => (
+                          <SelectItem key={s} value={s}>{s}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
                 </div>
+                <div>
+                  <label className="text-sm font-medium">Description</label>
+                  <Input value={defForm.description} onChange={(e) => setDefForm({ ...defForm, description: e.target.value })} placeholder="Optional description" />
+                </div>
+                <div className="flex gap-2">
+                  <Button size="sm" onClick={handleSaveDef}><Save className="w-4 h-4 mr-1" /> {editingDef ? "Update" : "Create"}</Button>
+                  <Button size="sm" variant="outline" onClick={() => { setShowDefForm(false); setEditingDef(null); }}>Cancel</Button>
+                </div>
+              </div>
+            )}
 
-                <Tabs defaultValue="system" className="space-y-4">
-                    <TabsList>
-                        <TabsTrigger value="system">System Settings</TabsTrigger>
-                        <TabsTrigger value="locations">Locations</TabsTrigger>
-                    </TabsList>
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b text-left text-gray-500">
+                  <th className="py-2">Name</th>
+                  <th>Category</th>
+                  <th>Signal Code</th>
+                  <th>Severity</th>
+                  <th>Description</th>
+                  <th>Status</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {definitions.map((def) => (
+                  <tr key={def.id} className="border-b">
+                    <td className="py-2 font-medium">{def.name}</td>
+                    <td><Badge variant={def.category === "telematics" ? "default" : "secondary"}>{def.category}</Badge></td>
+                    <td>{def.signal_code}</td>
+                    <td><Badge className={SEVERITY_COLORS[def.severity || "MEDIUM"]}>{def.severity || "MEDIUM"}</Badge></td>
+                    <td className="text-gray-500">{def.description || "—"}</td>
+                    <td><Badge variant={def.is_active ? "default" : "outline"}>{def.is_active ? "Active" : "Inactive"}</Badge></td>
+                    <td>
+                      <div className="flex gap-1">
+                        <Button variant="ghost" size="sm" onClick={() => { setEditingDef(def); setDefForm({ name: def.name, category: def.category, description: def.description, signal_code: def.signal_code, severity: def.severity || "MEDIUM" }); setShowDefForm(true); }}>
+                          <Pencil className="w-3 h-3" />
+                        </Button>
+                        <Button variant="ghost" size="sm" onClick={() => handleDeleteDef(def.id)}>
+                          <Trash2 className="w-3 h-3 text-red-500" />
+                        </Button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </CardContent>
+        </Card>
+      )}
 
-                    <TabsContent value="system" className="space-y-4">
-                        <h3 className="text-lg font-semibold">System Settings</h3>
-                        <div className="space-y-6">
-                            {groupedSettings && Object.entries(groupedSettings).map(([category, categorySettings]) => (
-                                <Card key={category}>
-                                    <CardHeader>
-                                        <CardTitle className="text-lg">{category} Settings</CardTitle>
-                                    </CardHeader>
-                                    <CardContent className="space-y-4">
-                                        {categorySettings.map((setting) => (
-                                            <div key={setting.id} className="flex items-center justify-between p-3 border rounded-lg">
-                                                <div className="flex-1">
-                                                    <h4 className="font-semibold">{setting.name}</h4>
-                                                    <p className="text-sm text-gray-600">{setting.description}</p>
-                                                </div>
-                                                <div className="w-48">
-                                                    <div className="flex items-center gap-2">
-                                                        {setting.type === "boolean" ? (
-                                                            <Switch
-                                                                checked={setting.value === "true"}
-                                                                onCheckedChange={(checked) => handleUpdateSetting(setting.id, checked.toString())}
-                                                                disabled={false}
-                                                            />
-                                                        ) : setting.type === "select" && setting.options ? (
-                                                            <Select
-                                                                value={setting.value}
-                                                                onValueChange={(value) => handleUpdateSetting(setting.id, value)}
-                                                            >
-                                                                <SelectTrigger>
-                                                                    <SelectValue />
-                                                                </SelectTrigger>
-                                                                <SelectContent>
-                                                                    {setting.options.map((option) => (
-                                                                        <SelectItem key={option} value={option}>
-                                                                            {option}
-                                                                        </SelectItem>
-                                                                    ))}
-                                                                </SelectContent>
-                                                            </Select>
-                                                        ) : (
-                                                            <Input
-                                                                type={setting.type === "number" ? "number" : "text"}
-                                                                value={setting.value}
-                                                                onChange={(e) => handleUpdateSetting(setting.id, e.target.value)}
-                                                            />
-                                                        )}
-                                                        <SecureButton
-                                                            page="systemSettings"
-                                                            action="edit"
-                                                            size="sm"
-                                                            variant="outline"
-                                                            onClick={() => handleUpdateSetting(setting.id, setting.value)}
-                                                        >
-                                                            Save
-                                                        </SecureButton>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        ))}
+      {activeSection === "groups" && (
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between">
+            <CardTitle>Alert Groups</CardTitle>
+            <Button size="sm" onClick={() => { setShowGroupForm(true); setEditingGroup(null); setGroupForm({ name: "", severity: "MEDIUM", description: "", memberIds: [] }); }}>
+              <Plus className="w-4 h-4 mr-1" /> Add Alert Group
+            </Button>
+          </CardHeader>
+          <CardContent>
+            {showGroupForm && (
+              <div className="mb-4 p-4 border rounded-lg bg-gray-50 space-y-3">
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-sm font-medium">Name</label>
+                    <Input value={groupForm.name} onChange={(e) => setGroupForm({ ...groupForm, name: e.target.value })} placeholder="e.g. Safety Alerts" />
+                  </div>
+                  <div>
+                    <label className="text-sm font-medium">Severity</label>
+                    <Select value={groupForm.severity} onValueChange={(v: Severity) => setGroupForm({ ...groupForm, severity: v })}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {SEVERITY_OPTIONS.map((s) => (
+                          <SelectItem key={s} value={s}>{s}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                <div>
+                  <label className="text-sm font-medium">Description</label>
+                  <Input value={groupForm.description} onChange={(e) => setGroupForm({ ...groupForm, description: e.target.value })} placeholder="Optional description" />
+                </div>
+                <div>
+                  <label className="text-sm font-medium">Member Alert Types</label>
+                  <div className="flex flex-wrap gap-2 mt-1">
+                    {definitions.map((def) => (
+                      <Badge
+                        key={def.id}
+                        variant={groupForm.memberIds.includes(def.id) ? "default" : "outline"}
+                        className="cursor-pointer"
+                        onClick={() => {
+                          setGroupForm({
+                            ...groupForm,
+                            memberIds: groupForm.memberIds.includes(def.id)
+                              ? groupForm.memberIds.filter((id) => id !== def.id)
+                              : [...groupForm.memberIds, def.id],
+                          });
+                        }}
+                      >
+                        {def.name}
+                      </Badge>
+                    ))}
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <Button size="sm" onClick={handleSaveGroup}><Save className="w-4 h-4 mr-1" /> {editingGroup ? "Update" : "Create"}</Button>
+                  <Button size="sm" variant="outline" onClick={() => { setShowGroupForm(false); setEditingGroup(null); }}>Cancel</Button>
+                </div>
+              </div>
+            )}
 
-                                    </CardContent>
-                                </Card>
-                            ))}
-                        </div>
-                        <div className="border-2 p-3 rounded-2xl">
-                            <h1 className="font-bold">Change Password</h1>
-                            <UpdatePswrd />
-                        </div>
-                    </TabsContent>
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b text-left text-gray-500">
+                  <th className="py-2">Name</th>
+                  <th>Severity</th>
+                  <th>Description</th>
+                  <th>Members</th>
+                  <th>Status</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {groups.map((group) => (
+                  <tr key={group.id} className="border-b">
+                    <td className="py-2 font-medium">{group.name}</td>
+                    <td><Badge className={SEVERITY_COLORS[group.severity || "MEDIUM"]}>{group.severity || "MEDIUM"}</Badge></td>
+                    <td className="text-gray-500">{group.description || "—"}</td>
+                    <td>
+                      <div className="flex flex-wrap gap-1">
+                        {(group.members || []).slice(0, 3).map((m) => (
+                          <Badge key={m.id} variant="outline" className="text-xs">{m.name}</Badge>
+                        ))}
+                        {(group.members || []).length > 3 && (
+                          <Badge variant="outline" className="text-xs">+{(group.members || []).length - 3}</Badge>
+                        )}
+                      </div>
+                    </td>
+                    <td><Badge variant={group.is_active ? "default" : "outline"}>{group.is_active ? "Active" : "Inactive"}</Badge></td>
+                    <td>
+                      <div className="flex gap-1">
+                        <Button variant="ghost" size="sm" onClick={() => {
+                          setEditingGroup(group);
+                          setGroupForm({ name: group.name, severity: group.severity || "MEDIUM", description: group.description, memberIds: (group.members || []).map((m) => m.id) });
+                          setShowGroupForm(true);
+                        }}>
+                          <Pencil className="w-3 h-3" />
+                        </Button>
+                        <Button variant="ghost" size="sm" onClick={() => handleDeleteGroup(group.id)}>
+                          <Trash2 className="w-3 h-3 text-red-500" />
+                        </Button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </CardContent>
+        </Card>
+      )}
+    </div>
+  );
+}
 
-                    <TabsContent value="locations" className="space-y-4">
-                        <div className="flex justify-between items-center">
-                            <h3 className="text-lg font-semibold">Location Management</h3>
-                            {/* <Button>
-                                <Plus className="h-4 w-4 mr-2" />
-                                Add Location
-                            </Button> */}
-                        </div>
-                        <Card>
-                            <CardContent className="p-6">
-                                <div className="text-center text-gray-500">
-                                    <MapView />
-                                    {/* <MapPin className="h-12 w-12 mx-auto mb-4 text-gray-400" />
-                                    <p>Location management interface will be implemented here</p>
-                                    <p className="text-sm mt-2">Configure service areas, technician locations, and coverage zones</p> */}
-                                </div>
-                            </CardContent>
-                        </Card>
-                    </TabsContent>
-                </Tabs>
+function DriverConfigSection() {
+  const [criteria, setCriteria] = useState<DriverConfigCriterion[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editForm, setEditForm] = useState<Partial<DriverConfigCriterion>>({});
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [addForm, setAddForm] = useState({ name: "", selected_weighting: 10, risk_tiers: 4, statuses: "" as string });
+
+  const fetchCriteria = useCallback(async () => {
+    try {
+      const res = await fetch(`${DRIVER_CONFIG_API}/criteria`, { cache: "no-store" });
+      const data = await res.json();
+      setCriteria(data?.data || []);
+    } catch {
+      setCriteria([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    setLoading(true);
+    fetchCriteria().finally(() => setLoading(false));
+  }, [fetchCriteria]);
+
+  const handleSaveEdit = async () => {
+    if (!editingId) return;
+    try {
+      await fetch(`${DRIVER_CONFIG_API}/criteria/${editingId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(editForm),
+      });
+      toast.success("Criterion updated");
+      setEditingId(null);
+      setEditForm({});
+      fetchCriteria();
+    } catch {
+      toast.error("Failed to update");
+    }
+  };
+
+  const handleAdd = async () => {
+    try {
+      await fetch(`${DRIVER_CONFIG_API}/criteria`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: addForm.name,
+          selected_weighting: addForm.selected_weighting,
+          risk_tiers: addForm.risk_tiers,
+          statuses: addForm.statuses.split(",").map((s) => s.trim()).filter(Boolean),
+        }),
+      });
+      toast.success("Criterion added");
+      setShowAddForm(false);
+      setAddForm({ name: "", selected_weighting: 10, risk_tiers: 4, statuses: "" });
+      fetchCriteria();
+    } catch {
+      toast.error("Failed to add");
+    }
+  };
+
+  const handleDelete = async (id: number) => {
+    if (!confirm("Delete this criterion?")) return;
+    try {
+      await fetch(`${DRIVER_CONFIG_API}/criteria/${id}`, { method: "DELETE" });
+      toast.success("Deleted");
+      fetchCriteria();
+    } catch {
+      toast.error("Failed to delete");
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-lg font-semibold">Driver Monitoring Config</h2>
+          <p className="text-sm text-gray-500">Configure driver behavior criteria, risk tiers, and thresholds</p>
+        </div>
+        <Button size="sm" onClick={() => setShowAddForm(true)}>
+          <Plus className="w-4 h-4 mr-1" /> Add Criterion
+        </Button>
+      </div>
+
+      {showAddForm && (
+        <Card>
+          <CardContent className="p-4 space-y-3">
+            <div className="grid grid-cols-4 gap-3">
+              <div>
+                <label className="text-sm font-medium">Name</label>
+                <Input value={addForm.name} onChange={(e) => setAddForm({ ...addForm, name: e.target.value })} placeholder="e.g. Speeding" />
+              </div>
+              <div>
+                <label className="text-sm font-medium">Weighting (%)</label>
+                <Input type="number" value={addForm.selected_weighting} onChange={(e) => setAddForm({ ...addForm, selected_weighting: Number(e.target.value) })} />
+              </div>
+              <div>
+                <label className="text-sm font-medium">Risk Tiers</label>
+                <Input type="number" value={addForm.risk_tiers} onChange={(e) => setAddForm({ ...addForm, risk_tiers: Number(e.target.value) })} />
+              </div>
+              <div>
+                <label className="text-sm font-medium">Statuses (comma-separated)</label>
+                <Input value={addForm.statuses} onChange={(e) => setAddForm({ ...addForm, statuses: e.target.value })} placeholder="e.g. Speed Exception 1, Speed Exception 2" />
+              </div>
             </div>
-        </>
-    )
+            <div className="flex gap-2">
+              <Button size="sm" onClick={handleAdd}><Save className="w-4 h-4 mr-1" /> Add</Button>
+              <Button size="sm" variant="outline" onClick={() => setShowAddForm(false)}>Cancel</Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      <Card>
+        <CardContent className="p-0">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b bg-gray-50 text-left text-gray-500">
+                <th className="py-3 px-4">Criterion</th>
+                <th>Weighting</th>
+                <th>Risk Tiers</th>
+                <th>Incidents</th>
+                <th>Statuses</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {criteria.map((c) => (
+                <tr key={c.id} className="border-b">
+                  <td className="py-3 px-4 font-medium">
+                    {editingId === c.id ? (
+                      <Input value={editForm.name || ""} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} className="h-8" />
+                    ) : (
+                      c.name
+                    )}
+                  </td>
+                  <td>
+                    {editingId === c.id ? (
+                      <Input type="number" value={editForm.selected_weighting ?? c.selected_weighting} onChange={(e) => setEditForm({ ...editForm, selected_weighting: Number(e.target.value) })} className="h-8 w-20" />
+                    ) : (
+                      c.selected_weighting
+                    )}
+                  </td>
+                  <td>
+                    {editingId === c.id ? (
+                      <Input type="number" value={editForm.risk_tiers ?? c.risk_tiers} onChange={(e) => setEditForm({ ...editForm, risk_tiers: Number(e.target.value) })} className="h-8 w-20" />
+                    ) : (
+                      c.risk_tiers
+                    )}
+                  </td>
+                  <td>
+                    {editingId === c.id ? (
+                      <Input type="number" value={editForm.no_incidents ?? c.no_incidents} onChange={(e) => setEditForm({ ...editForm, no_incidents: Number(e.target.value) })} className="h-8 w-20" />
+                    ) : (
+                      <span className={cn("px-2 py-1 rounded text-xs font-medium", c.no_incidents > 10 ? "bg-red-100 text-red-700" : c.no_incidents > 5 ? "bg-yellow-100 text-yellow-700" : "bg-green-100 text-green-700")}>
+                        {c.no_incidents}
+                      </span>
+                    )}
+                  </td>
+                  <td>
+                    {editingId === c.id ? (
+                      <Input value={(editForm.statuses || []).join(", ")} onChange={(e) => setEditForm({ ...editForm, statuses: e.target.value.split(",").map((s: string) => s.trim()) })} className="h-8" placeholder="Status 1, Status 2" />
+                    ) : (
+                      <div className="flex flex-wrap gap-1">
+                        {(c.statuses || []).slice(0, 2).map((s, i) => (
+                          <Badge key={i} variant="outline" className="text-xs">{s}</Badge>
+                        ))}
+                        {(c.statuses || []).length > 2 && (
+                          <Badge variant="outline" className="text-xs">+{(c.statuses || []).length - 2}</Badge>
+                        )}
+                      </div>
+                    )}
+                  </td>
+                  <td>
+                    <div className="flex gap-1">
+                      {editingId === c.id ? (
+                        <>
+                          <Button variant="ghost" size="sm" onClick={handleSaveEdit}><Save className="w-3 h-3" /></Button>
+                          <Button variant="ghost" size="sm" onClick={() => { setEditingId(null); setEditForm({}); }}><X className="w-3 h-3" /></Button>
+                        </>
+                      ) : (
+                        <>
+                          <Button variant="ghost" size="sm" onClick={() => { setEditingId(c.id); setEditForm({ name: c.name, selected_weighting: c.selected_weighting, risk_tiers: c.risk_tiers, no_incidents: c.no_incidents, statuses: c.statuses }); }}>
+                            <Pencil className="w-3 h-3" />
+                          </Button>
+                          <Button variant="ghost" size="sm" onClick={() => handleDelete(c.id)}>
+                            <Trash2 className="w-3 h-3 text-red-500" />
+                          </Button>
+                        </>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </CardContent>
+      </Card>
+    </div>
+  );
 }

@@ -47,6 +47,7 @@ export default function VideoAlertsPage() {
   const [notes, setNotes] = useState('')
   const [activeTab, setActiveTab] = useState('alerts')
   const [currentUser] = useState({ id: 'user-1', name: 'Controller' })
+  const [vehicleLookup, setVehicleLookup] = useState({})
 
   const toNum = (value) => {
     const n = Number(value)
@@ -261,7 +262,7 @@ export default function VideoAlertsPage() {
       }
 
       const loadMedia = async () => {
-        const res = await fetch(`/api/video-server/eps/alerts/${alert.id}/media`, {
+        const res = await fetch(`/api/video-server/eps/alerts/${alert.id}/media?ensureMedia=true`, {
           cache: 'no-store',
           signal: AbortSignal.timeout(8000)
         })
@@ -309,7 +310,7 @@ export default function VideoAlertsPage() {
       let alertRows = []
 
       const activeLimit = 2000
-      const res = await fetch(`/api/video-server/eps/alerts/active?limit=${activeLimit}`, { signal: AbortSignal.timeout(30000) })
+      const res = await fetch(`/api/video-server/eps/alerts/active-all?limit=${activeLimit}`, { signal: AbortSignal.timeout(30000) })
       if (res.ok) {
         const data = await res.json()
         alertRows = Array.isArray(data?.alerts)
@@ -322,7 +323,7 @@ export default function VideoAlertsPage() {
       }
 
       if (alertRows.length === 0) {
-        const activeRes = await fetch(`/api/video-server/eps/alerts/active?limit=${activeLimit}`, { signal: AbortSignal.timeout(30000) })
+        const activeRes = await fetch(`/api/video-server/eps/alerts/active-all?limit=${activeLimit}`, { signal: AbortSignal.timeout(30000) })
         if (activeRes.ok) {
           const activeData = await activeRes.json()
           alertRows = Array.isArray(activeData?.alerts)
@@ -342,37 +343,11 @@ export default function VideoAlertsPage() {
           return status !== 'resolved' && status !== 'closed'
         })
 
-      // Initial load optimization: keep only the most recent open alert per vehicle.
-      const latestPerVehicleMap = new Map<string, any>()
-      const fallbackAlerts: any[] = []
-      normalizedAlerts.forEach((alert) => {
-        const vehicleKey = String(
-          alert?.vehicleId ||
-          alert?.device_id ||
-          alert?.vehicle_id ||
-          alert?.metadata?.vehicle?.vehicleId ||
-          ''
-        ).trim()
-        const ts = new Date(alert?.timestamp || alert?.displayTimestamp || alert?.created_at || 0).getTime()
-        if (!vehicleKey) {
-          fallbackAlerts.push(alert)
-          return
-        }
-        const existing = latestPerVehicleMap.get(vehicleKey)
-        const existingTs = existing
-          ? new Date(existing?.timestamp || existing?.displayTimestamp || existing?.created_at || 0).getTime()
-          : -1
-        if (!existing || ts > existingTs) {
-          latestPerVehicleMap.set(vehicleKey, alert)
-        }
-      })
-      const initialAlerts = [...Array.from(latestPerVehicleMap.values()), ...fallbackAlerts]
-
       const grouped = { critical: [], high: [], medium: [], low: [] }
       const sortByLatest = (a, b) =>
         new Date(b?.timestamp || b?.displayTimestamp || 0).getTime() -
         new Date(a?.timestamp || a?.displayTimestamp || 0).getTime()
-      initialAlerts.forEach((alert) => {
+      normalizedAlerts.forEach((alert) => {
         const priority = alert.priority || 'low'
         if (grouped[priority]) grouped[priority].push(alert)
       })
@@ -429,6 +404,27 @@ export default function VideoAlertsPage() {
       fetchScreenshots()
     }, 30000)
     return () => clearInterval(interval)
+  }, [])
+
+  // Fetch vehicle lookup for fleet-reg format
+  useEffect(() => {
+    fetch("/api/vehicle-lookup?all=1", { cache: "no-store", signal: AbortSignal.timeout(30000) })
+      .then((res) => res.json())
+      .then((data) => {
+        const vehicles = Array.isArray(data?.vehicles) ? data.vehicles : []
+        const lookup = {}
+        for (const v of vehicles) {
+          const id = String(v?.deviceId || v?.device_id || v?.vehicleId || "").trim()
+          if (id) {
+            lookup[id] = {
+              fleetNumber: String(v?.fleetNumber || v?.fleet_number || "").trim(),
+              registration: String(v?.registration || v?.plate || v?.plateNumber || "").trim(),
+            }
+          }
+        }
+        setVehicleLookup(lookup)
+      })
+      .catch(() => {})
   }, [])
 
   if (loading) {
@@ -630,7 +626,16 @@ export default function VideoAlertsPage() {
                           <Badge variant="outline" className="text-xs">{alert.status}</Badge>
                         </div>
                         <div className="text-sm text-gray-600">
-                          <p>Vehicle: {alert.vehicle_registration || alert.device_id || alert.vehicleId}</p>
+                          <p>Vehicle: {(() => {
+                            const deviceId = String(alert.device_id || alert.vehicleId || '').trim()
+                            const lookupData = vehicleLookup[deviceId]
+                            const fleet = lookupData?.fleetNumber || alert.fleet_number || ''
+                            const reg = lookupData?.registration || alert.vehicle_registration || ''
+                            if (fleet && reg && fleet.toUpperCase() !== reg.toUpperCase()) return `${fleet} - ${reg}`
+                            if (reg) return reg
+                            if (fleet) return fleet
+                            return deviceId || 'Unknown'
+                          })()}</p>
                           {Number.isFinite(alert.location?.latitude) && Number.isFinite(alert.location?.longitude) && (
                             <p className="text-xs text-gray-500">
                               {alert.location.latitude.toFixed(6)}, {alert.location.longitude.toFixed(6)}
@@ -739,7 +744,17 @@ export default function VideoAlertsPage() {
                       <div className="space-y-2 text-sm">
                         <div className="flex items-center gap-2">
                           <Car className="w-4 h-4 text-gray-400" />
-                          <span>{selectedAlert.vehicle_registration || selectedAlert.vehicleId || 'N/A'}</span>
+                          <span>{(() => {
+                        if (!selectedAlert) return 'N/A'
+                        const deviceId = String(selectedAlert.device_id || selectedAlert.vehicleId || '').trim()
+                        const lookupData = vehicleLookup[deviceId]
+                        const fleet = lookupData?.fleetNumber || selectedAlert.fleet_number || ''
+                        const reg = lookupData?.registration || selectedAlert.vehicle_registration || ''
+                        if (fleet && reg && fleet.toUpperCase() !== reg.toUpperCase()) return `${fleet} - ${reg}`
+                        if (reg) return reg
+                        if (fleet) return fleet
+                        return deviceId || 'N/A'
+                      })()}</span>
                         </div>
                         <div className="flex items-center gap-2">
                           <User className="w-4 h-4 text-gray-400" />
@@ -894,6 +909,67 @@ export default function VideoAlertsPage() {
                         <Eye className="w-4 h-4 mr-2" />
                         Full View
                       </Button>
+                    </Card>
+
+                    {/* Vehicle Incident Timeline */}
+                    <Card className="p-4 space-y-3">
+                      <h3 className="font-semibold flex items-center gap-2">
+                        <Car className="w-4 h-4" />
+                        Vehicle Incident Timeline
+                      </h3>
+                      {(() => {
+                        const vehicleKey = String(
+                          selectedAlert?.vehicleId ||
+                          selectedAlert?.device_id ||
+                          selectedAlert?.vehicle_id ||
+                          selectedAlert?.metadata?.vehicle?.vehicleId ||
+                          ''
+                        ).trim()
+                        if (!vehicleKey) return <p className="text-sm text-gray-500">No vehicle ID</p>
+                        const vehicleAlerts = allAlerts.filter((a) => {
+                          const vKey = String(
+                            a?.vehicleId ||
+                            a?.device_id ||
+                            a?.vehicle_id ||
+                            a?.metadata?.vehicle?.vehicleId ||
+                            ''
+                          ).trim()
+                          return vKey === vehicleKey
+                        })
+                        if (vehicleAlerts.length <= 1) {
+                          return <p className="text-sm text-gray-500">No other incidents for this vehicle</p>
+                        }
+                        return (
+                          <div className="space-y-2 max-h-64 overflow-y-auto">
+                            {vehicleAlerts
+                              .sort((a, b) => new Date(b?.timestamp || 0).getTime() - new Date(a?.timestamp || 0).getTime())
+                              .map((a) => (
+                                <div
+                                  key={a.id}
+                                  className={cn(
+                                    'p-3 rounded-lg border text-sm cursor-pointer transition-colors',
+                                    a.id === selectedAlert.id
+                                      ? 'bg-blue-50 border-blue-300'
+                                      : 'bg-gray-50 border-gray-200 hover:bg-gray-100'
+                                  )}
+                                  onClick={() => loadAlertDetails(a)}
+                                >
+                                  <div className="flex items-center justify-between mb-1">
+                                    <span className="font-medium">{a.alert_type}</span>
+                                    <Badge variant="outline" className="text-xs">{a.status}</Badge>
+                                  </div>
+                                  <div className="flex items-center gap-2 text-xs text-gray-500">
+                                    <span className={cn('w-2 h-2 rounded-full', priorityColor(a.priority))} />
+                                    <span>{(() => {
+                                      const displayTs = getAlertDisplayTimestamp(a)
+                                      return displayTs ? formatRawAlertTimestamp(displayTs, "datetime") : 'N/A'
+                                    })()}</span>
+                                  </div>
+                                </div>
+                              ))}
+                          </div>
+                        )
+                      })()}
                     </Card>
                   </div>
                 )}

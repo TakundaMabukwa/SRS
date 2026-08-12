@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { ArrowLeft, AlertTriangle, Video, Download, XCircle, CheckCircle, X, FileText } from "lucide-react";
+import { ArrowLeft, AlertTriangle, Video, Download, XCircle, CheckCircle, X, FileText, MapPin, ExternalLink, Copy } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toSAST } from "@/lib/utils/date-formatter";
 import { UniversalVideoPlayer } from "@/components/dashboard/universal-video-player";
@@ -274,23 +274,38 @@ export function AlertDetailModal({
   }, [getDashboardStructuredAlertMapping, selectedAlert]);
 
   const preservedVehicleRef = useRef("");
+  const [vehicleLookup, setVehicleLookup] = useState<Record<string, { fleetNumber: string; registration: string }>>({});
 
   const selectedAlertVehicleDisplay = useMemo(() => {
     if (!selectedAlert) return preservedVehicleRef.current || "Unknown Vehicle";
-    const reg = String(selectedAlert?.vehicle_registration || selectedAlert?.plate || selectedAlert?.registration || "").trim();
-    const fleet = String(selectedAlert?.fleet_number || selectedAlert?.fleetNumber || "").trim();
+    
+    // First try to get from vehicle lookup (fleet-reg format)
+    const deviceId = String(selectedAlert?.device_id || selectedAlert?.deviceId || selectedAlert?.vehicleId || "").trim();
+    const lookupData = vehicleLookup[deviceId];
+    
+    let fleet = lookupData?.fleetNumber || String(selectedAlert?.fleet_number || selectedAlert?.fleetNumber || "").trim();
+    let reg = lookupData?.registration || String(selectedAlert?.vehicle_registration || selectedAlert?.plate || selectedAlert?.registration || "").trim();
+    
     let display: string;
     if (fleet && reg && fleet.toUpperCase() !== reg.toUpperCase()) {
       display = `${fleet} - ${reg}`;
+    } else if (reg) {
+      display = reg;
+    } else if (fleet) {
+      display = fleet;
+    } else if (deviceId) {
+      // Fallback: show device ID with warning - should not normally happen
+      display = deviceId;
     } else {
-      display = reg || fleet || "";
+      display = "";
     }
+    
     if (display) {
       preservedVehicleRef.current = display;
       return display;
     }
     return preservedVehicleRef.current || "Unknown Vehicle";
-  }, [selectedAlert]);
+  }, [selectedAlert, vehicleLookup]);
 
   const selectedAlertDriverInfo = useMemo(() => {
     if (!selectedAlert) return { name: "Unknown", phone: "", department: "" };
@@ -338,14 +353,17 @@ export function AlertDetailModal({
   const [alertScreenshotsExpanded, setAlertScreenshotsExpanded] = useState(false);
   const [mediaFetching, setMediaFetching] = useState(false);
   const [captureRequestTrigger, setCaptureRequestTrigger] = useState(0);
+  const [skycamMediaChecked, setSkycamMediaChecked] = useState(false);
+  const [vehicleAlerts, setVehicleAlerts] = useState<any[]>([]);
   const alertVideoRequestStateRef = useRef<Record<string, any>>({});
   const alertMediaFetchBackoffRef = useRef<Record<string, number>>({});
   const videoProxyBase = "/api/video-server";
   const [contentOpacity, setContentOpacity] = useState(1);
   const prevAlertIdRef = useRef<string | undefined>(undefined);
+  const googleMapsToken = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_TOKEN || process.env.GOOGLE_MAPS_API_TOKEN || "";
 
   const sidebarGroups = useMemo(() => {
-    const raw = Array.isArray(selectedAlert?.recent_alerts) ? selectedAlert.recent_alerts : [];
+    const raw = vehicleAlerts.length > 0 ? vehicleAlerts : (Array.isArray(selectedAlert?.recent_alerts) ? selectedAlert.recent_alerts : []);
     const groups = new Map<string, { entry: any; count: number; latestTs: string }>();
     for (const entry of raw) {
       const key = String(entry?.alert_type || entry?.type || entry?.title || "alert").toLowerCase().trim();
@@ -363,7 +381,7 @@ export function AlertDetailModal({
     }
     return Array.from(groups.values())
       .sort((a, b) => new Date(b.latestTs || 0).getTime() - new Date(a.latestTs || 0).getTime());
-  }, [selectedAlert?.recent_alerts]);
+  }, [vehicleAlerts, selectedAlert?.recent_alerts]);
 
   useEffect(() => {
     const newId = String(selectedAlert?.id || "").trim();
@@ -458,6 +476,7 @@ export function AlertDetailModal({
     if (hasScreenshots) return;
     mediaRequestInitiatedRef.current = true;
     setMediaFetching(true);
+    setSkycamMediaChecked(false);
     fetch(`/api/video-server/eps/alerts/${encodeURIComponent(alertId)}/media?ensureMedia=true`, { cache: "no-store" })
       .then((res) => res.json())
       .then((data) => {
@@ -471,25 +490,6 @@ export function AlertDetailModal({
               .map((s: any) => ({ url: s.url, channel: s.channel, timestamp: s.timestamp }));
             return [...prev, ...newShots];
           });
-        } else if (serverVideos.length > 0 && serverScreenshots.length === 0) {
-          const videoUrl = serverVideos[0]?.url || serverVideos[0]?.flvProxyUrl || serverVideos[0]?.fileUrl;
-          if (videoUrl) {
-            fetch(`/api/video-server/playback/capture-frames?url=${encodeURIComponent(videoUrl)}&count=3`, { cache: "no-store" })
-              .then((r) => r.json())
-              .then((frameData) => {
-                const frames = frameData?.frames || [];
-                if (frames.length > 0) {
-                  setDerivedAlertScreenshots((prev) => {
-                    const existingUrls = new Set(prev.map((s) => s.url));
-                    const newShots = frames
-                      .filter((f: any) => f.url && !existingUrls.has(f.url))
-                      .map((f: any) => ({ url: f.url, channel: 0, timestamp: f.timestamp }));
-                    return [...prev, ...newShots];
-                  });
-                }
-              })
-              .catch(() => {});
-          }
         }
         if (serverVideos.length > 0) {
           setSelectedAlertPlaybackVideos((prev) => {
@@ -502,164 +502,131 @@ export function AlertDetailModal({
             }));
           });
         }
+        setSkycamMediaChecked(true);
       })
-      .catch(() => {})
+      .catch(() => { setSkycamMediaChecked(true); })
       .finally(() => setMediaFetching(false));
   }, [selectedAlert?.id, selectedAlert?.media?.screenshots?.length, selectedAlert?.screenshotUrls?.length, derivedAlertScreenshots.length, captureRequestTrigger]);
+
+  // Fetch other alerts for the same vehicle
+  useEffect(() => {
+    const deviceId = String(
+      selectedAlert?.device_id ||
+      selectedAlert?.deviceId ||
+      selectedAlert?.vehicleId ||
+      selectedAlert?.metadata?.vehicle?.vehicleId ||
+      ''
+    ).trim();
+    if (!deviceId) return;
+
+    fetch(`/api/video-server/eps/alerts/active?limit=2000`, { cache: "no-store" })
+      .then((res) => res.json())
+      .then((data) => {
+        const all = Array.isArray(data?.alerts) ? data.alerts : [];
+        const sameVehicle = all.filter((a: any) => {
+          const aDevice = String(
+            a?.device_id || a?.deviceId || a?.vehicleId ||
+            a?.metadata?.vehicle?.vehicleId || ''
+          ).trim();
+          return aDevice === deviceId && String(a?.id || '') !== String(selectedAlert?.id || '');
+        });
+        setVehicleAlerts(sameVehicle);
+      })
+      .catch(() => {});
+  }, [selectedAlert?.id, selectedAlert?.device_id, selectedAlert?.vehicleId]);
+
+  // Fetch vehicle lookup for fleet-reg format
+  useEffect(() => {
+    if (Object.keys(vehicleLookup).length > 0) return;
+    fetch("/api/vehicle-lookup?all=1", { cache: "no-store", signal: AbortSignal.timeout(30000) })
+      .then((res) => res.json())
+      .then((data) => {
+        const vehicles = Array.isArray(data?.vehicles) ? data.vehicles : [];
+        const lookup: Record<string, { fleetNumber: string; registration: string }> = {};
+        for (const v of vehicles) {
+          const id = String(v?.deviceId || v?.device_id || v?.vehicleId || "").trim();
+          if (id) {
+            lookup[id] = {
+              fleetNumber: String(v?.fleetNumber || v?.fleet_number || "").trim(),
+              registration: String(v?.registration || v?.plate || v?.plateNumber || "").trim(),
+            };
+          }
+        }
+        setVehicleLookup(lookup);
+      })
+      .catch(() => {});
+  }, []);
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/70 backdrop-blur-sm p-2 sm:p-4 md:items-center md:p-6">
       <div className="flex w-[90vw] h-[90vh] min-h-0 flex-col overflow-hidden rounded-2xl border border-slate-300 bg-slate-50 shadow-2xl">
-        {/* Header */}
-        <div className="flex-shrink-0 border-b border-slate-200 bg-gradient-to-r from-slate-950 via-slate-900 to-red-950 px-3 py-2 md:px-3">
-          <div className="mb-1.5 flex items-center justify-between gap-2">
-            <Button variant="outline" size="sm" className="h-6 border-white/20 bg-white/10 px-2 text-white hover:bg-white/20 hover:text-white" onClick={onClose}>
-              <ArrowLeft className="w-3 h-3 mr-1" />
-              Back
-            </Button>
-            <p className="text-[10px] text-slate-300">Control room incident view</p>
-          </div>
-
-          <div className="rounded-xl border border-white/10 bg-white/[0.05] p-2">
-            <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
-              <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-2">
-                  <h1 className="truncate text-base font-bold tracking-tight text-white md:text-lg">
-                    {selectedAlertVehicleDisplay}
-                  </h1>
-                  <Badge variant="outline" className={cn(
-                    "flex items-center gap-1 border text-[10px] px-1.5 py-0",
-                    selectedAlertSeverity === 'critical' ? 'bg-red-100 text-red-800 border-red-300' :
-                    selectedAlertSeverity === 'high' ? 'bg-orange-100 text-orange-800 border-orange-300' :
-                    selectedAlertSeverity === 'medium' ? 'bg-yellow-100 text-yellow-800 border-yellow-300' :
-                    'bg-blue-100 text-blue-800 border-blue-300'
-                  )}>
-                    <AlertTriangle className="w-2.5 h-2.5" />
-                    {selectedAlertSeverity.toUpperCase()}
-                  </Badge>
-                </div>
-                <p className="truncate text-xs font-semibold text-slate-100">{selectedAlertTitle}</p>
-                <p className="truncate font-mono text-[10px] text-slate-300">ID: {String(selectedAlert?.id || "N/A").trim()}</p>
-                <div className="mt-1.5 grid grid-cols-2 gap-1 text-[10px] text-slate-200">
-                  <span className="rounded border border-white/10 bg-white/5 px-1.5 py-0.5">Driver: {selectedAlertDriverInfo.name || "Unknown"}</span>
-                  <span className="rounded border border-white/10 bg-white/5 px-1.5 py-0.5">Speed: {selectedAlertSpeedDisplay}</span>
-                  <span className="rounded border border-white/10 bg-white/5 px-1.5 py-0.5">Last: {selectedAlertLastOccurrenceTs ? formatRawAlertTimestamp(selectedAlertLastOccurrenceTs, "datetime") : "N/A"}</span>
-                  <span className="rounded border border-white/10 bg-white/5 px-1.5 py-0.5">State: {selectedAlert?.resolved ? "Closed" : "Open"}</span>
-                </div>
-              </div>
-
-              <div>
-                <select
-                  className="mb-1.5 h-7 w-full rounded-md border border-slate-300 bg-white px-2 text-xs text-slate-900 outline-none focus:border-slate-400 disabled:opacity-50"
-                  value={alertReason}
-                  onChange={(e) => onAlertReasonChange(e.target.value)}
-                  disabled={selectedAlert?.resolved}
-                >
-                  <option value="">SELECT REASON</option>
-                  {alertReasonOptions.map((reason) => (
-                    <option key={reason} value={reason}>
-                      {String(reason).toUpperCase()}
-                    </option>
-                  ))}
-                </select>
-                {!selectedAlert?.resolved ? (
-                  <div className="mb-1.5 flex flex-wrap items-center gap-1">
-                    <Button
-                      variant="outline"
-                      className="h-6 border-red-300/70 bg-white px-2 text-[10px] text-red-700 hover:bg-red-50"
-                      disabled={alertActionLoading}
-                      onClick={onFalseAlert}
-                    >
-                      <XCircle className="w-3 h-3 mr-1" />
-                      {alertActionLoading ? "Saving..." : "False Alert"}
-                    </Button>
-                    <Button
-                      variant="outline"
-                      className="h-6 border-emerald-300/70 bg-white px-2 text-[10px] text-emerald-700 hover:bg-emerald-50"
-                      disabled={alertActionLoading}
-                      onClick={onResolve}
-                    >
-                      {alertActionLoading ? "Saving..." : "Resolve"}
-                    </Button>
-                    <select
-                      className="h-7 min-w-[125px] rounded-md border border-slate-300 bg-white px-2 text-xs text-slate-900 outline-none focus:border-slate-400"
-                      onChange={(e) => {
-                        const formType = e.target.value;
-                        if (formType) onNcrFormSelect(formType);
-                      }}
-                      defaultValue=""
-                    >
-                      <option value="">SELECT NCR FORM</option>
-                      {ncrFormOptions.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
-                    <select
-                      className="h-7 min-w-[100px] rounded-md border border-slate-300 bg-white px-2 text-xs text-slate-900 outline-none focus:border-slate-400"
-                      onChange={(e) => {
-                        const formType = e.target.value;
-                        if (formType) onReportFormSelect(formType);
-                      }}
-                      defaultValue=""
-                    >
-                      <option value="" className="text-slate-900">REPORTS</option>
-                      {reportFormOptions.map((option) => (
-                        <option key={option.value} value={option.value} className="text-slate-900">
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                ) : (
-                  <div className="mb-1.5 space-y-1">
-                    <Badge className="border border-emerald-300 bg-emerald-100 text-emerald-800">Resolved</Badge>
-                    {selectedAlert?.resolved_by ? (
-                      <p className="text-[10px] text-slate-400">
-                        by {selectedAlert.resolved_by}
-                        {selectedAlert?.resolved_at ? ` at ${new Date(selectedAlert.resolved_at).toLocaleString()}` : ""}
-                      </p>
-                    ) : null}
-                    {(() => {
-                      const closedDocs = Array.isArray(selectedAlert?.documents) ? selectedAlert.documents : [];
-                      return closedDocs.length > 0 ? (
-                        <div className="mt-1.5 space-y-1">
-                          <p className="text-[10px] font-medium text-slate-300">Filed documents:</p>
-                          {closedDocs.map((doc: any, idx: number) => (
-                            <div key={idx} className="flex items-center gap-2 text-[10px] text-slate-400">
-                              <FileText className="w-2.5 h-2.5 shrink-0" />
-                              <span className="truncate">{doc.documentName || doc.documentType || doc.type || "Document"}</span>
-                              {doc.link ? (
-                                <button
-                                  className="shrink-0 text-cyan-400 hover:text-cyan-300 underline"
-                                  onClick={() => window.open(doc.link, "_blank")}
-                                >
-                                  Open
-                                </button>
-                              ) : null}
-                            </div>
-                          ))}
-                        </div>
-                      ) : null;
-                    })()}
-                  </div>
-                )}
-                <div>
-                  <label className="mb-0.5 block text-[10px] font-medium text-slate-200">
-                    Additional comments
-                  </label>
-                  <textarea
-                    className="min-h-[60px] w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-900 outline-none placeholder:text-slate-400 focus:border-slate-400 disabled:opacity-50"
-                    value={alertNotesDraft}
-                    onChange={(e) => onAlertNotesDraftChange(e.target.value)}
-                    placeholder="Add extra context for this action (stored with alert resolution)"
-                    maxLength={1200}
-                    disabled={selectedAlert?.resolved}
-                    readOnly={selectedAlert?.resolved}
-                  />
-                </div>
-              </div>
+        {/* Header - Compact */}
+        <div className="flex-shrink-0 border-b border-slate-200 bg-gradient-to-r from-slate-950 via-slate-900 to-red-950 px-3 py-1.5 md:px-3">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 min-w-0">
+              <Button variant="outline" size="sm" className="h-5 border-white/20 bg-white/10 px-1.5 text-white hover:bg-white/20 hover:text-white" onClick={onClose}>
+                <ArrowLeft className="w-3 h-3" />
+              </Button>
+              <h1 className="truncate text-sm font-bold tracking-tight text-white md:text-base">
+                {selectedAlertVehicleDisplay}
+              </h1>
+              <Badge variant="outline" className={cn(
+                "flex items-center gap-0.5 border text-[9px] px-1 py-0",
+                selectedAlertSeverity === 'critical' ? 'bg-red-100 text-red-800 border-red-300' :
+                selectedAlertSeverity === 'high' ? 'bg-orange-100 text-orange-800 border-orange-300' :
+                selectedAlertSeverity === 'medium' ? 'bg-yellow-100 text-yellow-800 border-yellow-300' :
+                'bg-blue-100 text-blue-800 border-blue-300'
+              )}>
+                <AlertTriangle className="w-2 h-2" />
+                {selectedAlertSeverity.toUpperCase()}
+              </Badge>
+              <span className="text-[10px] font-semibold text-slate-100">{selectedAlertTitle}</span>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <select
+                className="h-5 rounded border border-slate-300 bg-white px-1.5 text-[10px] text-slate-900 outline-none focus:border-slate-400 disabled:opacity-50"
+                value={alertReason}
+                onChange={(e) => onAlertReasonChange(e.target.value)}
+                disabled={selectedAlert?.resolved}
+              >
+                <option value="">SELECT REASON</option>
+                {alertReasonOptions.map((reason) => (
+                  <option key={reason} value={reason}>
+                    {String(reason).toUpperCase()}
+                  </option>
+                ))}
+              </select>
+              {!selectedAlert?.resolved && (
+                <>
+                  <Button variant="outline" className="h-5 border-red-300/70 bg-white px-1.5 text-[9px] text-red-700 hover:bg-red-50" disabled={alertActionLoading} onClick={onFalseAlert}>
+                    <XCircle className="w-2.5 h-2.5 mr-0.5" />
+                    False Alert
+                  </Button>
+                  <Button variant="outline" className="h-5 border-emerald-300/70 bg-white px-1.5 text-[9px] text-emerald-700 hover:bg-emerald-50" disabled={alertActionLoading} onClick={onResolve}>
+                    Resolve
+                  </Button>
+                  <select className="h-5 min-w-[100px] rounded border border-slate-300 bg-white px-1.5 text-[10px] text-slate-900 outline-none" onChange={(e) => { if (e.target.value) onNcrFormSelect(e.target.value); }} defaultValue="">
+                    <option value="">NCR FORM</option>
+                    {ncrFormOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                  </select>
+                  <select className="h-5 min-w-[80px] rounded border border-slate-300 bg-white px-1.5 text-[10px] text-slate-900 outline-none" onChange={(e) => { if (e.target.value) onReportFormSelect(e.target.value); }} defaultValue="">
+                    <option value="">REPORTS</option>
+                    {reportFormOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                  </select>
+                </>
+              )}
+              {selectedAlert?.resolved && (
+                <Badge className="h-5 border border-emerald-300 bg-emerald-100 text-emerald-800 text-[9px]">Resolved</Badge>
+              )}
+              <textarea
+                className="h-5 min-w-[150px] rounded border border-slate-300 bg-white px-1.5 text-[10px] text-slate-900 outline-none placeholder:text-slate-400 resize-none"
+                value={alertNotesDraft}
+                onChange={(e) => onAlertNotesDraftChange(e.target.value)}
+                placeholder="Notes..."
+                maxLength={500}
+                disabled={selectedAlert?.resolved}
+                readOnly={selectedAlert?.resolved}
+              />
             </div>
           </div>
         </div>
@@ -673,7 +640,7 @@ export function AlertDetailModal({
                   <TabsTrigger value="screenshots">Screenshots</TabsTrigger>
                   <TabsTrigger value="videos">Event Video</TabsTrigger>
                   <TabsTrigger value="timeline">Timeline</TabsTrigger>
-                  <TabsTrigger value="documents">Documents</TabsTrigger>
+                  <TabsTrigger value="map">Map</TabsTrigger>
                 </TabsList>
 
                 {/* Screenshots Tab */}
@@ -755,12 +722,16 @@ export function AlertDetailModal({
                             </div>
                           ))}
                           <div className="col-span-full text-center py-2 text-xs text-slate-400">
-                            Requesting media from device...
+                            Fetching media from skycamx...
                           </div>
                         </div>
                       ) : (
                         <div className="text-center py-8 text-slate-500">
-                          <p className="mb-3">No screenshots available for this alert.</p>
+                          {skycamMediaChecked ? (
+                            <p className="mb-3">No media found on skycam for this alert.</p>
+                          ) : (
+                            <p className="mb-3">No screenshots available for this alert.</p>
+                          )}
                           <Button
                             variant="outline"
                             size="sm"
@@ -769,14 +740,36 @@ export function AlertDetailModal({
                               if (!selectedAlert?.id) return;
                               setMediaFetching(true);
                               try {
-                                await fetch(`/api/video-server/eps/alerts/${encodeURIComponent(selectedAlert.id)}/capture`, {
-                                  method: "POST",
-                                  headers: { "Content-Type": "application/json" },
+                                // Fetch media from skycamx API
+                                const res = await fetch(`/api/video-server/eps/alerts/${encodeURIComponent(selectedAlert.id)}/media?ensureMedia=true`, {
+                                  cache: "no-store",
                                 });
-                                // Wait for device to process capture, then re-fetch
-                                await new Promise((r) => setTimeout(r, 6000));
+                                const data = await res.json();
+                                const serverScreenshots = data?.screenshots || [];
+                                if (serverScreenshots.length > 0) {
+                                  setDerivedAlertScreenshots((prev) => {
+                                    const existingUrls = new Set(prev.map((s) => s.url));
+                                    const newShots = serverScreenshots
+                                      .filter((s: any) => s.url && !existingUrls.has(s.url))
+                                      .map((s: any) => ({ url: s.url, channel: s.channel, timestamp: s.timestamp }));
+                                    return [...prev, ...newShots];
+                                  });
+                                }
+                                // Also update videos
+                                const serverVideos = data?.videos || [];
+                                if (serverVideos.length > 0) {
+                                  setSelectedAlertPlaybackVideos((prev) => {
+                                    if (prev.length > 0) return prev;
+                                    return serverVideos.map((v: any) => ({
+                                      key: v.key || v.id || v.url,
+                                      label: v.label || "Alert Media",
+                                      url: v.url || v.fileUrl,
+                                      isFlv: v.isFlv === true,
+                                    }));
+                                  });
+                                }
+                                // Trigger re-render
                                 mediaRequestInitiatedRef.current = false;
-                                setDerivedAlertScreenshots([]);
                                 setCaptureRequestTrigger((n) => n + 1);
                               } catch {
                                 // silent
@@ -959,69 +952,65 @@ export function AlertDetailModal({
                 </TabsContent>
 
                 {/* Documents Tab */}
-                <TabsContent value="documents" className="mt-4">
+                {/* Map Tab */}
+                <TabsContent value="map" className="mt-4">
                   <Card className="p-4 border-slate-200 bg-white shadow-sm">
                     <h3 className="text-lg font-semibold text-slate-900 mb-4">
-                      {selectedAlert?.resolved ? "Filed Documents" : "Saved Documents"}
+                      Alert Location
                     </h3>
-                    {(() => {
-                      const docs = selectedAlert?.resolved
-                        ? (Array.isArray(selectedAlert?.documents) ? selectedAlert.documents : [])
-                        : (pendingDocuments || []);
-                      return docs.length > 0 ? (
-                        <div className="space-y-3">
-                          {docs.map((doc: any, idx: number) => (
-                            <Card key={idx} className="border-slate-200 bg-slate-50 p-3">
-                              <div className="flex items-start justify-between gap-3">
-                                <div className="flex items-center gap-2 min-w-0">
-                                  <FileText className="w-4 h-4 shrink-0 text-slate-400" />
-                                  <div className="min-w-0">
-                                    <p className="font-medium text-slate-900 text-sm truncate">
-                                      {doc.documentName || doc.documentType || doc.type || "Document"}
-                                    </p>
-                                    <p className="text-xs text-slate-500">
-                                      {doc.type === "ncr" ? "NCR" : "Report"} &middot; {doc.formType || doc.type || "N/A"}
-                                    </p>
-                                  </div>
-                                </div>
-                                <Badge variant="outline" className={cn(
-                                  "shrink-0 text-[10px]",
-                                  doc.type === "ncr"
-                                    ? "border-amber-200 bg-amber-50 text-amber-700"
-                                    : "border-blue-200 bg-blue-50 text-blue-700"
-                                )}>
-                                  {doc.type === "ncr" ? "NCR" : "Report"}
-                                </Badge>
-                              </div>
-                              <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
-                                <span>Filed by: {doc.filled_by || "Unknown"}</span>
-                                <span>&middot;</span>
-                                <span>{doc.timestamp ? new Date(doc.timestamp).toLocaleString() : "Unknown time"}</span>
-                              </div>
-                              {doc.link ? (
-                                <div className="mt-2">
-                                  <Button
-                                    size="sm"
-                                    variant="outline"
-                                    className="h-7 border-cyan-300 bg-white text-xs text-cyan-700 hover:bg-cyan-50"
-                                    onClick={() => window.open(doc.link, "_blank")}
-                                  >
-                                    <Download className="w-3.5 h-3.5 mr-1.5" />
-                                    View Document
-                                  </Button>
-                                </div>
-                              ) : null}
-                            </Card>
-                          ))}
+                    {selectedAlertCoordinates ? (
+                      <div className="space-y-3">
+                        <div className="flex items-center gap-2 text-sm text-slate-600">
+                          <MapPin className="w-4 h-4" />
+                          <span>{selectedAlertCoordinates.latitude.toFixed(6)}, {selectedAlertCoordinates.longitude.toFixed(6)}</span>
                         </div>
-                      ) : (
-                        <div className="text-center py-12 text-slate-500">
-                          {selectedAlert?.resolved
-                            ? "No documents were filed for this alert."
-                            : "No documents saved yet. Fill an NCR or report to see it here."}
+                        {googleMapsToken ? (
+                          <div className="relative w-full h-80 overflow-hidden rounded-lg border bg-slate-100">
+                            <iframe
+                              title="Alert Location Map"
+                              className="w-full h-full border-0"
+                              loading="lazy"
+                              src={`https://www.google.com/maps/embed/v1/place?key=${googleMapsToken}&q=${selectedAlertCoordinates.latitude},${selectedAlertCoordinates.longitude}&zoom=15`}
+                            />
+                          </div>
+                        ) : (
+                          <div className="relative w-full h-80 overflow-hidden rounded-lg border bg-slate-100 flex items-center justify-center">
+                            <div className="text-center text-slate-500">
+                              <MapPin className="w-12 h-12 mx-auto mb-2 text-slate-300" />
+                              <p className="text-sm">Google Maps token not configured</p>
+                              <p className="text-xs mt-1">Set GOOGLE_MAPS_API_TOKEN environment variable</p>
+                            </div>
+                          </div>
+                        )}
+                        <div className="flex gap-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="text-xs"
+                            onClick={() => window.open(`https://www.google.com/maps?q=${selectedAlertCoordinates.latitude},${selectedAlertCoordinates.longitude}`, "_blank")}
+                          >
+                            <ExternalLink className="w-3 h-3 mr-1" />
+                            Open in Google Maps
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="text-xs"
+                            onClick={() => {
+                              navigator.clipboard.writeText(`${selectedAlertCoordinates.latitude}, ${selectedAlertCoordinates.longitude}`);
+                            }}
+                          >
+                            <Copy className="w-3 h-3 mr-1" />
+                            Copy Coordinates
+                          </Button>
                         </div>
-                      );
-                    })()}
+                      </div>
+                    ) : (
+                      <div className="text-center py-12 text-slate-500">
+                        <MapPin className="w-12 h-12 mx-auto mb-3 text-slate-300" />
+                        <p>No location data available for this alert</p>
+                      </div>
+                    )}
                   </Card>
                 </TabsContent>
               </Tabs>
@@ -1054,16 +1043,6 @@ export function AlertDetailModal({
                             {entry?.timestamp ? toSAST(entry.timestamp).toLocaleString() : "Unknown time"}
                           </p>
                           <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              className="h-6 border-cyan-300 bg-white text-[10px] text-cyan-700 hover:bg-cyan-50"
-                              onClick={() => loadTimelineAlertPlayback(entry)}
-                              disabled={timelinePlaybackLoading[String(entry?.id || "").trim()]}
-                            >
-                              <Video className="mr-1 h-3 w-3" />
-                              {timelinePlaybackLoading[String(entry?.id || "").trim()] ? "Loading..." : "Playback"}
-                            </Button>
                             {entry?.resolved ? (
                               <div className="flex flex-col gap-0.5">
                                 <Badge className="h-5 w-fit border-emerald-200 bg-emerald-50 text-[10px] text-emerald-700">Resolved</Badge>
@@ -1098,6 +1077,16 @@ export function AlertDetailModal({
                                   }}
                                 >
                                   Resolve
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-6 border-slate-300 bg-white text-[10px] text-slate-700 hover:bg-slate-50"
+                                  onClick={() => {
+                                    onOpenAlertDetail(entry, null, { silent: true });
+                                  }}
+                                >
+                                  Open
                                 </Button>
                               </>
                             )}

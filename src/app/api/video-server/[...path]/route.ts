@@ -49,7 +49,7 @@ function normalizeProxiedMediaUrls(value: unknown, baseUrl: string): unknown {
           if (parsed.origin === targetBase.origin && parsed.pathname.startsWith('/api/')) {
             return `/api/video-server${parsed.pathname.slice(4)}${parsed.search || ''}`;
           }
-          if (parsed.hostname.includes('mettaxiot.com') && /\.(flv|m3u8|ts)(?:$|\?)/i.test(parsed.pathname)) {
+          if (parsed.hostname.includes('skycamx.co.za') && /\.(flv|m3u8|ts)(?:$|\?)/i.test(parsed.pathname)) {
             return `/api/video-server/playback/flv-proxy?url=${encodeURIComponent(raw)}`;
           }
         } catch {
@@ -1395,22 +1395,99 @@ export async function GET(
   }
 
   if (firstSegment === 'playback' && (secondSegment === 'flv-proxy' || secondSegment === 'image-proxy')) {
-    const urlParam = request.nextUrl.searchParams.get('url')
+    let urlParam = request.nextUrl.searchParams.get('url')
     if (urlParam) {
       try {
+        // Unwrap recursive proxy URLs (e.g. /playback/flv-proxy?url=/playback/flv-proxy?url=...)
+        if (urlParam.includes('/playback/flv-proxy?url=') || urlParam.includes('/playback/image-proxy?url=')) {
+          const innerMatch = urlParam.match(/url=([^&]+)/)
+          if (innerMatch) {
+            urlParam = decodeURIComponent(innerMatch[1])
+          }
+        }
+
         const headers: Record<string, string> = {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
         }
         const range = request.headers.get('range')
         if (range) headers['range'] = range
 
-        const controller = new AbortController()
-        const connectTimer = setTimeout(() => controller.abort(), 15000)
+        const isSkycamx = urlParam.includes('skycamx.co.za')
+        const isFlv = /\.flv(?:$|\?)/i.test(urlParam)
         let upstream: Response
-        try {
-          upstream = await fetch(urlParam, { headers, signal: controller.signal })
-        } finally {
-          clearTimeout(connectTimer)
+
+        if (isSkycamx) {
+          const https = require('https')
+          const contentType = isFlv ? 'video/x-flv' : urlParam.endsWith('.mp4') ? 'video/mp4' : 'image/jpeg'
+          
+          // For FLV files, stream directly without buffering
+          if (isFlv) {
+            const stream = await new Promise<ReadableStream>((resolve, reject) => {
+              const req = https.get(urlParam, {
+                rejectUnauthorized: false,
+                headers,
+                timeout: 30000,
+              }, (res: any) => {
+                if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+                  https.get(res.headers.location, { rejectUnauthorized: false, headers, timeout: 30000 }, (res2: any) => {
+                    const reader = res2
+                    resolve(new ReadableStream({
+                      start(controller) {
+                        reader.on('data', (chunk: Buffer) => controller.enqueue(new Uint8Array(chunk)))
+                        reader.on('end', () => controller.close())
+                        reader.on('error', (err: any) => controller.error(err))
+                      }
+                    }))
+                  }).on('error', reject)
+                  return
+                }
+                resolve(new ReadableStream({
+                  start(controller) {
+                    res.on('data', (chunk: Buffer) => controller.enqueue(new Uint8Array(chunk)))
+                    res.on('end', () => controller.close())
+                    res.on('error', (err: any) => controller.error(err))
+                  }
+                }))
+              })
+              req.on('error', reject)
+              req.setTimeout(30000, () => { req.destroy(); reject(new Error('timeout')) })
+            })
+            upstream = new Response(stream, { status: 200, headers: { 'content-type': contentType } })
+          } else {
+            // For images, buffer as before
+            const body = await new Promise<Buffer>((resolve, reject) => {
+              const req = https.get(urlParam, {
+                rejectUnauthorized: false,
+                headers,
+                timeout: 10000,
+              }, (res: any) => {
+                if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+                  https.get(res.headers.location, { rejectUnauthorized: false, headers, timeout: 10000 }, (res2: any) => {
+                    const chunks: Buffer[] = []
+                    res2.on('data', (chunk: Buffer) => chunks.push(chunk))
+                    res2.on('end', () => resolve(Buffer.concat(chunks)))
+                    res2.on('error', reject)
+                  }).on('error', reject)
+                  return
+                }
+                const chunks: Buffer[] = []
+                res.on('data', (chunk: Buffer) => chunks.push(chunk))
+                res.on('end', () => resolve(Buffer.concat(chunks)))
+                res.on('error', reject)
+              })
+              req.on('error', reject)
+              req.setTimeout(10000, () => { req.destroy(); reject(new Error('timeout')) })
+            })
+            upstream = new Response(body, { status: 200, headers: { 'content-type': contentType, 'content-length': String(body.length) } })
+          }
+        } else {
+          const controller = new AbortController()
+          const connectTimer = setTimeout(() => controller.abort(), 15000)
+          try {
+            upstream = await fetch(urlParam, { headers, signal: controller.signal })
+          } finally {
+            clearTimeout(connectTimer)
+          }
         }
         if (!upstream.ok || !upstream.body) {
           return Response.json({ success: false, message: `Upstream returned ${upstream.status}` }, { status: 502 })
@@ -1444,9 +1521,11 @@ export async function GET(
   const epsStreamingBase = getEpsStreamingServerBaseUrl()
   const isEpsStreamPath = path.startsWith('eps/')
   const isAlertConfigPath = firstSegment === 'alert-config'
-  const getTarget = (isEpsStreamPath || firstSegment === 'alerts' || isAlertConfigPath) ? { name: 'epsStreaming', baseUrl: epsStreamingBase } : target
+  const isStreamPath = firstSegment === 'stream'
+  const isDriverConfigPath = firstSegment === 'driver-config'
+  const getTarget = (isEpsStreamPath || firstSegment === 'alerts' || isAlertConfigPath || isStreamPath || isDriverConfigPath) ? { name: 'epsStreaming', baseUrl: epsStreamingBase } : target
   const epsPath = firstSegment === 'eps' ? path.slice(4) : path
-  const upstreamPath = (firstSegment === 'media' || firstSegment === 'captures') ? `/${path}` : (firstSegment === 'eps') ? `/api/${epsPath}` : `/api/${path}`
+  const upstreamPath = (firstSegment === 'media' || firstSegment === 'captures') ? `/${path}` : (firstSegment === 'eps' || isStreamPath || isDriverConfigPath) ? `/api/${epsPath}` : `/api/${path}`
   const url = `${getTarget.baseUrl}${upstreamPath}${searchParams ? `?${searchParams}` : ''}`
   const lowerPath = `/${path}`.toLowerCase()
   const isDirectMediaRequest =
@@ -1548,8 +1627,10 @@ export async function POST(
   const epsStreamingBase = getEpsStreamingServerBaseUrl()
   const isEpsStreamPath = path.startsWith('eps/')
   const firstSegment = String(pathArray[0] || '').toLowerCase()
-  const target = (isEpsStreamPath || firstSegment === 'alerts' || firstSegment === 'alert-config') ? { name: 'epsStreaming', baseUrl: epsStreamingBase } : resolveVideoServerProxyBase(pathArray)
-  const epsPath = (firstSegment === 'alerts' || firstSegment === 'alert-config') ? path : path.startsWith('eps/') ? path.slice(4) : path
+  const isStreamPath = firstSegment === 'stream'
+  const isDriverConfigPath = firstSegment === 'driver-config'
+  const target = (isEpsStreamPath || firstSegment === 'alerts' || firstSegment === 'alert-config' || isStreamPath || isDriverConfigPath) ? { name: 'epsStreaming', baseUrl: epsStreamingBase } : resolveVideoServerProxyBase(pathArray)
+  const epsPath = (firstSegment === 'alerts' || firstSegment === 'alert-config' || isStreamPath || isDriverConfigPath) ? path : path.startsWith('eps/') ? path.slice(4) : path
   const url = `${target.baseUrl}/api/${epsPath}`
   const body = await request.json().catch(() => ({}))
 
@@ -1590,8 +1671,10 @@ export async function PUT(
   const epsStreamingBase = getEpsStreamingServerBaseUrl()
   const isEpsStreamPath = path.startsWith('eps/')
   const firstSegment = String(pathArray[0] || '').toLowerCase()
-  const target = (isEpsStreamPath || firstSegment === 'alerts' || firstSegment === 'alert-config') ? { name: 'epsStreaming', baseUrl: epsStreamingBase } : resolveVideoServerProxyBase(pathArray)
-  const epsPath = (firstSegment === 'alerts' || firstSegment === 'alert-config') ? path : path.startsWith('eps/') ? path.slice(4) : path
+  const isStreamPath = firstSegment === 'stream'
+  const isDriverConfigPath = firstSegment === 'driver-config'
+  const target = (isEpsStreamPath || firstSegment === 'alerts' || firstSegment === 'alert-config' || isStreamPath || isDriverConfigPath) ? { name: 'epsStreaming', baseUrl: epsStreamingBase } : resolveVideoServerProxyBase(pathArray)
+  const epsPath = (firstSegment === 'alerts' || firstSegment === 'alert-config' || isStreamPath || isDriverConfigPath) ? path : path.startsWith('eps/') ? path.slice(4) : path
   const url = `${target.baseUrl}/api/${epsPath}`
   const body = await request.json().catch(() => ({}))
 
@@ -1631,8 +1714,10 @@ export async function DELETE(
   const epsStreamingBase = getEpsStreamingServerBaseUrl()
   const isEpsStreamPath = path.startsWith('eps/')
   const firstSegment = String(pathArray[0] || '').toLowerCase()
-  const target = (isEpsStreamPath || firstSegment === 'alerts' || firstSegment === 'alert-config') ? { name: 'epsStreaming', baseUrl: epsStreamingBase } : resolveVideoServerProxyBase(pathArray)
-  const epsPath = (firstSegment === 'alerts' || firstSegment === 'alert-config') ? path : path.startsWith('eps/') ? path.slice(4) : path
+  const isStreamPath = firstSegment === 'stream'
+  const isDriverConfigPath = firstSegment === 'driver-config'
+  const target = (isEpsStreamPath || firstSegment === 'alerts' || firstSegment === 'alert-config' || isStreamPath || isDriverConfigPath) ? { name: 'epsStreaming', baseUrl: epsStreamingBase } : resolveVideoServerProxyBase(pathArray)
+  const epsPath = (firstSegment === 'alerts' || firstSegment === 'alert-config' || isStreamPath || isDriverConfigPath) ? path : path.startsWith('eps/') ? path.slice(4) : path
   const url = `${target.baseUrl}/api/${epsPath}`
 
   try {

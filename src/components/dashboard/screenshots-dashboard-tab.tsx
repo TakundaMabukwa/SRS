@@ -200,7 +200,13 @@ export default function ScreenshotsDashboardTab({
             const dev = byDevice[card.deviceId];
             if (!dev) continue;
             if (dev[1]) { card.ch1Url = toProxiedUrl(dev[1].fileUrl); card.ch1Time = dev[1].createTime; }
-            if (dev[2]) { card.ch2Url = toProxiedUrl(dev[2].fileUrl); card.ch2Time = dev[2].createTime; }
+            if (dev[2]) {
+              const ch2Url = toProxiedUrl(dev[2].fileUrl);
+              if (ch2Url && ch2Url !== card.ch1Url) {
+                card.ch2Url = ch2Url;
+                card.ch2Time = dev[2].createTime;
+              }
+            }
           }
         } else {
           galFailed = true;
@@ -230,7 +236,7 @@ export default function ScreenshotsDashboardTab({
         const prev = prevImages.find((c) => c.registration === card.registration);
         if (prev) {
           if (!card.ch1Url && prev.ch1Url && !currentFailed.has(prev.ch1Url)) { card.ch1Url = prev.ch1Url; card.ch1Time = prev.ch1Time; }
-          if (!card.ch2Url && prev.ch2Url && !currentFailed.has(prev.ch2Url)) { card.ch2Url = prev.ch2Url; card.ch2Time = prev.ch2Time; }
+          if (!card.ch2Url && prev.ch2Url && !currentFailed.has(prev.ch2Url) && prev.ch2Url !== card.ch1Url) { card.ch2Url = prev.ch2Url; card.ch2Time = prev.ch2Time; }
         }
       }
 

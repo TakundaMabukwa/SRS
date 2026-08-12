@@ -93,22 +93,12 @@ const roleNavigation = {
     { name: "Vehicles", href: "/vehicles", Icon: <Truck /> },
     { name: "Cost Centers", href: "/ccenter", Icon: <DollarSign /> },
     { name: "Financials", href: "/audit", Icon: <Settings2Icon /> },
-    {
-      name: "Inspections",
-      href: "/fleetManager/inspections",
-      Icon: <QrCode />,
-    },
     { name: "User Management", href: "/userManagement", Icon: <PlusSquare /> },
     { name: "System Settings", href: "/settings", Icon: <Settings /> },
   ],
   "fleet manager": [
     { name: "Dashboard", href: "/dashboard", Icon: <ChartBar /> },
     { name: "Fleet Manager", href: "/fleetManager", Icon: <Truck /> },
-    {
-      name: "Inspections",
-      href: "/fleetManager/inspections",
-      Icon: <Briefcase />,
-    },
     { name: "Financials", href: "/audit", Icon: <Settings2Icon /> },
     { name: "Jobs", href: "/jobsFleet", Icon: <Briefcase /> },
     { name: "Drivers", href: "/drivers", Icon: <Users /> },
