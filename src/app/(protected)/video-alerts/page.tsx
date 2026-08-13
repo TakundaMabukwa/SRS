@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -8,6 +8,7 @@ import { Card } from '@/components/ui/card'
 import { Textarea } from '@/components/ui/textarea'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import AlertsSubnav from '@/components/video-alerts/alerts-subnav'
+import { useVideoWebSocket } from '@/hooks/use-video-websocket'
 import {
   AlertTriangle,
   Clock,
@@ -48,6 +49,20 @@ export default function VideoAlertsPage() {
   const [activeTab, setActiveTab] = useState('alerts')
   const [currentUser] = useState({ id: 'user-1', name: 'Controller' })
   const [vehicleLookup, setVehicleLookup] = useState({})
+
+  // Real-time WebSocket for new alerts
+  const handleWebSocketMessage = useCallback((data: any) => {
+    if (data?.type === 'new-alert' && data?.alert) {
+      // New alert arrived - re-fetch to get clean state
+      fetchAlerts()
+    }
+    if (data?.type === 'alert-status-changed') {
+      // Alert status changed (resolved, etc.) - re-fetch
+      fetchAlerts()
+    }
+  }, [])
+
+  const { connected } = useVideoWebSocket(handleWebSocketMessage)
 
   const toNum = (value) => {
     const n = Number(value)
@@ -307,34 +322,21 @@ export default function VideoAlertsPage() {
 
   const fetchAlerts = async () => {
     try {
-      let alertRows = []
-
-      const activeLimit = 2000
-      const res = await fetch(`/api/video-server/eps/alerts/active-all?limit=${activeLimit}`, { signal: AbortSignal.timeout(30000) })
-      if (res.ok) {
-        const data = await res.json()
-        alertRows = Array.isArray(data?.alerts)
-          ? data.alerts
-          : Array.isArray(data?.data?.alerts)
-            ? data.data.alerts
-            : Array.isArray(data?.data)
-              ? data.data
-              : []
-      }
-
-      if (alertRows.length === 0) {
-        const activeRes = await fetch(`/api/video-server/eps/alerts/active-all?limit=${activeLimit}`, { signal: AbortSignal.timeout(30000) })
-        if (activeRes.ok) {
-          const activeData = await activeRes.json()
-          alertRows = Array.isArray(activeData?.alerts)
-            ? activeData.alerts
-            : Array.isArray(activeData?.data?.alerts)
-              ? activeData.data.alerts
-              : Array.isArray(activeData?.data)
-                ? activeData.data
-                : []
-        }
-      }
+      const activeLimit = 5000
+      const res = await fetch(`/api/video-server/eps/alerts/active-all?limit=${activeLimit}`, { 
+        cache: 'no-store',
+        signal: AbortSignal.timeout(30000) 
+      })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      
+      const data = await res.json()
+      const alertRows = Array.isArray(data?.alerts)
+        ? data.alerts
+        : Array.isArray(data?.data?.alerts)
+          ? data.data.alerts
+          : Array.isArray(data?.data)
+            ? data.data
+            : []
 
       const normalizedAlerts = alertRows
         .map((rawAlert) => normalizeAlert(rawAlert))
@@ -358,7 +360,7 @@ export default function VideoAlertsPage() {
       setApiError(false)
     } catch (err) {
       console.error('Failed to fetch alerts:', err)
-      setApiError(true)
+      // Don't set apiError - keep polling even on error
     }
   }
 
@@ -399,11 +401,24 @@ export default function VideoAlertsPage() {
       setLoading(false)
     }
     init()
-    const interval = setInterval(() => {
-      fetchAlerts()
-      fetchScreenshots()
-    }, 30000)
-    return () => clearInterval(interval)
+    
+    // Robust polling with error handling - refresh every 15 seconds
+    const intervalRef = { current: null as ReturnType<typeof setInterval> | null }
+    const startPolling = () => {
+      intervalRef.current = setInterval(async () => {
+        try {
+          await fetchAlerts()
+          await fetchScreenshots()
+        } catch (err) {
+          console.error('Poll error:', err)
+        }
+      }, 15000)
+    }
+    startPolling()
+
+    return () => {
+      if (intervalRef.current) clearInterval(intervalRef.current)
+    }
   }, [])
 
   // Fetch vehicle lookup for fleet-reg format

@@ -40,6 +40,7 @@ type VehicleCard = {
 const EPS_API = "/api/video-server";
 const RETRY_INTERVAL_MS = 30000;
 const SCREENSHOT_WINDOW_MS = 10 * 60 * 1000;
+const AUTO_REFRESH_MS = 2 * 60 * 1000; // 2 minutes
 
 function normalizeCostCenter(value: unknown): string {
   return String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
@@ -88,10 +89,12 @@ export default function ScreenshotsDashboardTab({
   const [gridColumns, setGridColumns] = useState(2);
   const [modalImage, setModalImage] = useState<string | null>(null);
   const [failedImages, setFailedImages] = useState<Set<string>>(new Set());
+  const [nextRefresh, setNextRefresh] = useState(AUTO_REFRESH_MS / 1000);
   const activeRef = useRef(true);
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const failedImagesRef = useRef<Set<string>>(new Set());
   const prevCardsRef = useRef<VehicleCard[]>([]);
+  const fetchInProgressRef = useRef(false);
 
   const fetchDbOnce = useCallback(async () => {
     if (dbVehiclesRef.current) return dbVehiclesRef.current;
@@ -116,6 +119,10 @@ export default function ScreenshotsDashboardTab({
   }, [supabase]);
 
   const fetchData = useCallback(async () => {
+    // Prevent concurrent fetches
+    if (fetchInProgressRef.current) return;
+    fetchInProgressRef.current = true;
+    
     try {
       const dbVehicles = await fetchDbOnce();
       if (!activeRef.current) return;
@@ -151,21 +158,33 @@ export default function ScreenshotsDashboardTab({
 
       // Build vehicle cards from DB, matching fleet_number or registration_number -> plateName
       const matchedDeviceIds: string[] = [];
+      const prevCards = prevCardsRef.current;
       const built: VehicleCard[] = dbVehicles.map((v) => {
         const fleetMatch = regMap.get((v.fleet_number || "").toUpperCase());
         const regMatch = regMap.get((v.registration_number || "").toUpperCase());
         const match = fleetMatch || regMatch;
         const deviceId = match ? match.deviceId : null;
         if (deviceId) matchedDeviceIds.push(deviceId);
-        const online = match ? match.online : false;
+        
+        // Preserve previous online status and images
+        const prevCard = prevCards.find((c) => 
+          c.registration === v.registration_number ||
+          c.fleetNumber === v.fleet_number ||
+          c.deviceId === deviceId
+        );
+        const online = match ? match.online : (prevCard?.online ?? false);
+        
         return {
           registration: v.registration_number,
           fleetNumber: v.fleet_number,
           costCenter: v.cost_center,
-          deviceId,
+          deviceId: deviceId || prevCard?.deviceId || null,
           online,
-          cameras: match ? match.cameras : 0,
-          ch1Url: null, ch2Url: null, ch1Time: null, ch2Time: null,
+          cameras: match ? match.cameras : (prevCard?.cameras || 0),
+          ch1Url: prevCard?.ch1Url || null,
+          ch2Url: prevCard?.ch2Url || null,
+          ch1Time: prevCard?.ch1Time || null,
+          ch2Time: prevCard?.ch2Time || null,
         };
       });
 
@@ -229,14 +248,30 @@ export default function ScreenshotsDashboardTab({
 
       if (!activeRef.current) return;
 
-      // Keep last images per-channel if no new data arrived, but skip failed ones
+      // Clear failed images when new gallery data arrives
+      if (!galFailed) {
+        setFailedImages(new Set());
+      }
+
+      // Preserve ALL previous images - only update when new data arrives
       const prevImages = prevCardsRef.current;
       const currentFailed = failedImagesRef.current;
       for (const card of built) {
         const prev = prevImages.find((c) => c.registration === card.registration);
         if (prev) {
-          if (!card.ch1Url && prev.ch1Url && !currentFailed.has(prev.ch1Url)) { card.ch1Url = prev.ch1Url; card.ch1Time = prev.ch1Time; }
-          if (!card.ch2Url && prev.ch2Url && !currentFailed.has(prev.ch2Url) && prev.ch2Url !== card.ch1Url) { card.ch2Url = prev.ch2Url; card.ch2Time = prev.ch2Time; }
+          // Always keep previous images unless new ones are available AND not failed
+          if (card.ch1Url && !currentFailed.has(card.ch1Url)) {
+            // New ch1 available, use it
+          } else if (prev.ch1Url && !currentFailed.has(prev.ch1Url)) {
+            card.ch1Url = prev.ch1Url;
+            card.ch1Time = prev.ch1Time;
+          }
+          if (card.ch2Url && !currentFailed.has(card.ch2Url)) {
+            // New ch2 available, use it
+          } else if (prev.ch2Url && !currentFailed.has(prev.ch2Url) && prev.ch2Url !== card.ch1Url) {
+            card.ch2Url = prev.ch2Url;
+            card.ch2Time = prev.ch2Time;
+          }
         }
       }
 
@@ -255,6 +290,8 @@ export default function ScreenshotsDashboardTab({
       if (!activeRef.current) return;
       setError(e.message || "Failed to load");
       setLoading(false);
+    } finally {
+      fetchInProgressRef.current = false;
     }
   }, [fetchDbOnce]);
 
@@ -272,12 +309,29 @@ export default function ScreenshotsDashboardTab({
 
   useEffect(() => {
     activeRef.current = true;
+    setNextRefresh(AUTO_REFRESH_MS / 1000);
     fetchData().finally(() => setLoading(false));
+
+    // Auto-refresh every 2 minutes
+    const refreshInterval = setInterval(() => {
+      if (activeRef.current && !refreshing) {
+        setNextRefresh(AUTO_REFRESH_MS / 1000);
+        fetchData();
+      }
+    }, AUTO_REFRESH_MS);
+
+    // Countdown timer
+    const countdownInterval = setInterval(() => {
+      setNextRefresh((prev) => (prev > 0 ? prev - 1 : AUTO_REFRESH_MS / 1000));
+    }, 1000);
+
     return () => {
       activeRef.current = false;
       if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
+      clearInterval(refreshInterval);
+      clearInterval(countdownInterval);
     };
-  }, [fetchData]);
+  }, [fetchData, refreshing]);
 
   useEffect(() => {
     failedImagesRef.current = failedImages;
@@ -355,6 +409,9 @@ export default function ScreenshotsDashboardTab({
                 <RefreshCw className={`mr-1 h-3 w-3 ${refreshing ? "animate-spin" : ""}`} />
                 Refresh
               </Button>
+              <span className="text-[10px] text-slate-500">
+                Next: {Math.floor(nextRefresh / 60)}:{String(nextRefresh % 60).padStart(2, "0")}
+              </span>
               {detachable && (
                 <Button
                   variant="outline"

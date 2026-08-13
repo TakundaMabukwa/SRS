@@ -6271,8 +6271,8 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
           setAlertNotesDraft("");
           setAlertActionError("");
           setAlertActionSuccess("");
+          // Just open the alert as the main active alert - don't resolve it
           await openAlertDetailRealtime(entry, null, { silent: false });
-          await closeSelectedAlert(action === "false_alert" ? "false_alert" : "resolved", null, entry);
         }}
         onRefreshTrigger={() => setRefreshTrigger((prev) => prev + 1)}
         triggerRealtimeLoad={() => setAlertRealtimeLoading(true)}
