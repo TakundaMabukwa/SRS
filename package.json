@@ -4,8 +4,8 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
-    "start": "cross-env NODE_OPTIONS=--max-old-space-size=1536 UV_THREADPOOL_SIZE=1 next start",
+    "build": "cross-env NODE_OPTIONS=--max-old-space-size=3072 next build",
+    "start": "cross-env NODE_OPTIONS=--max-old-space-size=3072 UV_THREADPOOL_SIZE=1 next start",
     "lint": "next lint",
     "postbuild": "echo 'Build complete'",
     "database:pull": "npx supabase gen types --lang=typescript --project-id jbactgkcijnkjpyqqzxv > src/lib/supabase/database.types.ts"
