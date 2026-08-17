@@ -396,14 +396,20 @@ export function AlertDetailModal({
     if (timelinePlaybackLoading[entryId]) return;
     setTimelinePlaybackLoading((prev) => ({ ...prev, [entryId]: true }));
     try {
-      const res = await fetch(`/api/video-server/eps/alerts/${encodeURIComponent(entryId)}/media`);
-      if (!res.ok) throw new Error(`Failed to load timeline playback: ${res.status}`);
+      const deviceId = String(entry?.device_id || entry?.deviceId || '').trim();
+      const alarmTs = entry?.alarm_ts || entry?.alarmTs || entry?.timestamp || '';
+
+      const res = await fetch('/api/mettax/media', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ alarmId: entryId, deviceId, startTime: alarmTs }),
+      });
       const data = await res.json();
-      const videos = (data?.videos || data?.media || []).map((v: any) => ({
-        key: v.key || v.id || v.url,
-        label: v.label || v.name || v.channel || "Video",
-        url: v.url || v.streamUrl || v.hlsUrl,
-        isFlv: v.isFlv === true,
+      const videos = (data?.videos || []).map((v: any) => ({
+        key: v.id || v.url,
+        label: "Event Video",
+        url: v.url,
+        isFlv: /\.flv/i.test(v.rawUrl || v.url),
       }));
       setTimelinePlaybackByAlert((prev) => ({ ...prev, [entryId]: videos }));
     } catch (err) {
@@ -424,27 +430,45 @@ export function AlertDetailModal({
 
   const loadAlertPlaybackVideos = useCallback(async () => {
     const alertId = String(selectedAlert?.id || "").trim();
-    if (!alertId || selectedAlertPlaybackLoading) return;
+    if (!alertId) return;
     setSelectedAlertPlaybackLoading(true);
     setSelectedAlertPlaybackError("");
     try {
-      const res = await fetch(`/api/video-server/eps/alerts/${encodeURIComponent(alertId)}/media?ensureMedia=true`);
-      if (!res.ok) throw new Error(`Failed to load alert playback: ${res.status}`);
+      const deviceId = String(
+        selectedAlert?.device_id || selectedAlert?.deviceId || selectedAlert?.vehicleId ||
+        selectedAlert?.metadata?.vehicle?.vehicleId || ''
+      ).trim();
+      const alarmTs = selectedAlert?.alarm_ts || selectedAlert?.alarmTs || selectedAlert?.timestamp || '';
+
+      const res = await fetch('/api/mettax/media', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ alarmId: alertId, deviceId, startTime: alarmTs }),
+      });
       const data = await res.json();
-      const videos = (data?.videos || data?.media || []).map((v: any) => ({
-        key: v.key || v.id || v.url,
-        label: v.label || v.name || v.channel || "Video",
-        url: v.url || v.streamUrl || v.hlsUrl,
-        isFlv: v.isFlv === true,
+      if (!data.success) throw new Error(data.message || 'Failed to fetch from Mettax');
+
+      const videos = (data.videos || []).map((v: any) => ({
+        key: v.id || v.url,
+        label: "Event Video",
+        url: v.url,
+        isFlv: /\.flv/i.test(v.rawUrl || v.url),
       }));
       setSelectedAlertPlaybackVideos(videos);
+
+      // Also grab screenshots if we have none
+      if (data.screenshots?.length > 0 && derivedAlertScreenshots.length === 0) {
+        setDerivedAlertScreenshots(
+          data.screenshots.map((s: any) => ({ url: s.url, channel: 0, timestamp: '' }))
+        );
+      }
     } catch (err: any) {
       setSelectedAlertPlaybackError(err?.message || "Failed to load alert playback");
       setSelectedAlertPlaybackVideos([]);
     } finally {
       setSelectedAlertPlaybackLoading(false);
     }
-  }, [selectedAlert?.id, selectedAlertPlaybackLoading]);
+  }, [selectedAlert?.id]);
 
   const selectedAlertVideoRequestState = alertVideoRequestStateRef.current[String(selectedAlert?.id || "").trim()] || {};
 
@@ -453,15 +477,25 @@ export function AlertDetailModal({
       videoLoadInitiatedRef.current = true;
       loadAlertPlaybackVideos();
     }
-  }, [activeTab, loadAlertPlaybackVideos]);
+  }, [activeTab, loadAlertPlaybackVideos, selectedAlert?.id]);
 
   // Request media on-demand when modal opens and no screenshots exist
   const mediaRequestInitiatedRef = useRef(false);
   useEffect(() => {
     mediaRequestInitiatedRef.current = false;
+    videoLoadInitiatedRef.current = false;
     setMediaFetching(false);
+    setSelectedAlertPlaybackLoading(false);
+    setSelectedAlertPlaybackError("");
     setDerivedAlertScreenshots([]);
     setSelectedAlertPlaybackVideos([]);
+
+    // If already on Event Video tab, fetch immediately
+    const alertId = String(selectedAlert?.id || "").trim();
+    if (activeTab === "videos" && alertId) {
+      videoLoadInitiatedRef.current = true;
+      loadAlertPlaybackVideos();
+    }
   }, [selectedAlert?.id]);
   useEffect(() => {
     if (mediaRequestInitiatedRef.current) return;
@@ -474,35 +508,39 @@ export function AlertDetailModal({
     mediaRequestInitiatedRef.current = true;
     setMediaFetching(true);
     setSkycamMediaChecked(false);
-    fetch(`/api/video-server/eps/alerts/${encodeURIComponent(alertId)}/media?ensureMedia=true`, { cache: "no-store" })
+
+    const deviceId = String(
+      selectedAlert?.device_id || selectedAlert?.deviceId || selectedAlert?.vehicleId ||
+      selectedAlert?.metadata?.vehicle?.vehicleId || ''
+    ).trim();
+    const alarmTs = selectedAlert?.alarm_ts || selectedAlert?.alarmTs || selectedAlert?.timestamp || '';
+
+    // Call Mettax directly — skip backend
+    fetch('/api/mettax/media', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ alarmId: alertId, deviceId, startTime: alarmTs }),
+    })
       .then((res) => res.json())
       .then((data) => {
-        const serverScreenshots = data?.screenshots || [];
-        const serverVideos = data?.videos || [];
-        if (serverScreenshots.length > 0) {
-          setDerivedAlertScreenshots((prev) => {
-            const existingUrls = new Set(prev.map((s) => s.url));
-            const newShots = serverScreenshots
-              .filter((s: any) => s.url && !existingUrls.has(s.url))
-              .map((s: any) => ({ url: s.url, channel: s.channel, timestamp: s.timestamp }));
-            return [...prev, ...newShots];
-          });
+        if (data.success) {
+          if (data.screenshots?.length > 0) {
+            setDerivedAlertScreenshots((prev) => {
+              const existingUrls = new Set(prev.map((s) => s.url));
+              const newShots = data.screenshots
+                .filter((s: any) => s.url && !existingUrls.has(s.url))
+                .map((s: any) => ({ url: s.url, channel: 0, timestamp: '' }));
+              return [...prev, ...newShots];
+            });
+          }
+          // Don't set videos here — let loadAlertPlaybackVideos handle the Event Video tab
         }
-        if (serverVideos.length > 0) {
-          setSelectedAlertPlaybackVideos((prev) => {
-            if (prev.length > 0) return prev;
-            return serverVideos.map((v: any) => ({
-              key: v.key || v.id || v.url,
-              label: v.label || "Alert Media",
-              url: v.url || v.fileUrl,
-              isFlv: v.isFlv === true,
-            }));
-          });
-        }
-        setSkycamMediaChecked(true);
       })
-      .catch(() => { setSkycamMediaChecked(true); })
-      .finally(() => setMediaFetching(false));
+      .catch(() => {})
+      .finally(() => {
+        setSkycamMediaChecked(true);
+        setMediaFetching(false);
+      });
   }, [selectedAlert?.id, selectedAlert?.media?.screenshots?.length, selectedAlert?.screenshotUrls?.length, derivedAlertScreenshots.length, captureRequestTrigger]);
 
   // Fetch other alerts for the same vehicle

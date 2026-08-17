@@ -193,11 +193,15 @@ export function UniversalVideoPlayer({
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
     ctx.drawImage(videoEl, 0, 0, canvas.width, canvas.height);
-    canvas.toBlob((blob) => {
-      if (!blob) return;
-      screenshotCapturedForRef.current = activeUrl;
-      onScreenshotCapture(blob);
-    }, "image/jpeg", 0.9);
+    try {
+      canvas.toBlob((blob) => {
+        if (!blob) return;
+        screenshotCapturedForRef.current = activeUrl;
+        onScreenshotCapture(blob);
+      }, "image/jpeg", 0.9);
+    } catch {
+      // Cross-origin video — canvas tainted, skip screenshot capture
+    }
   }, [activeUrl, onScreenshotCapture]);
 
   return (
