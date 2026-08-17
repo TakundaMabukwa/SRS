@@ -116,31 +116,6 @@ async function fetchAllVehicleLookupRowsFromSupabase() {
     }
   }
 
-  // Also match EPS devices by registration (plateName) so alerts with EPS deviceIds resolve correctly
-  try {
-    const epsRes = await fetch(`${EPS_SERVER}/api/stream/online`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
-      cache: 'no-store', signal: AbortSignal.timeout(10000),
-    });
-    if (epsRes.ok) {
-      const epsData = await epsRes.json();
-      const epsDevices = epsData.data?.devices || [];
-      for (const d of epsDevices) {
-        if (!d.deviceId) continue;
-        if (byDevice.has(d.deviceId)) continue;
-        const plate = (d.plateName || '').trim();
-        const parts = plate.split(' - ');
-        const fleetNum = (parts[0] || '').trim().toUpperCase();
-        const regNum = (parts[1] || '').trim().toUpperCase();
-        // Only add if this EPS device matches a Supabase vehicle (by plate or fleet)
-        const match = byPlate.get(regNum) || byPlate.get(fleetNum);
-        if (match) {
-          byDevice.set(d.deviceId, { deviceId: d.deviceId, ...match });
-        }
-      }
-    }
-  } catch {}
-
   const rows = Array.from(byDevice.values());
   buildLookupCache(rows);
 

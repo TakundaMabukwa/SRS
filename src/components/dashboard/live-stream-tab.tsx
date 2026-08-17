@@ -124,6 +124,19 @@ export default function LiveStreamTab({ selectedCostCenters = [] }: LiveStreamTa
     try {
       const dbVehicles = await fetchDbOnce();
 
+      // Show vehicles immediately with no online data
+      if (!background) {
+        const instant = dbVehicles.map((v) => ({
+          registration: v.registration_number,
+          fleetNumber: v.fleet_number,
+          costCenter: v.cost_center,
+          deviceId: null as string | null,
+          online: false,
+        }));
+        setVehicles(instant);
+        setLoading(false);
+      }
+
       let onlineRes = await fetch('/api/mettax/online', {
         method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
         cache: "no-store", signal: AbortSignal.timeout(15000),
@@ -151,9 +164,8 @@ export default function LiveStreamTab({ selectedCostCenters = [] }: LiveStreamTa
         }
       }
 
-      // If all offline, retry once
+      // If all offline, retry once (no delay)
       if (onlineCount === 0 && regMap.size > 0) {
-        await new Promise(r => setTimeout(r, 2000));
         onlineRes = await fetch('/api/mettax/online', {
           method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
           cache: "no-store", signal: AbortSignal.timeout(15000),

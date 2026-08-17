@@ -11,6 +11,18 @@ export const revalidate = 0
 type AnyRecord = Record<string, any>
 type GenericRecord = Record<string, unknown>
 
+const SRS_INTERNAL_KEY = process.env.SRS_INTERNAL_KEY || ''
+
+function backendHeaders(request?: NextRequest): Record<string, string> {
+  const headers: Record<string, string> = {}
+  headers['x-internal-key'] = SRS_INTERNAL_KEY
+  if (request) {
+    const accessToken = request.cookies.get('access_token')?.value
+    if (accessToken) headers['cookie'] = `access_token=${accessToken}`
+  }
+  return headers
+}
+
 function normalizeProxiedMediaUrls(value: unknown, baseUrl: string): unknown {
   if (Array.isArray(value)) {
     return value.map((entry) => normalizeProxiedMediaUrls(entry, baseUrl));
@@ -732,6 +744,7 @@ async function fetchRecentAlertsFromGoHub(baseUrl: string, limit: number): Promi
   try {
     const response = await fetch(`${baseUrl}/api/alerts/recent?limit=${boundedLimit}`, {
       method: 'GET',
+      headers: { 'x-internal-key': SRS_INTERNAL_KEY },
       cache: 'no-store',
       next: { revalidate: 0 },
     });
@@ -1086,7 +1099,7 @@ async function handleAlertHubCompatGet(request: NextRequest, pathArray: string[]
     const availabilityUrl = `${baseUrl}/api/storage/availability?sim=${encodeURIComponent(vehicleId)}&from=${encodeURIComponent(dayStart.toISOString())}&to=${encodeURIComponent(dayEnd.toISOString())}`;
 
     try {
-      const availabilityRes = await fetch(availabilityUrl, { method: 'GET', cache: 'no-store', next: { revalidate: 0 } });
+      const availabilityRes = await fetch(availabilityUrl, { method: 'GET', headers: { 'x-internal-key': SRS_INTERNAL_KEY }, cache: 'no-store', next: { revalidate: 0 } });
       const availabilityJson = await availabilityRes.json().catch(() => ({} as AnyRecord));
       const channels = Array.isArray((availabilityJson as AnyRecord)?.channels)
         ? ((availabilityJson as AnyRecord).channels as AnyRecord[])
@@ -1167,7 +1180,7 @@ async function handleAlertHubCompatPost(pathArray: string[], baseUrl: string, bo
 
     const closeRes = await fetch(`${baseUrl}/api/alerts/close`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'x-internal-key': SRS_INTERNAL_KEY },
       body: JSON.stringify(payload),
       cache: 'no-store',
     });
@@ -1197,6 +1210,7 @@ async function handleAlertHubCompatPost(pathArray: string[], baseUrl: string, bo
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'x-internal-key': SRS_INTERNAL_KEY,
           ...(headers || {}),
         },
         body: JSON.stringify(payload),
@@ -1328,7 +1342,7 @@ async function handleVehicleVideoAvailabilityCompat(
   const upstreamUrl = `${baseUrl}/api/storage/availability?sim=${encodeURIComponent(vehicleId)}&from=${encodeURIComponent(fromIso)}&to=${encodeURIComponent(toIso)}`;
 
   try {
-    const response = await fetch(upstreamUrl, { method: 'GET', cache: 'no-store', next: { revalidate: 0 } });
+    const response = await fetch(upstreamUrl, { method: 'GET', headers: { 'x-internal-key': SRS_INTERNAL_KEY }, cache: 'no-store', next: { revalidate: 0 } });
     if (!response.ok) {
       return okJson({
         success: true,
@@ -1535,7 +1549,7 @@ export async function GET(
 
   try {
 
-    const forwardedHeaders: Record<string, string> = {}
+    const forwardedHeaders = backendHeaders(request)
     const range = request.headers.get('range')
     if (range) forwardedHeaders['range'] = range
 
@@ -1637,11 +1651,12 @@ export async function POST(
 
   try {
 
+    const headers = backendHeaders(request)
+    headers['Content-Type'] = 'application/json'
+
     const response = await fetch(url, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers,
       body: JSON.stringify(body),
     })
 
@@ -1680,11 +1695,12 @@ export async function PUT(
   const body = await request.json().catch(() => ({}))
 
   try {
+    const headers = backendHeaders(request)
+    headers['Content-Type'] = 'application/json'
+
     const response = await fetch(url, {
       method: 'PUT',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers,
       body: JSON.stringify(body),
     })
 
@@ -1722,8 +1738,11 @@ export async function DELETE(
   const url = `${target.baseUrl}/api/${epsPath}`
 
   try {
+    const headers = backendHeaders(request)
+
     const response = await fetch(url, {
       method: 'DELETE',
+      headers,
     })
 
     if (!response.ok) {

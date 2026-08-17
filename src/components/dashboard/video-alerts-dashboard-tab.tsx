@@ -960,7 +960,7 @@ export default function VideoAlertsDashboardTab({
   }, [getGroupedAlertTimestamp, isPinnedVehicle, normalizeAlert, videoAvailability, videoProxyBase]);
 
   const fetchTripRoutingStyleAlerts = useCallback(async (force: boolean = false) => {
-    if (suspendBackgroundWork || !vehicleIdentityLookupReady) return;
+    if (suspendBackgroundWork) return;
     const now = Date.now();
     if (!force && now - lastActiveAlertsFetchAtRef.current < ACTIVE_ALERTS_FETCH_MIN_INTERVAL_MS) {
       return;
@@ -991,7 +991,7 @@ export default function VideoAlertsDashboardTab({
     } finally {
       activeAlertsFetchInFlightRef.current = false;
     }
-  }, [dedupeByIdAndSort, isSuppressedAlert, latestAlertPerVehicle, readJsonSafely, suspendBackgroundWork, vehicleIdentityLookupReady, videoProxyBase]);
+  }, [dedupeByIdAndSort, isSuppressedAlert, latestAlertPerVehicle, readJsonSafely, suspendBackgroundWork, videoProxyBase]);
 
   const fetchPinnedVehicleHistoryAlerts = useCallback(async () => {
     const vehicleIds = pinnedVehicleIds.filter(Boolean);
@@ -1138,9 +1138,8 @@ export default function VideoAlertsDashboardTab({
   }, [removeClosedAlertFromBoard]);
 
   useEffect(() => {
-    if (!vehicleIdentityLookupReady) return;
     fetchTripRoutingStyleAlerts();
-  }, [fetchTripRoutingStyleAlerts, vehicleIdentityLookupReady]);
+  }, [fetchTripRoutingStyleAlerts]);
 
   useEffect(() => {
     void fetchPinnedVehicleHistoryAlerts();
