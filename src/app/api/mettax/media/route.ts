@@ -62,7 +62,7 @@ async function mettaxPost(endpoint: string, body: Record<string, unknown>) {
 
 export async function POST(req: NextRequest) {
   try {
-    const { alarmId, deviceId, channelId, startTime, endTime } = await req.json();
+    const { alarmId } = await req.json();
 
     if (!alarmId) {
       return NextResponse.json({ success: false, message: 'alarmId required' }, { status: 400 });
@@ -74,24 +74,6 @@ export async function POST(req: NextRequest) {
 
     if (mediaRes.code === 0 && Array.isArray(mediaRes.data)) {
       files = mediaRes.data;
-    }
-
-    // 2. If no video file found, try getting a replay URL
-    const hasVideo = files.some(f => f.fileType === '02');
-    if (!hasVideo && deviceId && startTime) {
-      const tsDate = new Date(startTime);
-      const tsEnd = new Date(tsDate.getTime() + 15 * 1000);
-      const replayRes = await mettaxPost('/video/history/replay', {
-        deviceId,
-        channelId: channelId || 1,
-        playbackType: 0,
-        fastForwardOrBackward: 0,
-        startTime,
-        endTime: endTime || tsEnd.toISOString().replace('T', ' ').slice(0, 19),
-      });
-      if (replayRes.code === 0 && replayRes.data) {
-        files.push({ fileUrl: replayRes.data, fileType: '02', fileSize: 0 });
-      }
     }
 
     const screenshots = files
