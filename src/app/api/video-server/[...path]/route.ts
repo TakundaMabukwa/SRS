@@ -1421,7 +1421,8 @@ export async function GET(
           const contentType = isFlv ? 'video/x-flv' : urlParam.endsWith('.mp4') ? 'video/mp4' : 'image/jpeg'
           
           // For FLV files, stream directly without buffering
-          if (isFlv) {
+          if (isFlv || /\.mp4(?:$|\?)/i.test(urlParam)) {
+            // Stream FLV and MP4 without buffering
             const stream = await new Promise<ReadableStream>((resolve, reject) => {
               const req = https.get(urlParam, {
                 rejectUnauthorized: false,

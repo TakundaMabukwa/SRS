@@ -47,7 +47,10 @@ export function UniversalVideoPlayer({
   const [sourceIndex, setSourceIndex] = useState(0);
   const activeUrl = candidateSources[sourceIndex] || "";
   const isHlsUrl = /\.m3u8(?:$|\?)/i.test(activeUrl);
-  const isFlv = forcedFlv || isFlvUrl(activeUrl);
+  // Detect actual file format — even through flv-proxy wrapper, check decoded URL for .mp4
+  const decodedUrl = (() => { try { return decodeURIComponent(activeUrl); } catch { return activeUrl; } })();
+  const isMp4 = /\.mp4(?:$|\?)/i.test(decodedUrl) && !/\.flv/i.test(decodedUrl);
+  const isFlv = !isMp4 && (forcedFlv || isFlvUrl(activeUrl));
   const isJobMp4Url = /\/api\/video-server\/videos\/jobs\/[^/]+\/file/i.test(activeUrl) && !isHlsUrl && !isFlv;
 
   const flvPlayerRef = useRef<any>(null);
@@ -108,7 +111,8 @@ export function UniversalVideoPlayer({
         }
         // Proxy external FLV URLs through backend to avoid CORS issues
         const isExternalUrl = /^https?:\/\//i.test(activeUrl) && !activeUrl.includes(window.location.host);
-        const needsProxy = isExternalUrl || forcedFlv;
+        const alreadyProxied = /\/(flv-proxy|stream\/proxy)/i.test(activeUrl);
+        const needsProxy = !alreadyProxied && (isExternalUrl || forcedFlv);
         const proxyUrl = needsProxy
           ? `/api/video-server/playback/flv-proxy?url=${encodeURIComponent(activeUrl)}`
           : activeUrl;
@@ -127,6 +131,18 @@ export function UniversalVideoPlayer({
         player.on(flvjs.Events.ERROR, (errorType, errorDetail, errorInfo) => {
           console.error('[FLV]', errorType, errorDetail, errorInfo);
           if (loadTimeout) clearTimeout(loadTimeout);
+          // FLV parse failed — the file might be MP4 served with wrong Content-Type.
+          // Try native <video> playback as fallback before giving up.
+          if (errorType === 'MediaError' && (errorDetail === 'FormatUnsupported' || errorDetail === 'CodecUnsupported')) {
+            try { player.detachMediaElement(); player.destroy(); } catch {}
+            flvPlayerRef.current = null;
+            setPlaybackError("");
+            // Set src directly on the video element for native playback
+            const resolved = resolveMediaUrlForCurrentOrigin(activeUrl);
+            videoEl.src = resolved;
+            videoEl.load();
+            return;
+          }
           if (sourceIndex < candidateSources.length - 1) {
             setSourceIndex((prev) => prev + 1);
           } else {
@@ -192,7 +208,6 @@ export function UniversalVideoPlayer({
         controls
         preload="metadata"
         playsInline
-        autoPlay={autoPlay}
         muted={autoPlay}
         className={className}
         src={!activeUrl || isHlsUrl || isFlv ? undefined : resolveMediaUrlForCurrentOrigin(activeUrl)}
