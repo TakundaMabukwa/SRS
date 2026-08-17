@@ -640,11 +640,11 @@ export function AlertDetailModal({
                   <Button variant="outline" className="h-5 border-emerald-300/70 bg-white px-1.5 text-[9px] text-emerald-700 hover:bg-emerald-50" disabled={alertActionLoading} onClick={onResolve}>
                     Resolve
                   </Button>
-                  <select className="h-5 min-w-[100px] rounded border border-slate-300 bg-white px-1.5 text-[10px] text-slate-900 outline-none" onChange={(e) => { if (e.target.value) onNcrFormSelect(e.target.value); }} defaultValue="">
+                  <select className="h-5 min-w-[100px] rounded border border-slate-300 bg-white px-1.5 text-[10px] text-slate-900 outline-none" onChange={(e) => { if (e.target.value) { onNcrFormSelect(e.target.value); e.target.value = ""; } }} defaultValue="">
                     <option value="">NCR FORM</option>
                     {ncrFormOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
                   </select>
-                  <select className="h-5 min-w-[80px] rounded border border-slate-300 bg-white px-1.5 text-[10px] text-slate-900 outline-none" onChange={(e) => { if (e.target.value) onReportFormSelect(e.target.value); }} defaultValue="">
+                  <select className="h-5 min-w-[80px] rounded border border-slate-300 bg-white px-1.5 text-[10px] text-slate-900 outline-none" onChange={(e) => { if (e.target.value) { onReportFormSelect(e.target.value); e.target.value = ""; } }} defaultValue="">
                     <option value="">REPORTS</option>
                     {reportFormOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
                   </select>
@@ -875,14 +875,37 @@ export function AlertDetailModal({
                 {/* Timeline Tab */}
                 <TabsContent value="timeline" className="mt-4">
                   <Card className="p-4 border-slate-200 bg-white shadow-sm">
-                    <h3 className="text-lg font-semibold text-slate-900 mb-4">Resolved Alert Timeline</h3>
-                    <p className="text-xs text-slate-500 mb-4">
-                      This vehicle only. Ordered by latest resolution.
-                    </p>
-                    {selectedAlert?.timeline?.length > 0 ? (
+                    <h3 className="text-lg font-semibold text-slate-900 mb-4">Alert Timeline & Documents</h3>
+                    {(selectedAlert?.timeline?.length > 0 || pendingDocuments.length > 0) ? (
                       <div className="relative space-y-3">
                         <div className="absolute left-3 top-0 bottom-0 w-px bg-slate-200" />
-                        {selectedAlert.timeline.map((entry: any) => (
+
+                        {/* Pending documents (NCR/Reports just saved) */}
+                        {pendingDocuments.map((doc, idx) => (
+                          <div key={`pending-${idx}`} className="relative pl-8">
+                            <span className="absolute left-[7px] top-3 h-2.5 w-2.5 rounded-full bg-amber-500" />
+                            <Card className="border-amber-200 bg-amber-50 p-3">
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <p className="font-medium text-slate-900 text-sm">{doc.documentType || doc.formType}</p>
+                                <Badge className="text-[10px] px-2 py-0.5 bg-amber-100 text-amber-700 border border-amber-200">
+                                  {doc.type}
+                                </Badge>
+                              </div>
+                              <p className="text-xs text-slate-500 mt-1">
+                                {doc.filled_by} — {new Date(doc.timestamp).toLocaleString()}
+                              </p>
+                              {doc.link && (
+                                <a href={doc.link} target="_blank" rel="noopener noreferrer" className="mt-2 inline-flex items-center gap-1 text-xs text-cyan-600 hover:text-cyan-800 underline">
+                                  <ExternalLink className="w-3 h-3" />
+                                  View Document
+                                </a>
+                              )}
+                            </Card>
+                          </div>
+                        ))}
+
+                        {/* Timeline entries from backend */}
+                        {selectedAlert?.timeline?.map((entry: any) => (
                           <div key={entry.id || `${entry.timestamp}-${entry.title}`} className="relative pl-8">
                             <span className="absolute left-[7px] top-3 h-2.5 w-2.5 rounded-full bg-slate-500" />
                             <Card className="border-slate-200 bg-slate-50 p-3">
@@ -980,7 +1003,7 @@ export function AlertDetailModal({
                       </div>
                     ) : (
                       <div className="text-center py-12 text-slate-500">
-                        No resolved history available for this vehicle yet
+                        No timeline or documents yet
                       </div>
                     )}
                   </Card>

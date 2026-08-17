@@ -3075,31 +3075,7 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
       }
     };
 
-    // 1) Prefer stored clip links captured for this alert.
-    const storedMediaVideos = Array.isArray(selectedAlert?.media?.videos)
-      ? selectedAlert.media.videos
-      : [];
-    for (const video of storedMediaVideos) {
-      pushIf(
-        String(video?.key || video?.video_type || video?.type || "stored_clip"),
-        String(video?.label || video?.title || "Stored Alert Clip"),
-        video?.url ||
-          video?.storage_url ||
-          video?.signed_url ||
-          video?.signedUrl ||
-          video?.playback_url ||
-          video?.download_url ||
-          video?.video_url ||
-          video?.path
-      );
-    }
-
-    // 2) Include direct clip-url fields if present.
-    pushIf("clip_pre", "Stored Alert Clip CH1", selectedAlert?.videos?.pre_event);
-    pushIf("clip_post", "Stored Alert Clip CH2", selectedAlert?.videos?.post_event);
-    pushIf("clip_camera", "Stored Camera Clip", selectedAlert?.videos?.camera_sd);
-
-    // 3) Fallback to reconstructed playback URLs.
+    // Only use fresh Mettax videos — skip old backend DB URLs
     selectedAlertPlaybackVideos.forEach((video) => {
       pushIf(video.key, video.label, video.url);
     });

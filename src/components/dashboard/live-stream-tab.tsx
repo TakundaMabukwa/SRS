@@ -94,7 +94,6 @@ export default function LiveStreamTab({ selectedCostCenters = [] }: LiveStreamTa
   const [viewportW, setViewportW] = useState(1200);
   const pipDragOffsetRef = useRef({ x: 0, y: 0 });
   const dbVehiclesRef = useRef<DbVehicle[] | null>(null);
-  const offlineConfirmRef = useRef(0);
 
   const fetchDbOnce = useCallback(async () => {
     if (dbVehiclesRef.current) return dbVehiclesRef.current;
@@ -182,14 +181,6 @@ export default function LiveStreamTab({ selectedCostCenters = [] }: LiveStreamTa
         }
       }
 
-      // Track offline confirmations — don't mark offline unless confirmed multiple times
-      if (onlineCount === 0 && regMap.size > 0) {
-        offlineConfirmRef.current++;
-      } else {
-        offlineConfirmRef.current = 0;
-      }
-      const trustOnlineData = onlineCount > 0 || offlineConfirmRef.current >= 2;
-
       const built = dbVehicles.map((v) => {
         const fleetMatch = regMap.get((v.fleet_number || "").toUpperCase());
         const regMatch = regMap.get((v.registration_number || "").toUpperCase());
@@ -199,7 +190,7 @@ export default function LiveStreamTab({ selectedCostCenters = [] }: LiveStreamTa
           fleetNumber: v.fleet_number,
           costCenter: v.cost_center,
           deviceId: match ? match.deviceId : null,
-          online: match && trustOnlineData ? match.online : true,
+          online: match ? match.online : false,
         };
       });
 
@@ -365,7 +356,7 @@ export default function LiveStreamTab({ selectedCostCenters = [] }: LiveStreamTa
                     ? (channels.find(c => c.message && c.message !== "OK")?.message || "No streams available")
                     : isLoading
                       ? "Starting stream..."
-                      : isDisabled
+                      : !vehicle.online
                         ? "Offline"
                         : "Tap to stream"}</span>
               </div>
@@ -383,13 +374,13 @@ export default function LiveStreamTab({ selectedCostCenters = [] }: LiveStreamTa
                 <Button
                   size="sm"
                   variant={vehicle.online ? "default" : "outline"}
-                  disabled={isDisabled || isLoading}
+                  disabled={isDisabled || isLoading || !vehicle.online}
                   className={`h-7 text-xs shrink-0 ${
                     vehicle.online
                       ? "bg-emerald-700 hover:bg-emerald-800"
-                      : "border-slate-300 text-slate-500"
+                      : "border-slate-300 text-slate-500 cursor-not-allowed"
                   }`}
-                  onClick={() => vehicle.deviceId && startStream(vehicle.deviceId)}
+                  onClick={() => vehicle.deviceId && vehicle.online && startStream(vehicle.deviceId)}
                 >
                   {isLoading ? (
                     <><Loader2 className="mr-1 h-3 w-3 animate-spin" /> Starting</>

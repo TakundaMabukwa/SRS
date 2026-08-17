@@ -169,6 +169,8 @@ function sanitizePathSegment(value: string): string {
 function toResolvedMediaUrl(url?: string): string {
   const clean = String(url || '').trim()
   if (!clean) return ''
+  // Pass raw Skycam URLs through directly — don't wrap in proxy
+  if (/^https?:\/\/.*skycamx\.co\.za/i.test(clean)) return clean
   try {
     if (/^https?:\/\//i.test(clean)) {
       const parsed = new URL(clean)
@@ -504,9 +506,9 @@ function inlineElementStyles(element: HTMLElement) {
 
 export function getSafeHtml2CanvasOptions(element: HTMLElement) {
   return {
-    scale: 1,
+    scale: 2,
     useCORS: true,
-    allowTaint: false,
+    allowTaint: true,
     logging: false,
     backgroundColor: '#ffffff',
     width: element.scrollWidth,
@@ -517,6 +519,41 @@ export function getSafeHtml2CanvasOptions(element: HTMLElement) {
       injectDocumentStyles(document, clonedDoc)
       inlineElementStyles(clonedElement)
       sanitizeOklchStyles(clonedDoc)
+      // Convert textarea/input to visible text so html2canvas captures values
+      clonedElement.querySelectorAll<HTMLTextAreaElement>('textarea').forEach((ta) => {
+        const div = clonedDoc.createElement('div')
+        div.textContent = ta.value || ta.defaultValue || ''
+        div.style.cssText = ta.style.cssText || ''
+        const cs = window.getComputedStyle(ta)
+        div.style.width = cs.width
+        div.style.minHeight = cs.minHeight || '60px'
+        div.style.padding = cs.padding
+        div.style.fontSize = cs.fontSize
+        div.style.fontFamily = cs.fontFamily
+        div.style.lineHeight = cs.lineHeight
+        div.style.whiteSpace = 'pre-wrap'
+        div.style.wordBreak = 'break-word'
+        div.style.border = cs.border
+        div.style.borderRadius = cs.borderRadius
+        div.style.backgroundColor = cs.backgroundColor
+        div.style.color = cs.color
+        ta.parentElement?.replaceChild(div, ta)
+      })
+      clonedElement.querySelectorAll<HTMLInputElement>('input[type="text"]').forEach((inp) => {
+        const div = clonedDoc.createElement('div')
+        div.textContent = inp.value || inp.defaultValue || ''
+        const cs = window.getComputedStyle(inp)
+        div.style.width = cs.width
+        div.style.padding = cs.padding
+        div.style.fontSize = cs.fontSize
+        div.style.fontFamily = cs.fontFamily
+        div.style.lineHeight = cs.lineHeight
+        div.style.border = cs.border
+        div.style.borderRadius = cs.borderRadius
+        div.style.backgroundColor = cs.backgroundColor
+        div.style.color = cs.color
+        inp.parentElement?.replaceChild(div, inp)
+      })
     },
   }
 }
