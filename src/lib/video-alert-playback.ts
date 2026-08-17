@@ -860,18 +860,33 @@ export function formatRawAlertTimestamp(
   value: unknown,
   style: "datetime" | "date" | "time" = "datetime"
 ) {
-  const parts = parseRawAlertTimestampParts(value);
-  if (!parts) return String(value || "").trim();
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+
+  // If it has an explicit timezone or Z, let Date handle it natively
+  if (/[zZ]|[+-]\d{2}:?\d{2}$/.test(raw)) {
+    const d = new Date(raw);
+    if (Number.isNaN(d.getTime())) return raw;
+    const sastStr = d.toLocaleString("en-ZA", { timeZone: "Africa/Johannesburg", hour12: false });
+    // en-ZA format: "2026/08/03 19:44:56"
+    const match = sastStr.match(/(\d{4})\/(\d{2})\/(\d{2})\s+(\d{2}):(\d{2})/);
+    if (!match) return sastStr;
+    const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    const monthLabel = months[Number(match[2]) - 1] || "";
+    if (style === "date") return `${monthLabel} ${match[3]}`;
+    if (style === "time") return `${match[4]}:${match[5]}`;
+    return `${monthLabel} ${match[3]}, ${match[4]}:${match[5]}`;
+  }
+
+  // No timezone — treat as SAST (local) and display as-is
+  const parts = parseRawAlertTimestampParts(raw);
+  if (!parts) return raw;
 
   const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-
-  // Shift UTC → SAST (+2h)
-  const utcDate = new Date(Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute));
-  const sast = new Date(utcDate.getTime() + 2 * 60 * 60 * 1000);
-  const monthLabel = months[Math.max(0, Math.min(11, sast.getUTCMonth()))] || "";
-  const day = String(sast.getUTCDate()).padStart(2, "0");
-  const hour = String(sast.getUTCHours()).padStart(2, "0");
-  const minute = String(sast.getUTCMinutes()).padStart(2, "0");
+  const monthLabel = months[Math.max(0, Math.min(11, parts.month - 1))] || "";
+  const day = String(parts.day).padStart(2, "0");
+  const hour = String(parts.hour).padStart(2, "0");
+  const minute = String(parts.minute).padStart(2, "0");
 
   if (style === "date") return `${monthLabel} ${day}`;
   if (style === "time") return `${hour}:${minute}`;

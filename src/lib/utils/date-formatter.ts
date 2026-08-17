@@ -211,5 +211,5 @@ export function formatDateOnly(timestamp: string): string {
 export function toSAST(value: string | number | Date | null | undefined): Date {
   const d = new Date(value ?? 0);
   if (Number.isNaN(d.getTime())) return new Date(0);
-  return new Date(d.getTime() + 2 * 60 * 60 * 1000);
+  return d;
 }

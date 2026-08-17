@@ -1821,7 +1821,7 @@ export default function VideoAlertsDashboardTab({
     const alert = card.alert;
     const severity = card.severity;
     const laneStyle = getControlRoomLaneStyle(severity);
-    const vehicleLabel = [card.fleetNumber, card.plate].filter(Boolean).join(" - ") || card.deviceId;
+    const vehicleLabel = [card.fleetNumber, card.plate].filter(Boolean).join(" - ") || "Unassigned";
     const lastAlertAt = alert ? formatRawAlertTimestamp(getGroupedAlertTimestamp(alert), "datetime") : "";
     const alertLabel = String(alert?.title || alert?.alert_type || alert?.type || "").trim();
     const alertCount = Math.max(1, Number(alert?.count || alert?.repeated_count || 1) || 1);

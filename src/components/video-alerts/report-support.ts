@@ -370,7 +370,7 @@ function toSastDate(timestamp?: string): Date | null {
   if (!timestamp) return null
   const d = new Date(timestamp)
   if (Number.isNaN(d.getTime())) return null
-  return new Date(d.getTime() + 2 * 60 * 60 * 1000)
+  return d
 }
 
 export function formatReportDate(timestamp?: string): string {

@@ -97,7 +97,7 @@ export default function ScreenshotsDashboardTab({
   const fetchInProgressRef = useRef(false);
 
   const fetchDbOnce = useCallback(async () => {
-    if (dbVehiclesRef.current) return dbVehiclesRef.current;
+    if (dbVehiclesRef.current && dbVehiclesRef.current.length > 0) return dbVehiclesRef.current;
     try {
       const { data } = await supabase
         .from("vehiclesc")
@@ -111,8 +111,11 @@ export default function ScreenshotsDashboardTab({
           unique.set(reg, { registration_number: reg, fleet_number: r.fleet_number || "", cost_center: r.cost_center || "", camera_sim_id: (r.camera_sim_id || "").trim() });
         }
       }
-      dbVehiclesRef.current = Array.from(unique.values());
-      return dbVehiclesRef.current;
+      const result = Array.from(unique.values());
+      if (result.length > 0) {
+        dbVehiclesRef.current = result;
+      }
+      return result;
     } catch {
       return dbVehiclesRef.current || [];
     }
@@ -253,24 +256,18 @@ export default function ScreenshotsDashboardTab({
         setFailedImages(new Set());
       }
 
-      // Preserve ALL previous images - only update when new data arrives
+      // Only preserve previous images when gallery returned nothing new for that card
       const prevImages = prevCardsRef.current;
       const currentFailed = failedImagesRef.current;
       for (const card of built) {
         const prev = prevImages.find((c) => c.registration === card.registration);
         if (prev) {
-          // Always keep previous images unless new ones are available AND not failed
-          if (card.ch1Url && !currentFailed.has(card.ch1Url)) {
-            // New ch1 available, use it
-          } else if (prev.ch1Url && !currentFailed.has(prev.ch1Url)) {
-            card.ch1Url = prev.ch1Url;
-            card.ch1Time = prev.ch1Time;
-          }
-          if (card.ch2Url && !currentFailed.has(card.ch2Url)) {
-            // New ch2 available, use it
-          } else if (prev.ch2Url && !currentFailed.has(prev.ch2Url) && prev.ch2Url !== card.ch1Url) {
-            card.ch2Url = prev.ch2Url;
-            card.ch2Time = prev.ch2Time;
+          // If card has new gallery data, use it (don't preserve old)
+          // Only preserve old if card got no gallery data at all (deviceId missing or no dev entry)
+          if (!card.deviceId) {
+            // No device match — keep previous images
+            if (!card.ch1Url && prev.ch1Url && !currentFailed.has(prev.ch1Url)) { card.ch1Url = prev.ch1Url; card.ch1Time = prev.ch1Time; }
+            if (!card.ch2Url && prev.ch2Url && !currentFailed.has(prev.ch2Url) && prev.ch2Url !== card.ch1Url) { card.ch2Url = prev.ch2Url; card.ch2Time = prev.ch2Time; }
           }
         }
       }
@@ -304,6 +301,7 @@ export default function ScreenshotsDashboardTab({
 
   const refreshAll = useCallback(async () => {
     setRefreshing(true);
+    fetchInProgressRef.current = false;
     try { await fetchData(); } finally { setRefreshing(false); }
   }, [fetchData]);
 
@@ -314,7 +312,7 @@ export default function ScreenshotsDashboardTab({
 
     // Auto-refresh every 2 minutes
     const refreshInterval = setInterval(() => {
-      if (activeRef.current && !refreshing) {
+      if (activeRef.current) {
         setNextRefresh(AUTO_REFRESH_MS / 1000);
         fetchData();
       }
@@ -331,7 +329,7 @@ export default function ScreenshotsDashboardTab({
       clearInterval(refreshInterval);
       clearInterval(countdownInterval);
     };
-  }, [fetchData, refreshing]);
+  }, [fetchData]);
 
   useEffect(() => {
     failedImagesRef.current = failedImages;

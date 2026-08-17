@@ -293,9 +293,6 @@ export function AlertDetailModal({
       display = reg;
     } else if (fleet) {
       display = fleet;
-    } else if (deviceId) {
-      // Fallback: show device ID with warning - should not normally happen
-      display = deviceId;
     } else {
       display = "";
     }
