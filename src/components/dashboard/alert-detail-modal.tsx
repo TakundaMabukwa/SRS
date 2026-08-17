@@ -9,6 +9,7 @@ import { ArrowLeft, AlertTriangle, Video, Download, XCircle, CheckCircle, X, Fil
 import { cn } from "@/lib/utils";
 import { toSAST } from "@/lib/utils/date-formatter";
 import { UniversalVideoPlayer } from "@/components/dashboard/universal-video-player";
+import { RealTimeMapInline } from "@/components/dashboard/real-time-map-inline";
 import { SafeImage } from "@/components/ui/safe-image";
 import {
   formatRawAlertTimestamp,
@@ -1014,7 +1015,7 @@ export function AlertDetailModal({
                 <TabsContent value="map" className="mt-4">
                   <Card className="p-4 border-slate-200 bg-white shadow-sm">
                     <h3 className="text-lg font-semibold text-slate-900 mb-4">
-                      Alert Location
+                      Alert Location & Geotab Zones
                     </h3>
                     {selectedAlertCoordinates ? (
                       <div className="space-y-3">
@@ -1022,24 +1023,12 @@ export function AlertDetailModal({
                           <MapPin className="w-4 h-4" />
                           <span>{selectedAlertCoordinates.latitude.toFixed(6)}, {selectedAlertCoordinates.longitude.toFixed(6)}</span>
                         </div>
-                        {googleMapsToken ? (
-                          <div className="relative w-full h-80 overflow-hidden rounded-lg border bg-slate-100">
-                            <iframe
-                              title="Alert Location Map"
-                              className="w-full h-full border-0"
-                              loading="lazy"
-                              src={`https://www.google.com/maps/embed/v1/place?key=${googleMapsToken}&q=${selectedAlertCoordinates.latitude},${selectedAlertCoordinates.longitude}&zoom=15`}
-                            />
-                          </div>
-                        ) : (
-                          <div className="relative w-full h-80 overflow-hidden rounded-lg border bg-slate-100 flex items-center justify-center">
-                            <div className="text-center text-slate-500">
-                              <MapPin className="w-12 h-12 mx-auto mb-2 text-slate-300" />
-                              <p className="text-sm">Google Maps token not configured</p>
-                              <p className="text-xs mt-1">Set GOOGLE_MAPS_API_TOKEN environment variable</p>
-                            </div>
-                          </div>
-                        )}
+                        {/* Embedded real-time map with zones + vehicle path */}
+                        <RealTimeMapInline
+                          deviceId={String(selectedAlert?.device_id || selectedAlert?.deviceId || selectedAlert?.vehicleId || '')}
+                          alertLat={selectedAlertCoordinates.latitude}
+                          alertLon={selectedAlertCoordinates.longitude}
+                        />
                         <div className="flex gap-2">
                           <Button
                             variant="outline"
@@ -1058,7 +1047,6 @@ export function AlertDetailModal({
                               navigator.clipboard.writeText(`${selectedAlertCoordinates.latitude}, ${selectedAlertCoordinates.longitude}`);
                             }}
                           >
-                            <Copy className="w-3 h-3 mr-1" />
                             Copy Coordinates
                           </Button>
                         </div>

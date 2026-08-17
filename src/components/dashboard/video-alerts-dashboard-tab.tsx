@@ -5,6 +5,8 @@ import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 
 import { useVideoWebSocket } from "@/hooks/use-video-websocket";
+import { useGeotabWs } from "@/hooks/use-geotab-ws";
+import { RealTimeMapModal } from "@/components/dashboard/real-time-map-modal";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
@@ -32,7 +34,11 @@ import {
   Signal,
   ExternalLink,
   Pin,
-  PinOff
+  PinOff,
+  MapPin,
+  X,
+  Gauge,
+  Navigation
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { format, differenceInHours } from "date-fns";
@@ -277,6 +283,12 @@ export default function VideoAlertsDashboardTab({
   const closedAlertSuppressUntilRef = useRef<Map<string, number>>(new Map());
   const activeAlertsFetchInFlightRef = useRef(false);
   const lastActiveAlertsFetchAtRef = useRef(0);
+
+  // Geotab WebSocket for zone breaches
+  const { zoneBreaches, dismissBreach } = useGeotabWs();
+  const [vehicleStatuses, setVehicleStatuses] = useState<Map<string, any>>(new Map());
+  const [mapModalDeviceId, setMapModalDeviceId] = useState<string | null>(null);
+  const [mapModalOpen, setMapModalOpen] = useState(false);
 
   const getAlertIdentityIds = useCallback((alert: any) => {
     const ids = new Set<string>();
@@ -1242,6 +1254,31 @@ export default function VideoAlertsDashboardTab({
     };
   }, [readJsonSafely]);
 
+  // Fetch vehicle statuses (speed, location, engine) from Geotab
+  useEffect(() => {
+    if (suspendBackgroundWork) return;
+    let cancelled = false;
+
+    const fetchStatuses = async () => {
+      try {
+        const res = await fetch("/api/video-server/telematics/vehicle-status-all", { cache: "no-store", signal: AbortSignal.timeout(10000) });
+        const json = await res.json().catch(() => ({}));
+        if (cancelled || !json?.data) return;
+        const map = new Map<string, any>();
+        for (const s of json.data) {
+          if (s.device_id) map.set(s.device_id, s);
+          if (s.fleet_number) map.set(s.fleet_number.toUpperCase(), s);
+          if (s.plate) map.set(s.plate.toUpperCase(), s);
+        }
+        setVehicleStatuses(map);
+      } catch {}
+    };
+
+    fetchStatuses();
+    const interval = setInterval(fetchStatuses, 60000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, [suspendBackgroundWork]);
+
   useEffect(() => {
     if (suspendBackgroundWork) return;
     const interval = setInterval(() => {
@@ -1832,6 +1869,14 @@ export default function VideoAlertsDashboardTab({
     const alertLabel = String(alert?.title || alert?.alert_type || alert?.type || "").trim();
     const alertCount = Math.max(1, Number(alert?.count || alert?.repeated_count || 1) || 1);
 
+    // Look up vehicle status by deviceId, fleet number, or plate
+    const status = vehicleStatuses.get(card.deviceId)
+      || vehicleStatuses.get(card.fleetNumber?.toUpperCase() || "")
+      || vehicleStatuses.get(card.plate?.toUpperCase() || "");
+    const speed = status?.speed != null && status.speed > 0 ? Math.round(status.speed) : null;
+    const driverName = status?.driver_name || null;
+    const hasLocation = status?.latitude != null && status?.longitude != null;
+
     return (
       <div
         key={`control-room-${card.deviceId}`}
@@ -1871,18 +1916,41 @@ export default function VideoAlertsDashboardTab({
         )}
 
         <div className="mt-1.5 flex items-center justify-between text-[10px] text-slate-500">
-          <span>{mode === "alert" ? `${alertCount} occurrence${alertCount === 1 ? "" : "s"}` : "Monitoring"}</span>
-          {mode === "alert" && alert ? (
-            <button
-              type="button"
-              className="h-5 rounded-md border border-slate-300 bg-white px-1.5 text-[10px] font-semibold text-slate-700 transition-colors hover:border-slate-400 hover:bg-slate-50 hover:text-slate-900"
-              onClick={() => void handleViewAlert(alert)}
-            >
-              Open
-            </button>
-          ) : (
-            <span>Monitoring</span>
-          )}
+          <div className="flex items-center gap-2 min-w-0">
+            {speed != null && (
+              <span className="flex items-center gap-0.5 text-emerald-600 font-medium">
+                <Gauge className="w-3 h-3" />{speed} km/h
+              </span>
+            )}
+            {driverName && (
+              <span className="flex items-center gap-0.5 truncate">
+                <User className="w-3 h-3" />{driverName}
+              </span>
+            )}
+            {!speed && !driverName && (
+              <span>{mode === "alert" ? `${alertCount} occurrence${alertCount === 1 ? "" : "s"}` : "Monitoring"}</span>
+            )}
+          </div>
+          <div className="flex items-center gap-1">
+            {hasLocation && (
+              <button
+                type="button"
+                className="h-5 rounded-md border border-slate-300 bg-white px-1.5 text-[10px] font-semibold text-slate-700 transition-colors hover:border-cyan-400 hover:bg-cyan-50 hover:text-cyan-700"
+                onClick={() => { setMapModalDeviceId(card.deviceId); setMapModalOpen(true); }}
+              >
+                <MapPin className="w-3 h-3 inline mr-0.5" />Map
+              </button>
+            )}
+            {mode === "alert" && alert ? (
+              <button
+                type="button"
+                className="h-5 rounded-md border border-slate-300 bg-white px-1.5 text-[10px] font-semibold text-slate-700 transition-colors hover:border-slate-400 hover:bg-slate-50 hover:text-slate-900"
+                onClick={() => void handleViewAlert(alert)}
+              >
+                Open
+              </button>
+            ) : null}
+          </div>
         </div>
 
         {mode === "alert" ? (
@@ -2567,6 +2635,60 @@ export default function VideoAlertsDashboardTab({
         </div>
       ) : boardLevelFilter !== null ? (
           <div className="space-y-3">
+            {/* Zone Breach Flash Cards */}
+            {zoneBreaches.length > 0 && (
+              <div className="space-y-2">
+                {zoneBreaches.map((breach) => (
+                  <div
+                    key={breach.id}
+                    className={cn(
+                      "flex items-center justify-between gap-3 rounded-lg border-l-4 px-4 py-2.5 shadow-md cursor-pointer transition-all hover:shadow-lg",
+                      breach.riskLevel === "CRITICAL"
+                        ? "border-l-red-600 bg-gradient-to-r from-red-50 to-white"
+                        : "border-l-orange-500 bg-gradient-to-r from-orange-50 to-white"
+                    )}
+                    onClick={() => { setMapModalDeviceId(breach.deviceId); setMapModalOpen(true); }}
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className={cn("flex h-8 w-8 shrink-0 items-center justify-center rounded-full",
+                        breach.riskLevel === "CRITICAL" ? "bg-red-100" : "bg-orange-100"
+                      )}>
+                        <AlertTriangle className={cn("h-4 w-4",
+                          breach.riskLevel === "CRITICAL" ? "text-red-600" : "text-orange-600"
+                        )} />
+                      </div>
+                      <div className="min-w-0">
+                        <div className="text-[12px] font-semibold text-slate-900 truncate">
+                          {breach.fleetNumber || breach.licensePlate || breach.deviceId} — {breach.zoneName}
+                        </div>
+                        <div className="text-[10px] text-slate-500">
+                          {breach.riskLevel} • {breach.speed ? `${Math.round(breach.speed)} km/h` : "Speed N/A"} • {new Date(breach.entryTime).toLocaleTimeString()}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-6 text-[10px] border-cyan-300 text-cyan-700 hover:bg-cyan-50"
+                        onClick={(e) => { e.stopPropagation(); setMapModalDeviceId(breach.deviceId); setMapModalOpen(true); }}
+                      >
+                        <MapPin className="w-3 h-3 mr-0.5" />Map
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-6 w-6 p-0 text-slate-400 hover:text-slate-600"
+                        onClick={(e) => { e.stopPropagation(); dismissBreach(breach.id); }}
+                      >
+                        <X className="w-3 h-3" />
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
             <div className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
               <div>
                 <div className="text-sm font-semibold text-slate-900">
@@ -2578,7 +2700,7 @@ export default function VideoAlertsDashboardTab({
               </div>
             </div>
 
-            <div className="grid grid-cols-1 gap-2.5 xl:grid-cols-[320px_minmax(0,1fr)]">
+            <div className="grid grid-cols-1 gap-2.5 xl:grid-cols-[220px_minmax(0,1fr)]">
               <div className="rounded-xl border border-slate-200 bg-white/95 p-2 shadow-sm">
                 <div className="mb-1.5 flex items-center justify-between">
                   <div>
@@ -2720,6 +2842,15 @@ export default function VideoAlertsDashboardTab({
           target
         );
       })}
+
+      {/* Real-time Map Modal */}
+      {mapModalOpen && mapModalDeviceId && (
+        <RealTimeMapModal
+          deviceId={mapModalDeviceId}
+          isOpen={mapModalOpen}
+          onClose={() => { setMapModalOpen(false); setMapModalDeviceId(null); }}
+        />
+      )}
     </div>
   );
 }
