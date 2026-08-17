@@ -449,9 +449,9 @@ export default function ScreenshotsDashboardTab({
                       const url = rawUrl && !failedImages.has(rawUrl) ? rawUrl : null;
                       return (
                         <div key={`${card.registration}-${ch}`} className="relative bg-slate-950 aspect-video">
-                          {url ? (
+                           {url ? (
                             <img
-                              src={withCacheBuster(url)}
+                              src={url}
                               alt={`${card.registration} CH${ch}`}
                               className="absolute inset-0 w-full h-full object-cover cursor-pointer"
                               loading="lazy"

@@ -106,6 +106,14 @@ async function fetchAllVehicleLookupRowsFromSupabase() {
         ...rowValues,
       });
     }
+
+    const fleetNum = String(row.fleet_number ?? '').trim().toUpperCase();
+    if (fleetNum && !byPlate.has(fleetNum)) {
+      byPlate.set(fleetNum, {
+        deviceId: simId || serialId || plate,
+        ...rowValues,
+      });
+    }
   }
 
   // Also match EPS devices by registration (plateName) so alerts with EPS deviceIds resolve correctly
@@ -119,10 +127,13 @@ async function fetchAllVehicleLookupRowsFromSupabase() {
       const epsDevices = epsData.data?.devices || [];
       for (const d of epsDevices) {
         if (!d.deviceId) continue;
+        if (byDevice.has(d.deviceId)) continue;
         const plate = (d.plateName || '').trim();
-        const registration = plate.split(' - ')[0].trim().toUpperCase();
-        if (!registration || byDevice.has(d.deviceId)) continue;
-        const match = byPlate.get(registration);
+        const parts = plate.split(' - ');
+        const fleetNum = (parts[0] || '').trim().toUpperCase();
+        const regNum = (parts[1] || '').trim().toUpperCase();
+        // Only add if this EPS device matches a Supabase vehicle (by plate or fleet)
+        const match = byPlate.get(regNum) || byPlate.get(fleetNum);
         if (match) {
           byDevice.set(d.deviceId, { deviceId: d.deviceId, ...match });
         }

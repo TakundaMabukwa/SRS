@@ -1614,19 +1614,25 @@ export default function VideoAlertsDashboardTab({
       return selectedCostCenterSet.has(normalized);
     };
 
+    // Build a vehicle-keyed map (by plate or fleet) so multiple deviceIds for same vehicle collapse to one card
+    const deviceToVehicleKey = new Map<string, string>();
     for (const [deviceId, details] of vehicleIdentityLookup.entries()) {
       if (!deviceId) continue;
-      if (!includeCostCenter(details?.costCenter || "")) continue;
-      vehicleCards.set(deviceId, {
-        deviceId,
-        plate: String(details?.plate || "").trim(),
-        fleetNumber: String(details?.fleetNumber || "").trim(),
-        costCenter: String(details?.costCenter || "").trim(),
-        hasAlert: false,
-        alert: null,
-        severity: "low",
-        updatedAtMs: 0,
-      });
+      const vehicleKey = String(details?.fleetNumber || details?.plate || deviceId).trim().toUpperCase();
+      deviceToVehicleKey.set(deviceId, vehicleKey);
+      if (!vehicleCards.has(vehicleKey)) {
+        if (!includeCostCenter(details?.costCenter || "")) continue;
+        vehicleCards.set(vehicleKey, {
+          deviceId,
+          plate: String(details?.plate || "").trim(),
+          fleetNumber: String(details?.fleetNumber || "").trim(),
+          costCenter: String(details?.costCenter || "").trim(),
+          hasAlert: false,
+          alert: null,
+          severity: "low",
+          updatedAtMs: 0,
+        });
+      }
     }
 
     const openAlerts = costCenterScopedAlertCollection
@@ -1646,7 +1652,8 @@ export default function VideoAlertsDashboardTab({
       const updatedAtMs = new Date(getGroupedAlertTimestamp(alert) || alert?.timestamp || 0).getTime() || Date.now();
 
       for (const id of ids) {
-        const existing = vehicleCards.get(id);
+        const vehicleKey = deviceToVehicleKey.get(id) || id;
+        const existing = vehicleCards.get(vehicleKey);
         const alertCostCenter = String(
           alert?.cost_center ||
           alert?.costCenter ||
@@ -1684,7 +1691,7 @@ export default function VideoAlertsDashboardTab({
           }
         }
 
-        vehicleCards.set(id, nextCard);
+        vehicleCards.set(vehicleKey, nextCard);
       }
     }
 
