@@ -129,6 +129,7 @@ export default function PlaybackDashboardTab({ selectedCostCenters = [] }: Playb
   const [refreshing, setRefreshing] = useState(false);
   const [vehicleSearch, setVehicleSearch] = useState("");
   const initialLoadRef = useRef(false);
+  const offlineConfirmRef = useRef(0);
 
   const [selectedVehicle, setSelectedVehicle] = useState<PlaybackVehicle | null>(null);
   const [selectedChannel, setSelectedChannel] = useState(1);
@@ -169,7 +170,7 @@ export default function PlaybackDashboardTab({ selectedCostCenters = [] }: Playb
     }
 
     try {
-      const onlineRes = await fetch(`${EPS_API}/eps/stream/online`, {
+      let onlineRes = await fetch('/api/mettax/online', {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: "{}",
@@ -177,17 +178,51 @@ export default function PlaybackDashboardTab({ selectedCostCenters = [] }: Playb
         signal: AbortSignal.timeout(10000),
       }).catch(() => null);
 
-      if (onlineRes && onlineRes.ok) {
-        const onlineData = await onlineRes.json().catch(() => ({}));
-        if (onlineData.success && onlineData.data?.devices) {
-          const deviceMap = new Map<string, boolean>();
-          for (const d of onlineData.data.devices) {
-            if (d.deviceId) deviceMap.set(d.deviceId, d.online === true);
-          }
-          for (const v of catalogVehicles) {
-            if (deviceMap.has(v.deviceId)) v.online = deviceMap.get(v.deviceId) || false;
-          }
+      let onlineCount = 0;
+      const applyOnlineData = (res: any) => {
+        if (res && res.ok) {
+          return res.json().then((data: any) => {
+            if (data.success && data.data?.devices) {
+              const deviceMap = new Map<string, boolean>();
+              for (const d of data.data.devices) {
+                if (d.deviceId) {
+                  deviceMap.set(d.deviceId, d.online === true);
+                  if (d.online) onlineCount++;
+                }
+              }
+              // Only apply if we got actual online devices, or confirmed offline multiple times
+              const trustData = onlineCount > 0 || offlineConfirmRef.current >= 2;
+              if (trustData) {
+                for (const v of catalogVehicles) {
+                  if (deviceMap.has(v.deviceId)) v.online = deviceMap.get(v.deviceId) || false;
+                }
+              }
+            }
+          }).catch(() => {});
         }
+      };
+
+      await applyOnlineData(onlineRes);
+
+      // Track offline confirmations
+      if (onlineCount === 0 && catalogVehicles.length > 0) {
+        offlineConfirmRef.current++;
+      } else {
+        offlineConfirmRef.current = 0;
+      }
+
+      // If all offline, retry once
+      if (onlineCount === 0 && catalogVehicles.length > 0) {
+        await new Promise(r => setTimeout(r, 2000));
+        onlineCount = 0;
+        onlineRes = await fetch('/api/mettax/online', {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: "{}",
+          cache: "no-store",
+          signal: AbortSignal.timeout(10000),
+        }).catch(() => null);
+        await applyOnlineData(onlineRes);
       }
     } catch {}
 

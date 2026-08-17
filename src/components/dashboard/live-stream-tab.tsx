@@ -94,6 +94,7 @@ export default function LiveStreamTab({ selectedCostCenters = [] }: LiveStreamTa
   const [viewportW, setViewportW] = useState(1200);
   const pipDragOffsetRef = useRef({ x: 0, y: 0 });
   const dbVehiclesRef = useRef<DbVehicle[] | null>(null);
+  const offlineConfirmRef = useRef(0);
 
   const fetchDbOnce = useCallback(async () => {
     if (dbVehiclesRef.current) return dbVehiclesRef.current;
@@ -124,17 +125,19 @@ export default function LiveStreamTab({ selectedCostCenters = [] }: LiveStreamTa
     try {
       const dbVehicles = await fetchDbOnce();
 
-      const onlineRes = await fetch(`${EPS_API}/eps/stream/online`, {
+      let onlineRes = await fetch('/api/mettax/online', {
         method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
         cache: "no-store", signal: AbortSignal.timeout(15000),
       }).catch(() => null);
 
       const regMap = new Map<string, { deviceId: string; online: boolean }>();
+      let onlineCount = 0;
       if (onlineRes && onlineRes.ok) {
         const onlineData = await onlineRes.json();
         if (onlineData.success && onlineData.data?.devices) {
           for (const d of onlineData.data.devices) {
             if (!d.deviceId) continue;
+            if (d.online) onlineCount++;
             const plate = (d.plateName || "").trim();
             const parts = plate.split(" - ");
             const fleetNum = (parts[0] || "").trim();
@@ -149,6 +152,44 @@ export default function LiveStreamTab({ selectedCostCenters = [] }: LiveStreamTa
         }
       }
 
+      // If all offline, retry once
+      if (onlineCount === 0 && regMap.size > 0) {
+        await new Promise(r => setTimeout(r, 2000));
+        onlineRes = await fetch('/api/mettax/online', {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
+          cache: "no-store", signal: AbortSignal.timeout(15000),
+        }).catch(() => null);
+        if (onlineRes && onlineRes.ok) {
+          const onlineData = await onlineRes.json();
+          if (onlineData.success && onlineData.data?.devices) {
+            regMap.clear();
+            onlineCount = 0;
+            for (const d of onlineData.data.devices) {
+              if (!d.deviceId) continue;
+              if (d.online) onlineCount++;
+              const plate = (d.plateName || "").trim();
+              const parts = plate.split(" - ");
+              const fleetNum = (parts[0] || "").trim();
+              const regNum = (parts[1] || "").trim();
+              if (fleetNum) {
+                regMap.set(fleetNum.toUpperCase(), { deviceId: d.deviceId, online: d.online === true });
+              }
+              if (regNum) {
+                regMap.set(regNum.toUpperCase(), { deviceId: d.deviceId, online: d.online === true });
+              }
+            }
+          }
+        }
+      }
+
+      // Track offline confirmations — don't mark offline unless confirmed multiple times
+      if (onlineCount === 0 && regMap.size > 0) {
+        offlineConfirmRef.current++;
+      } else {
+        offlineConfirmRef.current = 0;
+      }
+      const trustOnlineData = onlineCount > 0 || offlineConfirmRef.current >= 2;
+
       const built = dbVehicles.map((v) => {
         const fleetMatch = regMap.get((v.fleet_number || "").toUpperCase());
         const regMatch = regMap.get((v.registration_number || "").toUpperCase());
@@ -158,7 +199,7 @@ export default function LiveStreamTab({ selectedCostCenters = [] }: LiveStreamTa
           fleetNumber: v.fleet_number,
           costCenter: v.cost_center,
           deviceId: match ? match.deviceId : null,
-          online: match ? match.online : false,
+          online: match && trustOnlineData ? match.online : true,
         };
       });
 

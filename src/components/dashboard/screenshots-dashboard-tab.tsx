@@ -95,6 +95,7 @@ export default function ScreenshotsDashboardTab({
   const failedImagesRef = useRef<Set<string>>(new Set());
   const prevCardsRef = useRef<VehicleCard[]>([]);
   const fetchInProgressRef = useRef(false);
+  const offlineConfirmRef = useRef(0);
 
   const fetchDbOnce = useCallback(async () => {
     if (dbVehiclesRef.current && dbVehiclesRef.current.length > 0) return dbVehiclesRef.current;
@@ -131,7 +132,7 @@ export default function ScreenshotsDashboardTab({
       if (!activeRef.current) return;
 
       // Fetch online status (returns ALL devices with plateName + deviceId + online)
-      const onlineRes = await fetch(`${EPS_API}/eps/stream/online`, {
+      let onlineRes = await fetch('/api/mettax/online', {
         method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
         cache: "no-store", signal: AbortSignal.timeout(15000),
       }).catch(() => null);
@@ -140,11 +141,13 @@ export default function ScreenshotsDashboardTab({
       // Build fleet/reg -> {deviceId, online, cameras} map from EPS plateNames
       // plateName format: "FLEET - REG" e.g. "FM02 - LDG095MP"
       const regMap = new Map<string, { deviceId: string; online: boolean; cameras: number }>();
+      let onlineCount = 0;
       if (onlineRes && onlineRes.ok) {
         const onlineData = await onlineRes.json();
         if (onlineData.success && onlineData.data?.devices) {
           for (const d of onlineData.data.devices) {
             if (!d.deviceId) continue;
+            if (d.online) onlineCount++;
             const plate = (d.plateName || "").trim();
             const parts = plate.split(" - ");
             const fleetNum = (parts[0] || "").trim();
@@ -159,9 +162,48 @@ export default function ScreenshotsDashboardTab({
         }
       }
 
+      // If all offline, retry once
+      if (onlineCount === 0 && regMap.size > 0) {
+        await new Promise(r => setTimeout(r, 2000));
+        onlineRes = await fetch('/api/mettax/online', {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
+          cache: "no-store", signal: AbortSignal.timeout(15000),
+        }).catch(() => null);
+        if (onlineRes && onlineRes.ok) {
+          const onlineData = await onlineRes.json();
+          if (onlineData.success && onlineData.data?.devices) {
+            regMap.clear();
+            onlineCount = 0;
+            for (const d of onlineData.data.devices) {
+              if (!d.deviceId) continue;
+              if (d.online) onlineCount++;
+              const plate = (d.plateName || "").trim();
+              const parts = plate.split(" - ");
+              const fleetNum = (parts[0] || "").trim();
+              const regNum = (parts[1] || "").trim();
+              if (fleetNum) {
+                regMap.set(fleetNum.toUpperCase(), { deviceId: d.deviceId, online: d.online === true, cameras: d.cameras || 1 });
+              }
+              if (regNum) {
+                regMap.set(regNum.toUpperCase(), { deviceId: d.deviceId, online: d.online === true, cameras: d.cameras || 1 });
+              }
+            }
+          }
+        }
+      }
+
       // Build vehicle cards from DB, matching fleet_number or registration_number -> plateName
       const matchedDeviceIds: string[] = [];
       const prevCards = prevCardsRef.current;
+      
+      // Track offline confirmations — don't mark offline unless confirmed multiple times
+      if (onlineCount === 0 && regMap.size > 0) {
+        offlineConfirmRef.current++;
+      } else {
+        offlineConfirmRef.current = 0;
+      }
+      const trustOnlineData = onlineCount > 0 || offlineConfirmRef.current >= 2;
+      
       const built: VehicleCard[] = dbVehicles.map((v) => {
         const fleetMatch = regMap.get((v.fleet_number || "").toUpperCase());
         const regMatch = regMap.get((v.registration_number || "").toUpperCase());
@@ -175,7 +217,8 @@ export default function ScreenshotsDashboardTab({
           c.fleetNumber === v.fleet_number ||
           c.deviceId === deviceId
         );
-        const online = match ? match.online : (prevCard?.online ?? false);
+        // Only trust online data if we got actual online devices, or confirmed offline multiple times
+        const online = match && trustOnlineData ? match.online : (prevCard?.online ?? true);
         
         return {
           registration: v.registration_number,
@@ -471,20 +514,24 @@ export default function ScreenshotsDashboardTab({
                               </span>
                             </div>
                           )}
-                          <div className="absolute right-1 top-1 rounded bg-black/70 px-1 py-0.5 text-[9px] font-medium text-white/80">
-                            CH{ch}
-                          </div>
+                          {gridColumns < 6 && (
+                            <div className="absolute right-1 top-1 rounded bg-black/70 px-1 py-0.5 text-[9px] font-medium text-white/80">
+                              CH{ch}
+                            </div>
+                          )}
                         </div>
                       );
                     })}
                   </div>
                   <div className="absolute left-0 top-0 right-0 flex items-center justify-between bg-gradient-to-b from-black/80 via-black/40 to-transparent px-2 py-1.5 pointer-events-none">
                     <span className="text-[11px] font-semibold text-white truncate">{card.fleetNumber || card.registration}</span>
-                    <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-medium ${
-                      card.online ? (hasScreenshot ? "bg-emerald-500/90 text-white" : "bg-blue-500/90 text-white") : "bg-slate-600/90 text-slate-300"
-                    }`}>
-                      {card.online ? (hasScreenshot ? "LIVE" : "ON") : "OFF"}
-                    </span>
+                    {gridColumns < 6 && (
+                      <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-medium ${
+                        card.online ? (hasScreenshot ? "bg-emerald-500/90 text-white" : "bg-blue-500/90 text-white") : "bg-slate-600/90 text-slate-300"
+                      }`}>
+                        {card.online ? (hasScreenshot ? "LIVE" : "ON") : "OFF"}
+                      </span>
+                    )}
                   </div>
                 </div>
               );
