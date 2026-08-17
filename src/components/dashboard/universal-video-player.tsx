@@ -45,12 +45,13 @@ export function UniversalVideoPlayer({
     return out;
   }, [fallbackUrls, url]);
   const [sourceIndex, setSourceIndex] = useState(0);
+  const [nativeFallback, setNativeFallback] = useState(false);
   const activeUrl = candidateSources[sourceIndex] || "";
   const isHlsUrl = /\.m3u8(?:$|\?)/i.test(activeUrl);
   // Detect actual file format — even through flv-proxy wrapper, check decoded URL for .mp4
   const decodedUrl = (() => { try { return decodeURIComponent(activeUrl); } catch { return activeUrl; } })();
   const isMp4 = /\.mp4(?:$|\?)/i.test(decodedUrl) && !/\.flv/i.test(decodedUrl);
-  const isFlv = !isMp4 && (forcedFlv || isFlvUrl(activeUrl));
+  const isFlv = !nativeFallback && !isMp4 && (forcedFlv || isFlvUrl(activeUrl));
   const isJobMp4Url = /\/api\/video-server\/videos\/jobs\/[^/]+\/file/i.test(activeUrl) && !isHlsUrl && !isFlv;
 
   const flvPlayerRef = useRef<any>(null);
@@ -58,6 +59,7 @@ export function UniversalVideoPlayer({
   useEffect(() => {
     setPlaybackError("");
     setSourceIndex(0);
+    setNativeFallback(false);
     screenshotCapturedForRef.current = "";
   }, [url, fallbackUrls]);
 
@@ -137,10 +139,7 @@ export function UniversalVideoPlayer({
             try { player.detachMediaElement(); player.destroy(); } catch {}
             flvPlayerRef.current = null;
             setPlaybackError("");
-            // Set src directly on the video element for native playback
-            const resolved = resolveMediaUrlForCurrentOrigin(activeUrl);
-            videoEl.src = resolved;
-            videoEl.load();
+            setNativeFallback(true);
             return;
           }
           if (sourceIndex < candidateSources.length - 1) {
@@ -248,13 +247,10 @@ export function UniversalVideoPlayer({
             size="sm"
             className="border-slate-400 bg-slate-800 text-slate-200 hover:bg-slate-700"
             onClick={() => {
-              const isExternal = /^https?:\/\//i.test(activeUrl) && !activeUrl.includes(window.location.host);
-              if (isExternal) {
-                window.location.href = `/api/video-server/playback/download-mp4?url=${encodeURIComponent(activeUrl)}`;
-              } else {
-                const u = resolveMediaUrlForCurrentOrigin(activeUrl);
-                window.open(u, "_blank");
-              }
+              // Extract the raw upstream URL from the proxy wrapper if present
+              const proxyMatch = activeUrl.match(/[?&]url=([^&]+)/);
+              const rawUrl = proxyMatch ? decodeURIComponent(proxyMatch[1]) : activeUrl;
+              window.location.href = `/api/video-server/playback/download-mp4?url=${encodeURIComponent(rawUrl)}`;
             }}
           >
             <Download className="w-3 h-3 mr-1" />
