@@ -4,10 +4,16 @@ import React, { useEffect, useState, useRef, useCallback } from 'react';
 type Zone = {
   id: string;
   name: string;
-  points: string;
+  points: string | { x: number; y: number }[];
   is_high_risk: boolean;
   is_no_go: boolean;
 };
+
+function parseZonePoints(raw: string | { x: number; y: number }[] | undefined): { x: number; y: number }[] {
+  if (!raw) return [];
+  if (Array.isArray(raw)) return raw;
+  try { return JSON.parse(raw); } catch { return []; }
+}
 
 type LogRecord = {
   latitude: number;
@@ -20,11 +26,12 @@ type Props = {
   deviceId: string;
   alertLat: number;
   alertLon: number;
+  alertTime?: string; // ISO timestamp of the alert
 };
 
 const EPS = '/api/video-server';
 
-export function RealTimeMapInline({ deviceId, alertLat, alertLon }: Props) {
+export function RealTimeMapInline({ deviceId, alertLat, alertLon, alertTime }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [zones, setZones] = useState<Zone[]>([]);
   const [path, setPath] = useState<LogRecord[]>([]);
@@ -35,9 +42,14 @@ export function RealTimeMapInline({ deviceId, alertLat, alertLon }: Props) {
     let cancelled = false;
     const fetchData = async () => {
       try {
+        // ±15 min around alert time, or last 30 min if no alert time
+        const center = alertTime ? new Date(alertTime).getTime() : Date.now();
+        const from = new Date(center - 15 * 60 * 1000).toISOString();
+        const to = new Date(center + 15 * 60 * 1000).toISOString();
+
         const [zonesRes, logsRes] = await Promise.all([
           fetch(`${EPS}/telematics/zones`, { cache: 'no-store' }),
-          fetch(`${EPS}/telematics/log-records/${deviceId}?from=${new Date(Date.now() - 1800000).toISOString()}&to=${new Date().toISOString()}`, { cache: 'no-store' }),
+          fetch(`${EPS}/telematics/log-records/${deviceId}?from=${from}&to=${to}`, { cache: 'no-store' }),
         ]);
         const zonesData = await zonesRes.json().catch(() => ({}));
         const logsData = await logsRes.json().catch(() => ({}));
@@ -51,7 +63,7 @@ export function RealTimeMapInline({ deviceId, alertLat, alertLon }: Props) {
     };
     fetchData();
     return () => { cancelled = true; };
-  }, [deviceId]);
+  }, [deviceId, alertTime]);
 
   useEffect(() => {
     if (!canvasRef.current) return;
@@ -66,8 +78,7 @@ export function RealTimeMapInline({ deviceId, alertLat, alertLon }: Props) {
 
     const allCoords: { lat: number; lon: number }[] = [{ lat: alertLat, lon: alertLon }];
     const parsedZones = zones.map((z) => {
-      let pts: { x: number; y: number }[] = [];
-      try { pts = JSON.parse(z.points || '[]'); } catch {}
+      const pts = parseZonePoints(z.points);
       pts.forEach((p) => allCoords.push({ lat: p.y, lon: p.x }));
       return { ...z, parsedPoints: pts };
     });

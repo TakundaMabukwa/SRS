@@ -180,6 +180,12 @@ export function resolveVideoServerProxyBase(pathArray: string[]) {
     return { name: "epsStreaming", baseUrl: getEpsStreamingServerBaseUrl() };
   }
 
+  const isTelematicsPath = first === "telematics";
+
+  if (isTelematicsPath) {
+    return { name: "epsStreaming", baseUrl: getEpsStreamingServerBaseUrl() };
+  }
+
   return { name: "listener", baseUrl: getListenerBaseUrl() };
 }
 

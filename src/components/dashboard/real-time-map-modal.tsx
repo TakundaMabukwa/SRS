@@ -7,10 +7,16 @@ import { cn } from '@/lib/utils';
 type Zone = {
   id: string;
   name: string;
-  points: string; // JSON string of [{x: lon, y: lat}, ...]
+  points: string | { x: number; y: number }[];
   is_high_risk: boolean;
   is_no_go: boolean;
 };
+
+function parseZonePoints(raw: string | { x: number; y: number }[] | undefined): { x: number; y: number }[] {
+  if (!raw) return [];
+  if (Array.isArray(raw)) return raw;
+  try { return JSON.parse(raw); } catch { return []; }
+}
 
 type VehicleStatus = {
   device_id: string;
@@ -90,8 +96,7 @@ export function RealTimeMapModal({ deviceId, isOpen, onClose }: Props) {
 
     // Parse zone points
     const parsedZones = zones.map((z) => {
-      let pts: { x: number; y: number }[] = [];
-      try { pts = JSON.parse(z.points || '[]'); } catch {}
+      const pts = parseZonePoints(z.points);
       pts.forEach((p) => allCoords.push({ lat: p.y, lon: p.x }));
       return { ...z, parsedPoints: pts };
     });
