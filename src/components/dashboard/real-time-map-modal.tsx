@@ -35,6 +35,21 @@ type LogRecord = {
   record_time: string;
 };
 
+type TelematicsEvent = {
+  id: number;
+  deviceId: string;
+  fleetNumber: string;
+  licensePlate: string;
+  eventType: string;
+  eventCode: string;
+  severity: string;
+  latitude: number | null;
+  longitude: number | null;
+  speed: number | null;
+  driverName: string | null;
+  eventTime: string;
+};
+
 type Props = {
   deviceId: string;
   isOpen: boolean;
@@ -48,24 +63,31 @@ export function RealTimeMapModal({ deviceId, isOpen, onClose }: Props) {
   const [zones, setZones] = useState<Zone[]>([]);
   const [vehicle, setVehicle] = useState<VehicleStatus | null>(null);
   const [path, setPath] = useState<LogRecord[]>([]);
+  const [events, setEvents] = useState<TelematicsEvent[]>([]);
   const [loading, setLoading] = useState(true);
 
   const fetchData = useCallback(async () => {
     try {
       setLoading(true);
-      const [zonesRes, statusRes, logsRes] = await Promise.all([
+      const now = Date.now();
+      const from = new Date(now - 15 * 60 * 1000).toISOString();
+      const to = new Date(now).toISOString();
+      const [zonesRes, statusRes, logsRes, eventsRes] = await Promise.all([
         fetch(`${EPS}/telematics/zones`, { cache: 'no-store' }),
         fetch(`${EPS}/telematics/vehicle-status/${deviceId}`, { cache: 'no-store' }),
-        fetch(`${EPS}/telematics/log-records/${deviceId}?from=${new Date(Date.now() - 3600000).toISOString()}&to=${new Date().toISOString()}`, { cache: 'no-store' }),
+        fetch(`${EPS}/telematics/log-records/${deviceId}?from=${from}&to=${to}`, { cache: 'no-store' }),
+        fetch(`${EPS}/telematics/events/${deviceId}?from=${from}&to=${to}&limit=500`, { cache: 'no-store' }),
       ]);
 
       const zonesData = await zonesRes.json().catch(() => ({}));
       const statusData = await statusRes.json().catch(() => ({}));
       const logsData = await logsRes.json().catch(() => ({}));
+      const eventsData = await eventsRes.json().catch(() => ({}));
 
       if (zonesData?.data) setZones(zonesData.data);
       if (statusData?.data) setVehicle(statusData.data);
       if (logsData?.data) setPath(logsData.data);
+      if (eventsData?.data) setEvents(eventsData.data.filter((e: TelematicsEvent) => e.latitude && e.longitude));
     } catch (e) {
       console.error('Failed to fetch map data:', e);
     } finally {
@@ -108,6 +130,11 @@ export function RealTimeMapModal({ deviceId, isOpen, onClose }: Props) {
 
     // Path points
     path.forEach((p) => allCoords.push({ lat: p.latitude, lon: p.longitude }));
+
+    // Telematics events
+    events.forEach((e) => {
+      if (e.latitude && e.longitude) allCoords.push({ lat: e.latitude, lon: e.longitude });
+    });
 
     if (allCoords.length === 0) {
       ctx.fillStyle = '#64748b';
@@ -195,6 +222,37 @@ export function RealTimeMapModal({ deviceId, isOpen, onClose }: Props) {
       ctx.fill();
     });
 
+    // Draw telematics events (speeding, harsh braking, etc.)
+    events.forEach((evt) => {
+      if (!evt.latitude || !evt.longitude) return;
+      const ex = toX(evt.longitude);
+      const ey = toY(evt.latitude);
+      const isSpeeding = /speed/i.test(evt.eventType || evt.eventCode || '');
+      const isHarsh = /harsh|braking|cornering/i.test(evt.eventType || evt.eventCode || '');
+      const color = isSpeeding ? '#ef4444' : isHarsh ? '#f97316' : '#eab308';
+
+      // Pulse ring
+      ctx.beginPath();
+      ctx.arc(ex, ey, 10, 0, Math.PI * 2);
+      ctx.fillStyle = color + '26'; // 15% opacity hex
+      ctx.fill();
+
+      // Event dot
+      ctx.beginPath();
+      ctx.arc(ex, ey, 5, 0, Math.PI * 2);
+      ctx.fillStyle = color;
+      ctx.strokeStyle = '#0f172a';
+      ctx.lineWidth = 2;
+      ctx.fill();
+      ctx.stroke();
+
+      // Label
+      ctx.fillStyle = color;
+      ctx.font = 'bold 10px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(evt.eventType, ex, ey - 12);
+    });
+
     // Draw vehicle marker (larger, on top)
     if (vehicle?.latitude && vehicle?.longitude) {
       const vx = toX(vehicle.longitude);
@@ -225,7 +283,7 @@ export function RealTimeMapModal({ deviceId, isOpen, onClose }: Props) {
         vy + 4
       );
     }
-  }, [zones, vehicle, path, isOpen]);
+  }, [zones, vehicle, path, events, isOpen]);
 
   if (!isOpen) return null;
 
@@ -242,6 +300,7 @@ export function RealTimeMapModal({ deviceId, isOpen, onClose }: Props) {
             </div>
             <div className="text-[11px] text-slate-400">
               {zones.filter((z) => z.is_high_risk || z.is_no_go).length} high-risk/no-go zones
+              {events.length > 0 ? ` • ${events.length} event${events.length === 1 ? '' : 's'} in last 15 min` : ''}
             </div>
           </div>
           <div className="flex items-center gap-2">

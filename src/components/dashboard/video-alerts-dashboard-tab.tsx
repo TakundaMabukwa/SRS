@@ -284,9 +284,10 @@ export default function VideoAlertsDashboardTab({
   const activeAlertsFetchInFlightRef = useRef(false);
   const lastActiveAlertsFetchAtRef = useRef(0);
 
-  // Geotab WebSocket for zone breaches
-  const { zoneBreaches, dismissBreach } = useGeotabWs();
+  // Geotab WebSocket for zone breaches and real-time events
+  const { zoneBreaches, dismissBreach, newEvents } = useGeotabWs();
   const [vehicleStatuses, setVehicleStatuses] = useState<Map<string, any>>(new Map());
+  const [vehicleEvents, setVehicleEvents] = useState<Map<string, any[]>>(new Map());
   const [mapModalDeviceId, setMapModalDeviceId] = useState<string | null>(null);
   const [mapModalOpen, setMapModalOpen] = useState(false);
 
@@ -1279,6 +1280,30 @@ export default function VideoAlertsDashboardTab({
     return () => { cancelled = true; clearInterval(interval); };
   }, [suspendBackgroundWork]);
 
+  // Process real-time Geotab events from WebSocket
+  useEffect(() => {
+    if (!newEvents || newEvents.length === 0) return;
+    setVehicleEvents((prev) => {
+      const next = new Map(prev);
+      const cutoff = Date.now() - 15 * 60 * 1000;
+      for (const evt of newEvents) {
+        if (!evt?.deviceId) continue;
+        const list = next.get(evt.deviceId) || [];
+        // Deduplicate by id
+        if (list.some((e) => e.id === evt.id)) continue;
+        list.push(evt);
+        next.set(evt.deviceId, list);
+      }
+      // Prune old events across all vehicles
+      for (const [deviceId, list] of next.entries()) {
+        const filtered = list.filter((e) => new Date(e.eventTime).getTime() > cutoff);
+        if (filtered.length === 0) next.delete(deviceId);
+        else next.set(deviceId, filtered);
+      }
+      return next;
+    });
+  }, [newEvents]);
+
   useEffect(() => {
     if (suspendBackgroundWork) return;
     const interval = setInterval(() => {
@@ -1877,6 +1902,13 @@ export default function VideoAlertsDashboardTab({
     const driverName = status?.driver_name || null;
     const hasLocation = status?.latitude != null && status?.longitude != null;
 
+    // Real-time Geotab events from WebSocket
+    const events = vehicleEvents.get(card.deviceId) || [];
+    const recentEvents = events.filter((e) => Date.now() - new Date(e.eventTime).getTime() < 5 * 60 * 1000);
+    const hasSpeeding = recentEvents.some((e) => /speed/i.test(e.eventType || e.eventCode || ""));
+    const hasHarsh = recentEvents.some((e) => /harsh|braking|cornering/i.test(e.eventType || e.eventCode || ""));
+    const showEventFlash = hasSpeeding || hasHarsh;
+
     return (
       <div
         key={`control-room-${card.deviceId}`}
@@ -1910,6 +1942,31 @@ export default function VideoAlertsDashboardTab({
               ) : null}
             </div>
             <div className="text-[10px] text-slate-500">{lastAlertAt || "Just now"}</div>
+            {recentEvents.length > 0 && (
+              <div className="flex flex-wrap gap-1 mt-0.5">
+                {recentEvents.slice(0, 3).map((evt, idx) => (
+                  <Badge
+                    key={`${evt.id || idx}`}
+                    variant="outline"
+                    className={cn(
+                      "h-4 rounded-full px-1 text-[9px] font-semibold border",
+                      /speed/i.test(evt.eventType || evt.eventCode || "")
+                        ? "border-rose-300 bg-rose-50 text-rose-700"
+                        : /harsh|braking|cornering/i.test(evt.eventType || evt.eventCode || "")
+                        ? "border-amber-300 bg-amber-50 text-amber-700"
+                        : "border-slate-300 bg-slate-50 text-slate-600"
+                    )}
+                  >
+                    {evt.eventType}
+                  </Badge>
+                ))}
+                {recentEvents.length > 3 && (
+                  <Badge variant="outline" className="h-4 rounded-full px-1 text-[9px] font-semibold border-slate-300 bg-slate-50 text-slate-600">
+                    +{recentEvents.length - 3}
+                  </Badge>
+                )}
+              </div>
+            )}
           </div>
         ) : (
           <div className="mt-1.5 text-[11px] text-slate-500">Waiting for live alerts</div>
@@ -1953,11 +2010,11 @@ export default function VideoAlertsDashboardTab({
           </div>
         </div>
 
-        {mode === "alert" ? (
+        {(mode === "alert" || showEventFlash) ? (
           <div className="pointer-events-none absolute right-1.5 top-1.5">
             <span className="relative flex h-2 w-2">
-              <span className={cn("absolute inline-flex h-full w-full animate-ping rounded-full opacity-75", laneStyle.flash)} />
-              <span className={cn("relative inline-flex h-2 w-2 rounded-full", laneStyle.flash)} />
+              <span className={cn("absolute inline-flex h-full w-full animate-ping rounded-full opacity-75", showEventFlash ? "bg-rose-500" : laneStyle.flash)} />
+              <span className={cn("relative inline-flex h-2 w-2 rounded-full", showEventFlash ? "bg-rose-500" : laneStyle.flash)} />
             </span>
           </div>
         ) : null}
