@@ -22,7 +22,7 @@ type WsMessage = {
 };
 
 const WS_URL = typeof window !== 'undefined'
-  ? `ws://${window.location.hostname}:3004`
+  ? (process.env.NEXT_PUBLIC_GEOTAB_WS_URL || `ws://${window.location.hostname}:3004`)
   : 'ws://localhost:3004';
 
 export function useGeotabWs() {
