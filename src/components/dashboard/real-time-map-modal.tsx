@@ -46,6 +46,8 @@ type TelematicsEvent = {
   latitude: number | null;
   longitude: number | null;
   speed: number | null;
+  distance: number | null;
+  durationSeconds: number | null;
   driverName: string | null;
   eventTime: string;
 };
@@ -250,7 +252,10 @@ export function RealTimeMapModal({ deviceId, isOpen, onClose }: Props) {
       ctx.fillStyle = color;
       ctx.font = 'bold 10px sans-serif';
       ctx.textAlign = 'center';
-      ctx.fillText(evt.eventType, ex, ey - 12);
+      const distText = evt.distance ? `${evt.distance.toFixed(2)}km` : '';
+      const durText = evt.durationSeconds ? `${Math.round(evt.durationSeconds / 60)}m` : '';
+      const label = [evt.eventType, distText, durText].filter(Boolean).join(' • ');
+      ctx.fillText(label, ex, ey - 12);
     });
 
     // Draw vehicle marker (larger, on top)
