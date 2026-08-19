@@ -135,6 +135,14 @@ const FinancialsPanel = dynamic(
   () => import("@/components/financials/FinancialsPanel"),
   { ssr: false, loading: () => <div className="h-40 animate-pulse rounded-lg bg-slate-100" /> }
 );
+const FleetMapTab = dynamic(
+  () => import("@/components/dashboard/fleet-map-tab").then((m) => ({ default: m.FleetMapTab })),
+  { ssr: false, loading: () => <div className="h-40 animate-pulse rounded-lg bg-slate-100" /> }
+);
+const LiveMapView = dynamic(
+  () => import("@/components/map/live-map-view"),
+  { ssr: false, loading: () => <div className="h-40 animate-pulse rounded-lg bg-slate-100" /> }
+);
 
 
 
@@ -4514,8 +4522,54 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
               >
                 Live Map
               </TabsTrigger>
+              <TabsTrigger
+                value="fleet-map"
+                className="px-6 py-2 text-sm font-medium rounded-md data-[state=active]:bg-white data-[state=active]:shadow-sm"
+              >
+                Map
+              </TabsTrigger>
             </TabsList>
           </Tabs>
+        </div>
+      </>
+    );
+  }
+
+  // Full-page fleet map view
+  if (activeTab === "fleet-map") {
+    return (
+      <>
+        {/* Tabs always on top */}
+        <div className="relative z-20 mb-2">
+          <Tabs
+            value={activeTab}
+            onValueChange={(v) => setActiveTab(v)}
+            className="w-full"
+          >
+            <TabsList className="flex w-fit items-center rounded-lg bg-white p-1 shadow-md">
+              <TabsTrigger
+                value="video-alerts"
+                className="px-5 py-1.5 text-sm font-medium rounded-md data-[state=active]:bg-white data-[state=active]:shadow-sm"
+              >
+                Video Alerts
+              </TabsTrigger>
+              <TabsTrigger
+                value="live-map"
+                className="px-5 py-1.5 text-sm font-medium rounded-md data-[state=active]:bg-white data-[state=active]:shadow-sm"
+              >
+                Live Map
+              </TabsTrigger>
+              <TabsTrigger
+                value="fleet-map"
+                className="px-5 py-1.5 text-sm font-medium rounded-md data-[state=active]:bg-blue-600 data-[state=active]:text-white"
+              >
+                Map
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
+        </div>
+        <div className="relative flex-1 -mt-2">
+          <FleetMapTab />
         </div>
       </>
     );
@@ -4594,6 +4648,12 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
               >
                 Alert Config
               </TabsTrigger>
+              <TabsTrigger
+                value="fleet-map"
+                className="px-6 py-2 text-sm font-medium rounded-md data-[state=active]:bg-white data-[state=active]:shadow-sm"
+              >
+                Map
+              </TabsTrigger>
             </TabsList>
           </Tabs>
         </div>
@@ -4660,6 +4720,10 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
         <div style={{ display: activeTab === "live-stream" ? "" : "none" }} className="w-full">
           <LiveStreamTab selectedCostCenters={selectedCostCenters} />
         </div>
+
+        {activeTab === "fleet-map" && (
+          <FleetMapTab />
+        )}
 
         {activeTab === "financials" && (
           <div className="space-y-4">
