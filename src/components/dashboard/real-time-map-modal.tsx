@@ -163,19 +163,21 @@ export function RealTimeMapModal({ deviceId, isOpen, onClose }: Props) {
     });
 
     let center = { lat: -26.2041, lng: 28.0473 }; // Johannesburg fallback
-    if (coords.length > 0) {
+    let initialZoom = 14;
+    if (vehicle?.latitude && vehicle?.longitude) {
+      center = { lat: vehicle.latitude, lng: vehicle.longitude };
+      initialZoom = 16;
+    } else if (coords.length > 0) {
       center = {
         lat: coords.reduce((s, c) => s + c.lat, 0) / coords.length,
         lng: coords.reduce((s, c) => s + c.lng, 0) / coords.length,
       };
-    } else if (vehicle?.latitude && vehicle?.longitude) {
-      center = { lat: vehicle.latitude, lng: vehicle.longitude };
     }
 
     if (!googleMapRef.current) {
       googleMapRef.current = new window.google.maps.Map(mapRef.current, {
         center,
-        zoom: 14,
+        zoom: initialZoom,
         mapTypeId: 'roadmap',
         mapTypeControl: true,
         fullscreenControl: false,
@@ -274,42 +276,15 @@ export function RealTimeMapModal({ deviceId, isOpen, onClose }: Props) {
       });
     });
 
-    // Vehicle marker with accuracy-style outer ring
+    // Vehicle marker - red pin drop
     if (vehicle?.latitude && vehicle?.longitude) {
-      const vehicleColor = '#0ea5e9';
-      // Outer pulse ring
-      const outerRing = new window.google.maps.Marker({
-        position: { lat: vehicle.latitude, lng: vehicle.longitude },
-        map,
-        icon: {
-          path: window.google.maps.SymbolPath.CIRCLE,
-          fillColor: vehicleColor,
-          fillOpacity: 0.2,
-          strokeColor: vehicleColor,
-          strokeOpacity: 0.4,
-          strokeWeight: 1,
-          scale: 22,
-        },
-        clickable: false,
-        zIndex: 10,
-      });
-      markersRef.current.push(outerRing);
-
-      // Main vehicle marker
-      const svg = encodeURIComponent(`
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="${vehicleColor}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M19 17h2c.6 0 1-.4 1-1v-3c0-.9-.7-1.7-1.5-1.9C18.7 10.6 16 10 16 10s-1.3-1.4-2.2-2.3c-.5-.4-1.1-.7-1.8-.7H5c-.6 0-1.1.4-1.4.9l-1.4 2.9A3.7 3.7 0 0 0 2 12v4c0 .6.4 1 1 1h2"/>
-          <circle cx="7" cy="17" r="2"/>
-          <circle cx="17" cy="17" r="2"/>
-        </svg>
-      `);
       const marker = new window.google.maps.Marker({
         position: { lat: vehicle.latitude, lng: vehicle.longitude },
         map,
         icon: {
-          url: `data:image/svg+xml,${svg}`,
-          scaledSize: new window.google.maps.Size(36, 36),
-          anchor: new window.google.maps.Point(18, 18),
+          url: 'https://maps.google.com/mapfiles/ms/icons/red-dot.png',
+          scaledSize: new window.google.maps.Size(32, 32),
+          anchor: new window.google.maps.Point(16, 32),
         },
         title: `${vehicle.fleet_number || vehicle.plate || vehicle.device_id} — ${vehicle.speed ? `${Math.round(vehicle.speed)} km/h` : 'stationary'}`,
         zIndex: 11,
@@ -330,12 +305,9 @@ export function RealTimeMapModal({ deviceId, isOpen, onClose }: Props) {
       });
     }
 
-    // Fit bounds if we have any coordinates
-    if (coords.length > 0) {
-      const bounds = new window.google.maps.LatLngBounds();
-      coords.forEach((c) => bounds.extend(c));
-      map.fitBounds(bounds, 40);
-    }
+    // Center on vehicle location
+    map.setCenter(center);
+    map.setZoom(initialZoom);
   }, [isOpen, mapsLoaded, zones, vehicle, path, events]);
 
   // Cleanup on close

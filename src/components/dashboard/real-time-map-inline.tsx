@@ -151,15 +151,16 @@ export function RealTimeMapInline({ deviceId, alertLat, alertLon, alertTime }: P
 
     if (!googleMapRef.current) {
       googleMapRef.current = new window.google.maps.Map(mapRef.current, {
-        center,
-        zoom: 15,
+        center: { lat: alertLat, lng: alertLon },
+        zoom: 16,
         mapTypeId: 'roadmap',
         mapTypeControl: false,
         fullscreenControl: false,
         streetViewControl: false,
       });
     } else {
-      googleMapRef.current.setCenter(center);
+      googleMapRef.current.setCenter({ lat: alertLat, lng: alertLon });
+      googleMapRef.current.setZoom(16);
     }
 
     const map = googleMapRef.current;
@@ -271,9 +272,8 @@ export function RealTimeMapInline({ deviceId, alertLat, alertLon, alertTime }: P
     });
     alertMarker.addListener('click', () => alertInfo.open(map, alertMarker));
 
-    const bounds = new window.google.maps.LatLngBounds();
-    coords.forEach((c) => bounds.extend(c));
-    map.fitBounds(bounds, 40);
+    map.setCenter({ lat: alertLat, lng: alertLon });
+    map.setZoom(16);
   }, [mapsLoaded, zones, path, events, alertLat, alertLon, alertTime]);
 
   const clearLos = () => {
