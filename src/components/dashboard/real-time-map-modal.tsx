@@ -89,6 +89,8 @@ export function RealTimeMapModal({ deviceId, isOpen, onClose }: Props) {
   const polylineRef = useRef<google.maps.Polyline | null>(null);
   const eventInfoWindowsRef = useRef<Map<number, google.maps.InfoWindow>>(new Map());
   const eventMarkersRef = useRef<Map<number, google.maps.Marker>>(new Map());
+  const directionsRendererRef = useRef<google.maps.DirectionsRenderer | null>(null);
+  const losMarkersRef = useRef<google.maps.Marker[]>([]);
   const { loaded: mapsLoaded, error: mapsError } = useGoogleMaps();
 
   const [zones, setZones] = useState<Zone[]>([]);
@@ -97,6 +99,8 @@ export function RealTimeMapModal({ deviceId, isOpen, onClose }: Props) {
   const [events, setEvents] = useState<TelematicsEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [losActive, setLosActive] = useState(false);
+  const [losLoading, setLosLoading] = useState(false);
 
   const fetchData = useCallback(async () => {
     try {
@@ -348,6 +352,14 @@ export function RealTimeMapModal({ deviceId, isOpen, onClose }: Props) {
       eventInfoWindowsRef.current.forEach((iw) => iw.close());
       eventInfoWindowsRef.current.clear();
       eventMarkersRef.current.clear();
+      if (directionsRendererRef.current) {
+        directionsRendererRef.current.setMap(null);
+        directionsRendererRef.current = null;
+      }
+      losMarkersRef.current.forEach((m) => m.setMap(null));
+      losMarkersRef.current = [];
+      setLosActive(false);
+      setLosLoading(false);
       googleMapRef.current = null;
     }
   }, [isOpen]);
@@ -373,6 +385,103 @@ export function RealTimeMapModal({ deviceId, isOpen, onClose }: Props) {
     return '#eab308';
   };
 
+  const clearLos = () => {
+    if (directionsRendererRef.current) {
+      directionsRendererRef.current.setMap(null);
+      directionsRendererRef.current = null;
+    }
+    losMarkersRef.current.forEach((m) => m.setMap(null));
+    losMarkersRef.current = [];
+  };
+
+  const toggleLos = async () => {
+    const map = googleMapRef.current;
+    if (!map || !window.google?.maps) return;
+
+    if (losActive) {
+      clearLos();
+      setLosActive(false);
+      return;
+    }
+
+    if (events.length < 2) return;
+
+    setLosLoading(true);
+
+    const sorted = [...events]
+      .filter((e) => e.latitude && e.longitude)
+      .sort((a, b) => new Date(a.eventTime).getTime() - new Date(b.eventTime).getTime());
+
+    if (sorted.length < 2) {
+      setLosLoading(false);
+      return;
+    }
+
+    // Build numbered markers first
+    const numLabelSvg = (num: number, color: string) => {
+      const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="36" viewBox="0 0 28 36">
+        <path d="M14 0C6.268 0 0 6.268 0 14c0 10.5 14 22 14 22s14-11.5 14-22C28 6.268 21.732 0 14 0z" fill="${color}"/>
+        <circle cx="14" cy="14" r="10" fill="white"/>
+        <text x="14" y="18" text-anchor="middle" font-size="12" font-weight="bold" fill="${color}">${num}</text>
+      </svg>`;
+      return `data:image/svg+xml,${encodeURIComponent(svg)}`;
+    };
+
+    sorted.forEach((evt, idx) => {
+      const marker = new window.google.maps.Marker({
+        position: { lat: evt.latitude!, lng: evt.longitude! },
+        map,
+        icon: {
+          url: numLabelSvg(idx + 1, getEventColor(evt.eventType)),
+          scaledSize: new window.google.maps.Size(28, 36),
+          anchor: new window.google.maps.Point(14, 36),
+        },
+        zIndex: 100 + idx,
+        title: `${idx + 1}. ${evt.eventType} — ${new Date(evt.eventTime).toLocaleString()}`,
+      });
+      losMarkersRef.current.push(marker);
+    });
+
+    // Use Directions API for the route
+    const origin = sorted[0];
+    const destination = sorted[sorted.length - 1];
+
+    const waypoints = sorted.slice(1, -1).slice(0, 23).map((e) => ({
+      location: { lat: e.latitude!, lng: e.longitude! },
+      stopover: true,
+    }));
+
+    const directionsService = new window.google.maps.DirectionsService();
+    const renderer = new window.google.maps.DirectionsRenderer({
+      map,
+      suppressMarkers: true,
+      polylineOptions: {
+        strokeColor: '#f97316',
+        strokeOpacity: 0.9,
+        strokeWeight: 3,
+      },
+    });
+
+    try {
+      const result = await directionsService.route({
+        origin: { lat: origin.latitude!, lng: origin.longitude! },
+        destination: { lat: destination.latitude!, lng: destination.longitude! },
+        waypoints,
+        travelMode: window.google.maps.TravelMode.DRIVING,
+        optimizeWaypoints: false,
+      });
+
+      renderer.setDirections(result);
+      directionsRendererRef.current = renderer;
+      setLosActive(true);
+    } catch (err) {
+      console.error('Directions API error:', err);
+      clearLos();
+    } finally {
+      setLosLoading(false);
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
       <div
@@ -392,6 +501,21 @@ export function RealTimeMapModal({ deviceId, isOpen, onClose }: Props) {
           <div className="flex items-center gap-2">
             {loading && <span className="text-[10px] text-cyan-400 animate-pulse">Loading...</span>}
             {mapsError && <span className="text-[10px] text-rose-400">{mapsError}</span>}
+            {events.length >= 2 && (
+              <button
+                type="button"
+                onClick={toggleLos}
+                disabled={losLoading}
+                className={`flex items-center gap-1 rounded-md border px-2 py-1 text-[10px] font-semibold transition-colors ${
+                  losActive
+                    ? 'border-emerald-500 bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30'
+                    : 'border-slate-600 bg-slate-800 text-slate-300 hover:border-slate-500 hover:bg-slate-700'
+                } disabled:opacity-50`}
+              >
+                <Navigation className="w-3 h-3" />
+                {losLoading ? 'Loading...' : losActive ? 'LOS On' : 'LOS'}
+              </button>
+            )}
             <Button size="icon" variant="ghost" className="h-7 w-7 text-slate-400 hover:text-white" onClick={onClose}>
               <X className="h-4 w-4" />
             </Button>
