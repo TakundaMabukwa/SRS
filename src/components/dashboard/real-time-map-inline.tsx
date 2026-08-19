@@ -1,5 +1,6 @@
 'use client';
 import React, { useEffect, useState, useRef } from 'react';
+import { Navigation } from 'lucide-react';
 import { useGoogleMaps } from '@/hooks/use-google-maps';
 
 type Zone = {
@@ -82,12 +83,16 @@ export function RealTimeMapInline({ deviceId, alertLat, alertLon, alertTime }: P
   const markersRef = useRef<google.maps.Marker[]>([]);
   const polygonsRef = useRef<google.maps.Polygon[]>([]);
   const polylineRef = useRef<google.maps.Polyline | null>(null);
+  const directionsRendererRef = useRef<google.maps.DirectionsRenderer | null>(null);
+  const losMarkersRef = useRef<google.maps.Marker[]>([]);
   const { loaded: mapsLoaded, error: mapsError } = useGoogleMaps();
 
   const [zones, setZones] = useState<Zone[]>([]);
   const [path, setPath] = useState<LogRecord[]>([]);
   const [events, setEvents] = useState<TelematicsEvent[]>([]);
   const [loading, setLoading] = useState(true);
+  const [losActive, setLosActive] = useState(false);
+  const [losLoading, setLosLoading] = useState(false);
 
   useEffect(() => {
     if (!deviceId) { setLoading(false); return; }
@@ -271,6 +276,104 @@ export function RealTimeMapInline({ deviceId, alertLat, alertLon, alertTime }: P
     map.fitBounds(bounds, 40);
   }, [mapsLoaded, zones, path, events, alertLat, alertLon, alertTime]);
 
+  const clearLos = () => {
+    if (directionsRendererRef.current) {
+      directionsRendererRef.current.setMap(null);
+      directionsRendererRef.current = null;
+    }
+    losMarkersRef.current.forEach((m) => m.setMap(null));
+    losMarkersRef.current = [];
+  };
+
+  useEffect(() => {
+    return () => { clearLos(); };
+  }, []);
+
+  const toggleLos = async () => {
+    const map = googleMapRef.current;
+    if (!map || !window.google?.maps) return;
+
+    if (losActive) {
+      clearLos();
+      setLosActive(false);
+      return;
+    }
+
+    if (events.length < 2) return;
+
+    setLosLoading(true);
+
+    const sorted = [...events]
+      .filter((e) => e.latitude && e.longitude)
+      .sort((a, b) => new Date(a.eventTime).getTime() - new Date(b.eventTime).getTime());
+
+    if (sorted.length < 2) {
+      setLosLoading(false);
+      return;
+    }
+
+    const numLabelSvg = (num: number, color: string) => {
+      const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="36" viewBox="0 0 28 36">
+        <path d="M14 0C6.268 0 0 6.268 0 14c0 10.5 14 22 14 22s14-11.5 14-22C28 6.268 21.732 0 14 0z" fill="${color}"/>
+        <circle cx="14" cy="14" r="10" fill="white"/>
+        <text x="14" y="18" text-anchor="middle" font-size="12" font-weight="bold" fill="${color}">${num}</text>
+      </svg>`;
+      return `data:image/svg+xml,${encodeURIComponent(svg)}`;
+    };
+
+    sorted.forEach((evt, idx) => {
+      const marker = new window.google.maps.Marker({
+        position: { lat: evt.latitude!, lng: evt.longitude! },
+        map,
+        icon: {
+          url: numLabelSvg(idx + 1, getEventColor(evt.eventType)),
+          scaledSize: new window.google.maps.Size(28, 36),
+          anchor: new window.google.maps.Point(14, 36),
+        },
+        zIndex: 100 + idx,
+        title: `${idx + 1}. ${evt.eventType} — ${new Date(evt.eventTime).toLocaleString()}`,
+      });
+      losMarkersRef.current.push(marker);
+    });
+
+    const origin = sorted[0];
+    const destination = sorted[sorted.length - 1];
+    const waypoints = sorted.slice(1, -1).slice(0, 23).map((e) => ({
+      location: { lat: e.latitude!, lng: e.longitude! },
+      stopover: true,
+    }));
+
+    const directionsService = new window.google.maps.DirectionsService();
+    const renderer = new window.google.maps.DirectionsRenderer({
+      map,
+      suppressMarkers: true,
+      polylineOptions: {
+        strokeColor: '#f97316',
+        strokeOpacity: 0.9,
+        strokeWeight: 3,
+      },
+    });
+
+    try {
+      const result = await directionsService.route({
+        origin: { lat: origin.latitude!, lng: origin.longitude! },
+        destination: { lat: destination.latitude!, lng: destination.longitude! },
+        waypoints,
+        travelMode: window.google.maps.TravelMode.DRIVING,
+        optimizeWaypoints: false,
+      });
+
+      renderer.setDirections(result);
+      directionsRendererRef.current = renderer;
+      setLosActive(true);
+    } catch (err) {
+      console.error('Directions API error:', err);
+      clearLos();
+    } finally {
+      setLosLoading(false);
+    }
+  };
+
   if (mapsError) {
     return <div className="h-64 w-full rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-600">{mapsError}</div>;
   }
@@ -291,6 +394,21 @@ export function RealTimeMapInline({ deviceId, alertLat, alertLon, alertTime }: P
         <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-full bg-orange-500" /> Harsh driving</span>
         <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-full bg-yellow-500" /> Other event</span>
         <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-full bg-red-600" /> Alert</span>
+        {events.length >= 2 && (
+          <button
+            type="button"
+            onClick={toggleLos}
+            disabled={losLoading}
+            className={`ml-auto flex items-center gap-1 rounded border px-2 py-0.5 font-semibold transition-colors ${
+              losActive
+                ? 'border-emerald-500 bg-emerald-500/20 text-emerald-600 hover:bg-emerald-500/30'
+                : 'border-slate-300 bg-slate-100 text-slate-600 hover:border-slate-400 hover:bg-slate-200'
+            } disabled:opacity-50`}
+          >
+            <Navigation className="w-3 h-3" />
+            {losLoading ? 'Loading...' : losActive ? 'LOS On' : 'LOS'}
+          </button>
+        )}
       </div>
       {events.length > 0 && (
         <div className="rounded-md border border-slate-200 bg-white p-3">
