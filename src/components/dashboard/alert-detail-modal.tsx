@@ -276,6 +276,7 @@ export function AlertDetailModal({
 
   const preservedVehicleRef = useRef("");
   const [vehicleLookup, setVehicleLookup] = useState<Record<string, { fleetNumber: string; registration: string }>>({});
+  const [geotabDeviceId, setGeotabDeviceId] = useState<string | null>(null);
 
   const selectedAlertVehicleDisplay = useMemo(() => {
     if (!selectedAlert) return preservedVehicleRef.current || "Unknown Vehicle";
@@ -592,6 +593,31 @@ export function AlertDetailModal({
       })
       .catch(() => {});
   }, []);
+
+  // Resolve Geotab device id for the selected alert vehicle
+  useEffect(() => {
+    if (!selectedAlert) return;
+    const deviceId = String(selectedAlert?.device_id || selectedAlert?.deviceId || selectedAlert?.vehicleId || "").trim();
+    const lookupData = vehicleLookup[deviceId];
+    const fleet = String(lookupData?.fleetNumber || selectedAlert?.fleet_number || selectedAlert?.fleetNumber || "").trim().toUpperCase();
+    const reg = String(lookupData?.registration || selectedAlert?.vehicle_registration || selectedAlert?.plate || selectedAlert?.registration || "").trim().toUpperCase();
+    if (!fleet && !reg) return;
+
+    fetch("/api/video-server/telematics/vehicle-status-all", { cache: "no-store", signal: AbortSignal.timeout(10000) })
+      .then((res) => res.json())
+      .then((data) => {
+        const statuses = Array.isArray(data?.data) ? data.data : [];
+        for (const s of statuses) {
+          const geoFleet = String(s?.fleet_number || "").trim().toUpperCase();
+          const geoReg = String(s?.license_plate || "").trim().toUpperCase();
+          if ((fleet && geoFleet === fleet) || (reg && geoReg === reg)) {
+            setGeotabDeviceId(String(s?.device_id || "").trim());
+            return;
+          }
+        }
+      })
+      .catch(() => {});
+  }, [selectedAlert, vehicleLookup]);
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/70 backdrop-blur-sm p-2 sm:p-4 md:items-center md:p-6">
@@ -1025,7 +1051,7 @@ export function AlertDetailModal({
                         </div>
                         {/* Embedded real-time map with zones + vehicle path */}
                         <RealTimeMapInline
-                          deviceId={String(selectedAlert?.device_id || selectedAlert?.deviceId || selectedAlert?.vehicleId || '')}
+                          deviceId={geotabDeviceId || String(selectedAlert?.device_id || selectedAlert?.deviceId || selectedAlert?.vehicleId || '')}
                           alertLat={selectedAlertCoordinates.latitude}
                           alertLon={selectedAlertCoordinates.longitude}
                           alertTime={selectedAlert?.timestamp || selectedAlert?.alarm_ts || selectedAlert?.displayTimestamp}

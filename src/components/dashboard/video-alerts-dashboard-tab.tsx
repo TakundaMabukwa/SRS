@@ -285,9 +285,11 @@ export default function VideoAlertsDashboardTab({
   const lastActiveAlertsFetchAtRef = useRef(0);
 
   // Geotab WebSocket for zone breaches and real-time events
-  const { zoneBreaches, dismissBreach, newEvents } = useGeotabWs();
+  const { zoneBreaches, dismissBreach, newEvents, connected: geotabWsConnected } = useGeotabWs();
   const [vehicleStatuses, setVehicleStatuses] = useState<Map<string, any>>(new Map());
   const [vehicleEvents, setVehicleEvents] = useState<Map<string, any[]>>(new Map());
+  const [geotabToCardMap, setGeotabToCardMap] = useState<Map<string, string>>(new Map());
+  const [cardToGeotabMap, setCardToGeotabMap] = useState<Map<string, { deviceId: string; fleetNumber?: string; licensePlate?: string }>>(new Map());
   const [mapModalDeviceId, setMapModalDeviceId] = useState<string | null>(null);
   const [mapModalOpen, setMapModalOpen] = useState(false);
 
@@ -1266,19 +1268,51 @@ export default function VideoAlertsDashboardTab({
         const json = await res.json().catch(() => ({}));
         if (cancelled || !json?.data) return;
         const map = new Map<string, any>();
+        const geoToCard = new Map<string, string>();
+        const cardToGeo = new Map<string, { deviceId: string; fleetNumber?: string; licensePlate?: string }>();
         for (const s of json.data) {
           if (s.device_id) map.set(s.device_id, s);
-          if (s.fleet_number) map.set(s.fleet_number.toUpperCase(), s);
-          if (s.plate) map.set(s.plate.toUpperCase(), s);
+          if (s.fleet_number) {
+            const f = String(s.fleet_number).trim().toUpperCase();
+            map.set(f, s);
+          }
+          if (s.plate) {
+            const p = String(s.plate).trim().toUpperCase();
+            map.set(p, s);
+            // Geotab device names are often "FLEET - REG", also index the registration half
+            const parts = p.split(" - ");
+            if (parts[1]) map.set(parts[1].trim(), s);
+          }
+          if (s.license_plate) {
+            const lp = String(s.license_plate).trim().toUpperCase();
+            map.set(lp, s);
+          }
+          // Link Geotab device to Supabase card by fleet number or registration
+          const geoDeviceId = String(s.device_id || "").trim();
+          const geoFleet = String(s.fleet_number || "").trim().toUpperCase();
+          const geoReg = String(s.license_plate || "").trim().toUpperCase();
+          if (geoDeviceId && (geoFleet || geoReg)) {
+            for (const [cardDeviceId, identity] of vehicleIdentityLookup.entries()) {
+              const cardFleet = String(identity?.fleetNumber || "").trim().toUpperCase();
+              const cardReg = String(identity?.plate || "").trim().toUpperCase();
+              if ((geoFleet && cardFleet === geoFleet) || (geoReg && cardReg === geoReg)) {
+                geoToCard.set(geoDeviceId, cardDeviceId);
+                cardToGeo.set(cardDeviceId, { deviceId: geoDeviceId, fleetNumber: geoFleet, licensePlate: geoReg });
+                break;
+              }
+            }
+          }
         }
         setVehicleStatuses(map);
+        setGeotabToCardMap(geoToCard);
+        setCardToGeotabMap(cardToGeo);
       } catch {}
     };
 
     fetchStatuses();
     const interval = setInterval(fetchStatuses, 60000);
     return () => { cancelled = true; clearInterval(interval); };
-  }, [suspendBackgroundWork]);
+  }, [suspendBackgroundWork, vehicleIdentityLookup]);
 
   // Process real-time Geotab events from WebSocket
   useEffect(() => {
@@ -1288,11 +1322,13 @@ export default function VideoAlertsDashboardTab({
       const cutoff = Date.now() - 15 * 60 * 1000;
       for (const evt of newEvents) {
         if (!evt?.deviceId) continue;
-        const list = next.get(evt.deviceId) || [];
+        // Map Geotab device id back to the Supabase card device id
+        const cardDeviceId = geotabToCardMap.get(evt.deviceId) || evt.deviceId;
+        const list = next.get(cardDeviceId) || [];
         // Deduplicate by id
         if (list.some((e) => e.id === evt.id)) continue;
         list.push(evt);
-        next.set(evt.deviceId, list);
+        next.set(cardDeviceId, list);
       }
       // Prune old events across all vehicles
       for (const [deviceId, list] of next.entries()) {
@@ -1302,7 +1338,7 @@ export default function VideoAlertsDashboardTab({
       }
       return next;
     });
-  }, [newEvents]);
+  }, [newEvents, geotabToCardMap]);
 
   useEffect(() => {
     if (suspendBackgroundWork) return;
@@ -1894,10 +1930,14 @@ export default function VideoAlertsDashboardTab({
     const alertLabel = String(alert?.title || alert?.alert_type || alert?.type || "").trim();
     const alertCount = Math.max(1, Number(alert?.count || alert?.repeated_count || 1) || 1);
 
-    // Look up vehicle status by deviceId, fleet number, or plate
-    const status = vehicleStatuses.get(card.deviceId)
-      || vehicleStatuses.get(card.fleetNumber?.toUpperCase() || "")
-      || vehicleStatuses.get(card.plate?.toUpperCase() || "");
+    // Look up vehicle status by fleet number or registration (Geotab identifiers)
+    const fleetUp = card.fleetNumber?.toUpperCase() || "";
+    const plateUp = card.plate?.toUpperCase() || "";
+    const status = vehicleStatuses.get(fleetUp)
+      || vehicleStatuses.get(plateUp)
+      || vehicleStatuses.get(`${fleetUp} - ${plateUp}`)
+      || vehicleStatuses.get(card.deviceId);
+    const geotabInfo = cardToGeotabMap.get(card.deviceId);
     const speed = status?.speed != null && status.speed > 0 ? Math.round(status.speed) : null;
     const driverName = status?.driver_name || null;
     const hasLocation = status?.latitude != null && status?.longitude != null;
@@ -1913,26 +1953,34 @@ export default function VideoAlertsDashboardTab({
       <div
         key={`control-room-${card.deviceId}`}
         className={cn(
-          "relative overflow-hidden rounded-md border bg-white/95 px-2 py-1.5 shadow-[0_1px_2px_rgba(15,23,42,0.10)] ring-1 ring-slate-200/60 transition-all hover:bg-white hover:shadow-[0_4px_14px_rgba(15,23,42,0.08)]",
+          "relative flex flex-col gap-1 rounded-md border bg-white px-2 py-1.5 shadow-sm transition-all hover:shadow-md",
           mode === "alert" ? cn("border-l-4", laneStyle.accent) : "border-slate-200"
         )}
       >
+        {/* Header */}
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
             <div className="truncate text-[12px] font-semibold leading-4 text-slate-900">{vehicleLabel}</div>
             <div className="truncate text-[10px] leading-4 text-slate-500">
-              {card.costCenter ? `Cost center: ${card.costCenter}` : "Cost center: Unassigned"}
+              {card.costCenter ? card.costCenter : "No cost center"}
             </div>
           </div>
-          {mode !== "alert" ? (
-            <Badge variant="outline" className="h-5 rounded-full border-slate-300 bg-slate-50 px-1.5 py-0 text-[10px] font-semibold text-slate-600">
-              Unassigned
-            </Badge>
-          ) : null}
+          <div className="flex shrink-0 items-center gap-1">
+            <span
+              title={geotabWsConnected ? "Geotab connected" : "Geotab offline"}
+              className={cn("inline-block h-2 w-2 rounded-full", geotabWsConnected ? "bg-emerald-500" : "bg-slate-300")}
+            />
+            {mode !== "alert" ? (
+              <Badge variant="outline" className="h-5 rounded-full border-slate-300 bg-slate-50 px-1.5 py-0 text-[10px] font-semibold text-slate-600">
+                Unassigned
+              </Badge>
+            ) : null}
+          </div>
         </div>
 
+        {/* Alert / Events area */}
         {mode === "alert" ? (
-          <div className="mt-1.5 space-y-0.5">
+          <div className="space-y-1">
             <div className="flex items-center gap-1.5">
               <div className="truncate text-[11px] font-semibold leading-4 text-slate-800">{alertLabel || "Recent alert"}</div>
               {alertCount > 1 ? (
@@ -1942,38 +1990,41 @@ export default function VideoAlertsDashboardTab({
               ) : null}
             </div>
             <div className="text-[10px] text-slate-500">{lastAlertAt || "Just now"}</div>
-            {recentEvents.length > 0 && (
-              <div className="flex flex-wrap gap-1 mt-0.5">
-                {recentEvents.slice(0, 3).map((evt, idx) => (
-                  <Badge
-                    key={`${evt.id || idx}`}
-                    variant="outline"
-                    className={cn(
-                      "h-4 rounded-full px-1 text-[9px] font-semibold border",
-                      /speed/i.test(evt.eventType || evt.eventCode || "")
-                        ? "border-rose-300 bg-rose-50 text-rose-700"
-                        : /harsh|braking|cornering/i.test(evt.eventType || evt.eventCode || "")
-                        ? "border-amber-300 bg-amber-50 text-amber-700"
-                        : "border-slate-300 bg-slate-50 text-slate-600"
-                    )}
-                  >
-                    {evt.eventType}
-                  </Badge>
-                ))}
-                {recentEvents.length > 3 && (
-                  <Badge variant="outline" className="h-4 rounded-full px-1 text-[9px] font-semibold border-slate-300 bg-slate-50 text-slate-600">
-                    +{recentEvents.length - 3}
-                  </Badge>
-                )}
-              </div>
-            )}
           </div>
         ) : (
-          <div className="mt-1.5 text-[11px] text-slate-500">Waiting for live alerts</div>
+          <div className="text-[11px] text-slate-500">Waiting for live alerts</div>
         )}
 
-        <div className="mt-1.5 flex items-center justify-between text-[10px] text-slate-500">
-          <div className="flex items-center gap-2 min-w-0">
+        {/* Live event badges from Geotab WebSocket */}
+        {recentEvents.length > 0 && (
+          <div className="flex flex-wrap gap-1">
+            {recentEvents.slice(0, 4).map((evt, idx) => (
+              <Badge
+                key={`${evt.id || idx}`}
+                variant="outline"
+                className={cn(
+                  "h-4 rounded-full px-1 text-[9px] font-semibold border",
+                  /speed/i.test(evt.eventType || evt.eventCode || "")
+                    ? "border-rose-300 bg-rose-50 text-rose-700"
+                    : /harsh|braking|cornering/i.test(evt.eventType || evt.eventCode || "")
+                    ? "border-amber-300 bg-amber-50 text-amber-700"
+                    : "border-slate-300 bg-slate-50 text-slate-600"
+                )}
+              >
+                {evt.eventType}
+              </Badge>
+            ))}
+            {recentEvents.length > 4 && (
+              <Badge variant="outline" className="h-4 rounded-full px-1 text-[9px] font-semibold border-slate-300 bg-slate-50 text-slate-600">
+                +{recentEvents.length - 4}
+              </Badge>
+            )}
+          </div>
+        )}
+
+        {/* Footer: telemetry + actions */}
+        <div className="mt-auto flex items-center justify-between text-[10px]">
+          <div className="flex items-center gap-2 min-w-0 text-slate-500">
             {speed != null && (
               <span className="flex items-center gap-0.5 text-emerald-600 font-medium">
                 <Gauge className="w-3 h-3" />{speed} km/h
@@ -1984,16 +2035,16 @@ export default function VideoAlertsDashboardTab({
                 <User className="w-3 h-3" />{driverName}
               </span>
             )}
-            {!speed && !driverName && (
-              <span>{mode === "alert" ? `${alertCount} occurrence${alertCount === 1 ? "" : "s"}` : "Monitoring"}</span>
+            {!speed && !driverName && mode !== "alert" && (
+              <span>Monitoring</span>
             )}
           </div>
-          <div className="flex items-center gap-1">
-            {hasLocation && (
+          <div className="flex shrink-0 items-center gap-1">
+            {(hasLocation || geotabInfo?.deviceId) && (
               <button
                 type="button"
                 className="h-5 rounded-md border border-slate-300 bg-white px-1.5 text-[10px] font-semibold text-slate-700 transition-colors hover:border-cyan-400 hover:bg-cyan-50 hover:text-cyan-700"
-                onClick={() => { setMapModalDeviceId(card.deviceId); setMapModalOpen(true); }}
+                onClick={() => { setMapModalDeviceId(geotabInfo?.deviceId || card.deviceId); setMapModalOpen(true); }}
               >
                 <MapPin className="w-3 h-3 inline mr-0.5" />Map
               </button>
@@ -2010,6 +2061,7 @@ export default function VideoAlertsDashboardTab({
           </div>
         </div>
 
+        {/* Severity / event flash indicator */}
         {(mode === "alert" || showEventFlash) ? (
           <div className="pointer-events-none absolute right-1.5 top-1.5">
             <span className="relative flex h-2 w-2">

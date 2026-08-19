@@ -2,7 +2,7 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { X, MapPin, Navigation, AlertTriangle, Gauge } from 'lucide-react';
-import { cn } from '@/lib/utils';
+import { useGoogleMaps } from '@/hooks/use-google-maps';
 
 type Zone = {
   id: string;
@@ -49,6 +49,7 @@ type TelematicsEvent = {
   distance: number | null;
   durationSeconds: number | null;
   driverName: string | null;
+  address: string | null;
   eventTime: string;
 };
 
@@ -60,17 +61,47 @@ type Props = {
 
 const EPS = '/api/video-server';
 
+function normalizeEvent(raw: any): TelematicsEvent {
+  return {
+    id: raw?.id ?? raw?.ID ?? 0,
+    deviceId: raw?.device_id ?? raw?.deviceId ?? '',
+    fleetNumber: raw?.fleet_number ?? raw?.fleetNumber ?? '',
+    licensePlate: raw?.license_plate ?? raw?.licensePlate ?? '',
+    eventType: raw?.event_type ?? raw?.eventType ?? 'Event',
+    eventCode: raw?.event_code ?? raw?.eventCode ?? '',
+    severity: raw?.severity ?? '',
+    latitude: raw?.latitude ?? null,
+    longitude: raw?.longitude ?? null,
+    speed: raw?.speed ?? null,
+    distance: raw?.distance ?? null,
+    durationSeconds: raw?.duration_seconds ?? raw?.durationSeconds ?? null,
+    driverName: raw?.driver_name ?? raw?.driverName ?? null,
+    address: raw?.address ?? null,
+    eventTime: raw?.event_time ?? raw?.eventTime ?? raw?.created_at ?? new Date().toISOString(),
+  };
+}
+
 export function RealTimeMapModal({ deviceId, isOpen, onClose }: Props) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const mapRef = useRef<HTMLDivElement>(null);
+  const googleMapRef = useRef<google.maps.Map | null>(null);
+  const markersRef = useRef<google.maps.Marker[]>([]);
+  const polygonsRef = useRef<google.maps.Polygon[]>([]);
+  const polylineRef = useRef<google.maps.Polyline | null>(null);
+  const eventInfoWindowsRef = useRef<Map<number, google.maps.InfoWindow>>(new Map());
+  const eventMarkersRef = useRef<Map<number, google.maps.Marker>>(new Map());
+  const { loaded: mapsLoaded, error: mapsError } = useGoogleMaps();
+
   const [zones, setZones] = useState<Zone[]>([]);
   const [vehicle, setVehicle] = useState<VehicleStatus | null>(null);
   const [path, setPath] = useState<LogRecord[]>([]);
   const [events, setEvents] = useState<TelematicsEvent[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   const fetchData = useCallback(async () => {
     try {
       setLoading(true);
+      setError(null);
       const now = Date.now();
       const from = new Date(now - 15 * 60 * 1000).toISOString();
       const to = new Date(now).toISOString();
@@ -86,12 +117,22 @@ export function RealTimeMapModal({ deviceId, isOpen, onClose }: Props) {
       const logsData = await logsRes.json().catch(() => ({}));
       const eventsData = await eventsRes.json().catch(() => ({}));
 
-      if (zonesData?.data) setZones(zonesData.data);
+      if (zonesData?.data) {
+        // Only show high-risk / no-go zones on the map
+        setZones(zonesData.data.filter((z: Zone) => z.is_high_risk || z.is_no_go));
+      }
       if (statusData?.data) setVehicle(statusData.data);
       if (logsData?.data) setPath(logsData.data);
-      if (eventsData?.data) setEvents(eventsData.data.filter((e: TelematicsEvent) => e.latitude && e.longitude));
+      if (eventsData?.data) {
+        setEvents(
+          eventsData.data
+            .filter((e: any) => e.latitude && e.longitude)
+            .map(normalizeEvent)
+        );
+      }
     } catch (e) {
       console.error('Failed to fetch map data:', e);
+      setError('Failed to fetch map data');
     } finally {
       setLoading(false);
     }
@@ -101,201 +142,241 @@ export function RealTimeMapModal({ deviceId, isOpen, onClose }: Props) {
     if (isOpen) fetchData();
   }, [isOpen, fetchData]);
 
-  // Draw map on canvas
+  // Initialize / update Google Map
   useEffect(() => {
-    if (!canvasRef.current || !isOpen) return;
-    const canvas = canvasRef.current;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+    if (!isOpen || !mapsLoaded || !mapRef.current || !window.google?.maps) return;
 
-    const W = canvas.width;
-    const H = canvas.height;
-
-    // Clear
-    ctx.fillStyle = '#0f172a';
-    ctx.fillRect(0, 0, W, H);
-
-    // Collect all coordinates for bounds
-    const allCoords: { lat: number; lon: number }[] = [];
-
-    // Parse zone points
-    const parsedZones = zones.map((z) => {
-      const pts = parseZonePoints(z.points);
-      pts.forEach((p) => allCoords.push({ lat: p.y, lon: p.x }));
-      return { ...z, parsedPoints: pts };
-    });
-
-    // Vehicle position
+    const coords: { lat: number; lng: number }[] = [];
     if (vehicle?.latitude && vehicle?.longitude) {
-      allCoords.push({ lat: vehicle.latitude, lon: vehicle.longitude });
+      coords.push({ lat: vehicle.latitude, lng: vehicle.longitude });
     }
-
-    // Path points
-    path.forEach((p) => allCoords.push({ lat: p.latitude, lon: p.longitude }));
-
-    // Telematics events
+    path.forEach((p) => coords.push({ lat: p.latitude, lng: p.longitude }));
     events.forEach((e) => {
-      if (e.latitude && e.longitude) allCoords.push({ lat: e.latitude, lon: e.longitude });
+      if (e.latitude && e.longitude) coords.push({ lat: e.latitude, lng: e.longitude });
+    });
+    zones.forEach((z) => {
+      parseZonePoints(z.points).forEach((p) => coords.push({ lat: p.y, lng: p.x }));
     });
 
-    if (allCoords.length === 0) {
-      ctx.fillStyle = '#64748b';
-      ctx.font = '14px sans-serif';
-      ctx.textAlign = 'center';
-      ctx.fillText('No location data available', W / 2, H / 2);
-      return;
+    let center = { lat: -26.2041, lng: 28.0473 }; // Johannesburg fallback
+    if (coords.length > 0) {
+      center = {
+        lat: coords.reduce((s, c) => s + c.lat, 0) / coords.length,
+        lng: coords.reduce((s, c) => s + c.lng, 0) / coords.length,
+      };
+    } else if (vehicle?.latitude && vehicle?.longitude) {
+      center = { lat: vehicle.latitude, lng: vehicle.longitude };
     }
 
-    // Calculate bounds with padding
-    const lats = allCoords.map((c) => c.lat);
-    const lons = allCoords.map((c) => c.lon);
-    const minLat = Math.min(...lats) - 0.005;
-    const maxLat = Math.max(...lats) + 0.005;
-    const minLon = Math.min(...lons) - 0.005;
-    const maxLon = Math.max(...lons) + 0.005;
-
-    const latRange = maxLat - minLat || 0.01;
-    const lonRange = maxLon - minLon || 0.01;
-    const padding = 40;
-    const mapW = W - padding * 2;
-    const mapH = H - padding * 2;
-
-    const toX = (lon: number) => padding + ((lon - minLon) / lonRange) * mapW;
-    const toY = (lat: number) => padding + ((maxLat - lat) / latRange) * mapH;
-
-    // Draw grid lines
-    ctx.strokeStyle = '#1e293b';
-    ctx.lineWidth = 0.5;
-    for (let i = 0; i <= 4; i++) {
-      const x = padding + (i / 4) * mapW;
-      ctx.beginPath(); ctx.moveTo(x, padding); ctx.lineTo(x, H - padding); ctx.stroke();
-      const y = padding + (i / 4) * mapH;
-      ctx.beginPath(); ctx.moveTo(padding, y); ctx.lineTo(W - padding, y); ctx.stroke();
+    if (!googleMapRef.current) {
+      googleMapRef.current = new window.google.maps.Map(mapRef.current, {
+        center,
+        zoom: 14,
+        mapTypeId: 'roadmap',
+        mapTypeControl: true,
+        fullscreenControl: false,
+        streetViewControl: false,
+      });
+    } else {
+      googleMapRef.current.setCenter(center);
     }
 
-    // Draw zones
-    parsedZones.forEach((zone) => {
-      if (zone.parsedPoints.length < 3) return;
-      ctx.beginPath();
-      ctx.moveTo(toX(zone.parsedPoints[0].x), toY(zone.parsedPoints[0].y));
-      zone.parsedPoints.forEach((p) => ctx.lineTo(toX(p.x), toY(p.y)));
-      ctx.closePath();
+    const map = googleMapRef.current;
 
-      if (zone.is_no_go) {
-        ctx.fillStyle = 'rgba(239, 68, 68, 0.15)';
-        ctx.strokeStyle = '#ef4444';
-      } else if (zone.is_high_risk) {
-        ctx.fillStyle = 'rgba(249, 115, 22, 0.15)';
-        ctx.strokeStyle = '#f97316';
-      } else {
-        ctx.fillStyle = 'rgba(59, 130, 246, 0.1)';
-        ctx.strokeStyle = '#3b82f6';
-      }
-      ctx.lineWidth = 1.5;
-      ctx.fill();
-      ctx.stroke();
+    // Clear previous overlays
+    markersRef.current.forEach((m) => m.setMap(null));
+    markersRef.current = [];
+    polygonsRef.current.forEach((p) => p.setMap(null));
+    polygonsRef.current = [];
+    if (polylineRef.current) {
+      polylineRef.current.setMap(null);
+      polylineRef.current = null;
+    }
+    eventInfoWindowsRef.current.forEach((iw) => iw.close());
+    eventInfoWindowsRef.current.clear();
+    eventMarkersRef.current.clear();
 
-      // Zone label
-      const cx = zone.parsedPoints.reduce((s, p) => s + toX(p.x), 0) / zone.parsedPoints.length;
-      const cy = zone.parsedPoints.reduce((s, p) => s + toY(p.y), 0) / zone.parsedPoints.length;
-      ctx.fillStyle = zone.is_no_go ? '#ef4444' : zone.is_high_risk ? '#f97316' : '#3b82f6';
-      ctx.font = '10px sans-serif';
-      ctx.textAlign = 'center';
-      ctx.fillText(zone.name, cx, cy);
+    // Draw high-risk / no-go zones as red polygons without labels
+    zones.forEach((zone) => {
+      const pts = parseZonePoints(zone.points);
+      if (pts.length < 3) return;
+      const color = zone.is_no_go ? '#dc2626' : '#ef4444';
+      const polygon = new window.google.maps.Polygon({
+        paths: pts.map((p) => ({ lat: p.y, lng: p.x })),
+        strokeColor: color,
+        strokeOpacity: 0.9,
+        strokeWeight: 2,
+        fillColor: color,
+        fillOpacity: 0.18,
+      });
+      polygon.setMap(map);
+      polygonsRef.current.push(polygon);
     });
 
     // Draw path
     if (path.length > 1) {
-      ctx.beginPath();
-      ctx.moveTo(toX(path[0].longitude), toY(path[0].latitude));
-      path.forEach((p) => ctx.lineTo(toX(p.longitude), toY(p.latitude)));
-      ctx.strokeStyle = '#22d3ee';
-      ctx.lineWidth = 2;
-      ctx.setLineDash([5, 3]);
-      ctx.stroke();
-      ctx.setLineDash([]);
+      polylineRef.current = new window.google.maps.Polyline({
+        path: path.map((p) => ({ lat: p.latitude, lng: p.longitude })),
+        geodesic: true,
+        strokeColor: '#22d3ee',
+        strokeOpacity: 0.9,
+        strokeWeight: 3,
+      });
+      polylineRef.current.setMap(map);
     }
 
-    // Draw path points
-    path.forEach((p) => {
-      ctx.beginPath();
-      ctx.arc(toX(p.longitude), toY(p.latitude), 3, 0, Math.PI * 2);
-      ctx.fillStyle = '#22d3ee';
-      ctx.fill();
-    });
-
-    // Draw telematics events (speeding, harsh braking, etc.)
+    // Telematics events
     events.forEach((evt) => {
       if (!evt.latitude || !evt.longitude) return;
-      const ex = toX(evt.longitude);
-      const ey = toY(evt.latitude);
       const isSpeeding = /speed/i.test(evt.eventType || evt.eventCode || '');
       const isHarsh = /harsh|braking|cornering/i.test(evt.eventType || evt.eventCode || '');
       const color = isSpeeding ? '#ef4444' : isHarsh ? '#f97316' : '#eab308';
 
-      // Pulse ring
-      ctx.beginPath();
-      ctx.arc(ex, ey, 10, 0, Math.PI * 2);
-      ctx.fillStyle = color + '26'; // 15% opacity hex
-      ctx.fill();
+      const marker = new window.google.maps.Marker({
+        position: { lat: evt.latitude, lng: evt.longitude },
+        map,
+        icon: {
+          path: window.google.maps.SymbolPath.CIRCLE,
+          fillColor: color,
+          fillOpacity: 1,
+          strokeColor: '#0f172a',
+          strokeWeight: 2,
+          scale: 7,
+        },
+        title: evt.eventType,
+      });
+      markersRef.current.push(marker);
 
-      // Event dot
-      ctx.beginPath();
-      ctx.arc(ex, ey, 5, 0, Math.PI * 2);
-      ctx.fillStyle = color;
-      ctx.strokeStyle = '#0f172a';
-      ctx.lineWidth = 2;
-      ctx.fill();
-      ctx.stroke();
-
-      // Label
-      ctx.fillStyle = color;
-      ctx.font = 'bold 10px sans-serif';
-      ctx.textAlign = 'center';
-      const distText = evt.distance ? `${evt.distance.toFixed(2)}km` : '';
-      const durText = evt.durationSeconds ? `${Math.round(evt.durationSeconds / 60)}m` : '';
-      const label = [evt.eventType, distText, durText].filter(Boolean).join(' • ');
-      ctx.fillText(label, ex, ey - 12);
+      const distText = evt.distance ? `${Number(evt.distance).toFixed(2)} km` : '';
+      const durText = evt.durationSeconds ? `${Math.round(evt.durationSeconds / 60)} min` : '';
+      const locationText = evt.address
+        ? evt.address
+        : `${Number(evt.latitude).toFixed(5)}, ${Number(evt.longitude).toFixed(5)}`;
+      const infoContent = `
+        <div style="font-size:12px;min-width:180px;">
+          <div style="font-weight:600;margin-bottom:4px;">${evt.eventType}</div>
+          <div style="color:#334155;"><strong>Time:</strong> ${new Date(evt.eventTime).toLocaleString()}</div>
+          <div style="color:#334155;"><strong>Location:</strong> ${locationText}</div>
+          ${distText ? `<div style="color:#334155;"><strong>Distance:</strong> ${distText}</div>` : ''}
+          ${durText ? `<div style="color:#334155;"><strong>Duration:</strong> ${durText}</div>` : ''}
+          ${evt.speed ? `<div style="color:#334155;"><strong>Speed:</strong> ${Math.round(evt.speed)} km/h</div>` : ''}
+        </div>
+      `;
+      const infoWindow = new window.google.maps.InfoWindow({ content: infoContent });
+      eventInfoWindowsRef.current.set(evt.id, infoWindow);
+      eventMarkersRef.current.set(evt.id, marker);
+      marker.addListener('click', () => {
+        infoWindow.open(map, marker);
+      });
     });
 
-    // Draw vehicle marker (larger, on top)
+    // Vehicle marker with accuracy-style outer ring
     if (vehicle?.latitude && vehicle?.longitude) {
-      const vx = toX(vehicle.longitude);
-      const vy = toY(vehicle.latitude);
+      const vehicleColor = '#0ea5e9';
+      // Outer pulse ring
+      const outerRing = new window.google.maps.Marker({
+        position: { lat: vehicle.latitude, lng: vehicle.longitude },
+        map,
+        icon: {
+          path: window.google.maps.SymbolPath.CIRCLE,
+          fillColor: vehicleColor,
+          fillOpacity: 0.2,
+          strokeColor: vehicleColor,
+          strokeOpacity: 0.4,
+          strokeWeight: 1,
+          scale: 22,
+        },
+        clickable: false,
+        zIndex: 10,
+      });
+      markersRef.current.push(outerRing);
 
-      // Outer ring
-      ctx.beginPath();
-      ctx.arc(vx, vy, 12, 0, Math.PI * 2);
-      ctx.fillStyle = 'rgba(34, 211, 238, 0.3)';
-      ctx.fill();
+      // Main vehicle marker
+      const svg = encodeURIComponent(`
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="${vehicleColor}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M19 17h2c.6 0 1-.4 1-1v-3c0-.9-.7-1.7-1.5-1.9C18.7 10.6 16 10 16 10s-1.3-1.4-2.2-2.3c-.5-.4-1.1-.7-1.8-.7H5c-.6 0-1.1.4-1.4.9l-1.4 2.9A3.7 3.7 0 0 0 2 12v4c0 .6.4 1 1 1h2"/>
+          <circle cx="7" cy="17" r="2"/>
+          <circle cx="17" cy="17" r="2"/>
+        </svg>
+      `);
+      const marker = new window.google.maps.Marker({
+        position: { lat: vehicle.latitude, lng: vehicle.longitude },
+        map,
+        icon: {
+          url: `data:image/svg+xml,${svg}`,
+          scaledSize: new window.google.maps.Size(36, 36),
+          anchor: new window.google.maps.Point(18, 18),
+        },
+        title: `${vehicle.fleet_number || vehicle.plate || vehicle.device_id} — ${vehicle.speed ? `${Math.round(vehicle.speed)} km/h` : 'stationary'}`,
+        zIndex: 11,
+      });
+      markersRef.current.push(marker);
 
-      // Inner dot
-      ctx.beginPath();
-      ctx.arc(vx, vy, 6, 0, Math.PI * 2);
-      ctx.fillStyle = '#22d3ee';
-      ctx.strokeStyle = '#0f172a';
-      ctx.lineWidth = 2;
-      ctx.fill();
-      ctx.stroke();
-
-      // Label
-      ctx.fillStyle = '#ffffff';
-      ctx.font = 'bold 11px sans-serif';
-      ctx.textAlign = 'left';
-      ctx.fillText(
-        `${vehicle.fleet_number || vehicle.plate || vehicle.device_id}${vehicle.speed ? ` • ${Math.round(vehicle.speed)} km/h` : ''}`,
-        vx + 16,
-        vy + 4
-      );
+      const infoWindow = new window.google.maps.InfoWindow({
+        content: `
+          <div style="font-size:12px;">
+            <div style="font-weight:600;">${vehicle.fleet_number || vehicle.plate || vehicle.device_id}</div>
+            <div style="color:#64748b;">${vehicle.speed ? `${Math.round(vehicle.speed)} km/h` : 'Stationary'}</div>
+            <div style="color:#94a3b8;font-size:10px;">${vehicle.last_log_time ? new Date(vehicle.last_log_time).toLocaleString() : ''}</div>
+          </div>
+        `,
+      });
+      marker.addListener('click', () => {
+        infoWindow.open(map, marker);
+      });
     }
-  }, [zones, vehicle, path, events, isOpen]);
+
+    // Fit bounds if we have any coordinates
+    if (coords.length > 0) {
+      const bounds = new window.google.maps.LatLngBounds();
+      coords.forEach((c) => bounds.extend(c));
+      map.fitBounds(bounds, 40);
+    }
+  }, [isOpen, mapsLoaded, zones, vehicle, path, events]);
+
+  // Cleanup on close
+  useEffect(() => {
+    if (!isOpen) {
+      markersRef.current.forEach((m) => m.setMap(null));
+      markersRef.current = [];
+      polygonsRef.current.forEach((p) => p.setMap(null));
+      polygonsRef.current = [];
+      if (polylineRef.current) {
+        polylineRef.current.setMap(null);
+        polylineRef.current = null;
+      }
+      eventInfoWindowsRef.current.forEach((iw) => iw.close());
+      eventInfoWindowsRef.current.clear();
+      eventMarkersRef.current.clear();
+      googleMapRef.current = null;
+    }
+  }, [isOpen]);
 
   if (!isOpen) return null;
+
+  const hasAnyData = vehicle?.latitude || path.length > 0 || events.length > 0 || zones.length > 0;
+
+  const handleEventClick = (evt: TelematicsEvent) => {
+    const map = googleMapRef.current;
+    const marker = eventMarkersRef.current.get(evt.id);
+    const infoWindow = eventInfoWindowsRef.current.get(evt.id);
+    if (map && marker && infoWindow && evt.latitude && evt.longitude) {
+      map.setCenter({ lat: evt.latitude, lng: evt.longitude });
+      map.setZoom(16);
+      infoWindow.open(map, marker);
+    }
+  };
+
+  const getEventColor = (eventType: string) => {
+    if (/speed/i.test(eventType)) return '#ef4444';
+    if (/harsh|braking|cornering/i.test(eventType)) return '#f97316';
+    return '#eab308';
+  };
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
       <div
-        className="w-full max-w-5xl rounded-xl border border-slate-700 bg-slate-950 shadow-2xl overflow-hidden"
+        className="flex h-[85vh] w-full max-w-6xl flex-col overflow-hidden rounded-xl border border-slate-700 bg-slate-950 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b border-slate-800 px-4 py-3">
@@ -304,31 +385,102 @@ export function RealTimeMapModal({ deviceId, isOpen, onClose }: Props) {
               {vehicle ? `${vehicle.fleet_number || vehicle.plate || ''} — Real-time Map` : 'Vehicle Map'}
             </div>
             <div className="text-[11px] text-slate-400">
-              {zones.filter((z) => z.is_high_risk || z.is_no_go).length} high-risk/no-go zones
+              {zones.length} high-risk/no-go zone{zones.length === 1 ? '' : 's'}
               {events.length > 0 ? ` • ${events.length} event${events.length === 1 ? '' : 's'} in last 15 min` : ''}
             </div>
           </div>
           <div className="flex items-center gap-2">
             {loading && <span className="text-[10px] text-cyan-400 animate-pulse">Loading...</span>}
+            {mapsError && <span className="text-[10px] text-rose-400">{mapsError}</span>}
             <Button size="icon" variant="ghost" className="h-7 w-7 text-slate-400 hover:text-white" onClick={onClose}>
               <X className="h-4 w-4" />
             </Button>
           </div>
         </div>
-        <div className="p-2">
-          <canvas
-            ref={canvasRef}
-            width={960}
-            height={540}
-            className="w-full rounded-lg border border-slate-800"
-            style={{ background: '#0f172a' }}
-          />
+        <div className="flex flex-1 overflow-hidden">
+          <div className="relative flex-1 bg-slate-900">
+            {!mapsLoaded ? (
+              <div className="flex h-full items-center justify-center text-sm text-slate-400">
+                Loading Google Maps...
+              </div>
+            ) : error ? (
+              <div className="flex h-full items-center justify-center text-sm text-rose-400">
+                {error}
+              </div>
+            ) : !hasAnyData && !loading ? (
+              <div className="flex h-full flex-col items-center justify-center gap-2 text-slate-400">
+                <MapPin className="h-10 w-10 text-slate-600" />
+                <p className="text-sm">No location data available for this vehicle</p>
+                <p className="text-[11px]">Device ID: {deviceId}</p>
+              </div>
+            ) : (
+              <div ref={mapRef} className="h-full w-full" />
+            )}
+          </div>
+          <div className="w-72 overflow-y-auto border-l border-slate-800 bg-slate-900/50 p-3">
+            <div className="mb-3 text-xs font-semibold text-white">Vehicle Location</div>
+            {vehicle?.latitude && vehicle?.longitude ? (
+              <div className="mb-4 rounded-md border border-slate-700 bg-slate-800/60 p-2 text-[11px] text-slate-300">
+                <div className="flex items-center gap-1.5">
+                  <span className="inline-block h-2 w-2 rounded-full bg-sky-500" />
+                  <span className="font-medium text-sky-400">{vehicle.fleet_number || vehicle.plate || 'Vehicle'}</span>
+                </div>
+                <div className="mt-1 text-slate-400">
+                  {Number(vehicle.latitude).toFixed(5)}, {Number(vehicle.longitude).toFixed(5)}
+                </div>
+                {vehicle.speed != null && (
+                  <div className="mt-0.5 text-slate-400">{Math.round(vehicle.speed)} km/h</div>
+                )}
+                {vehicle.last_log_time && (
+                  <div className="mt-0.5 text-slate-500">{new Date(vehicle.last_log_time).toLocaleString()}</div>
+                )}
+              </div>
+            ) : (
+              <div className="mb-4 text-[11px] text-slate-500">No current vehicle location</div>
+            )}
+
+            <div className="mb-2 text-xs font-semibold text-white">Events ({events.length})</div>
+            {events.length === 0 ? (
+              <div className="text-[11px] text-slate-500">No events in the last 15 minutes</div>
+            ) : (
+              <div className="space-y-2">
+                {events.map((evt) => {
+                  const color = getEventColor(evt.eventType);
+                  return (
+                    <button
+                      key={evt.id}
+                      type="button"
+                      onClick={() => handleEventClick(evt)}
+                      className="w-full rounded-md border border-slate-700 bg-slate-800/60 p-2 text-left transition-colors hover:border-slate-600 hover:bg-slate-800"
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <span className="inline-block h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: color }} />
+                        <span className="truncate text-[11px] font-medium text-slate-200">{evt.eventType}</span>
+                      </div>
+                      <div className="mt-1 text-[10px] text-slate-400">
+                        {new Date(evt.eventTime).toLocaleString()}
+                      </div>
+                      {evt.address ? (
+                        <div className="truncate text-[10px] text-slate-500">{evt.address}</div>
+                      ) : evt.latitude && evt.longitude ? (
+                        <div className="text-[10px] text-slate-500">
+                          {Number(evt.latitude).toFixed(5)}, {Number(evt.longitude).toFixed(5)}
+                        </div>
+                      ) : null}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
         </div>
         <div className="flex items-center gap-4 border-t border-slate-800 px-4 py-2 text-[10px] text-slate-400">
           <span className="flex items-center gap-1"><span className="inline-block w-3 h-0.5 bg-cyan-400" /> Vehicle path</span>
-          <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded-full border-2 border-cyan-400 bg-cyan-400/30" /> Current location</span>
-          <span className="flex items-center gap-1"><span className="inline-block w-3 h-2 bg-orange-500/30 border border-orange-500" /> High Risk</span>
-          <span className="flex items-center gap-1"><span className="inline-block w-3 h-2 bg-red-500/30 border border-red-500" /> No Go Zone</span>
+          <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded-full border-2 border-sky-500 bg-sky-500/30" /> Current location</span>
+          <span className="flex items-center gap-1"><span className="inline-block w-3 h-2 bg-red-500/30 border border-red-500" /> High Risk / No-Go</span>
+          <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-full bg-red-500" /> Speeding</span>
+          <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-full bg-orange-500" /> Harsh driving</span>
+          <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-full bg-yellow-500" /> Other event</span>
         </div>
       </div>
     </div>
