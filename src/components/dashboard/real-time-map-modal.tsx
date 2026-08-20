@@ -51,6 +51,7 @@ type TelematicsEvent = {
   driverName: string | null;
   address: string | null;
   eventTime: string;
+  zoneName: string | null;
 };
 
 type Props = {
@@ -78,6 +79,7 @@ function normalizeEvent(raw: any): TelematicsEvent {
     driverName: raw?.driver_name ?? raw?.driverName ?? null,
     address: raw?.address ?? null,
     eventTime: raw?.event_time ?? raw?.eventTime ?? raw?.created_at ?? new Date().toISOString(),
+    zoneName: raw?.zone_name ?? raw?.zoneName ?? null,
   };
 }
 
@@ -122,8 +124,7 @@ export function RealTimeMapModal({ deviceId, isOpen, onClose }: Props) {
       const eventsData = await eventsRes.json().catch(() => ({}));
 
       if (zonesData?.data) {
-        // Only show high-risk / no-go zones on the map
-        setZones(zonesData.data.filter((z: Zone) => z.is_high_risk || z.is_no_go));
+        setZones(zonesData.data);
       }
       if (statusData?.data) setVehicle(statusData.data);
       if (logsData?.data) setPath(logsData.data);
@@ -202,21 +203,38 @@ export function RealTimeMapModal({ deviceId, isOpen, onClose }: Props) {
     eventInfoWindowsRef.current.clear();
     eventMarkersRef.current.clear();
 
-    // Draw high-risk / no-go zones as red polygons without labels
+    // Zones - blue/orange/red, click to see name
     zones.forEach((zone) => {
       const pts = parseZonePoints(zone.points);
       if (pts.length < 3) return;
-      const color = zone.is_no_go ? '#dc2626' : '#ef4444';
+      let strokeColor = '#3b82f6';
+      let fillColor = '#3b82f6';
+      let fillOpacity = 0.06;
+      let strokeWeight = 1;
+      if (zone.is_no_go) { strokeColor = '#dc2626'; fillColor = '#dc2626'; fillOpacity = 0.15; strokeWeight = 2; }
+      else if (zone.is_high_risk) { strokeColor = '#f97316'; fillColor = '#f97316'; fillOpacity = 0.12; strokeWeight = 2; }
+      const paths = pts.map((p) => ({ lat: p.y, lng: p.x }));
+      const cLat = paths.reduce((s, p) => s + p.lat, 0) / paths.length;
+      const cLng = paths.reduce((s, p) => s + p.lng, 0) / paths.length;
       const polygon = new window.google.maps.Polygon({
-        paths: pts.map((p) => ({ lat: p.y, lng: p.x })),
-        strokeColor: color,
-        strokeOpacity: 0.9,
-        strokeWeight: 2,
-        fillColor: color,
-        fillOpacity: 0.18,
+        paths, strokeColor, strokeOpacity: 0.8, strokeWeight, fillColor, fillOpacity,
       });
       polygon.setMap(map);
       polygonsRef.current.push(polygon);
+
+      // Click listener
+      const infowindow = new google.maps.InfoWindow({
+        content: `<div style="font-size:12px;padding:4px;min-width:120px">
+          <b>${zone.name}</b><br/>
+          <span style="color:${zone.is_no_go ? '#dc2626' : zone.is_high_risk ? '#f97316' : '#3b82f6'};font-size:10px">
+            ${zone.is_no_go ? 'NO-GO ZONE' : zone.is_high_risk ? 'HIGH-RISK ZONE' : 'ZONE'}
+          </span>
+        </div>`,
+      });
+      google.maps.event.addListener(polygon, 'click', (e: google.maps.MapMouseEvent) => {
+        infowindow.setPosition(e.latLng || { lat: cLat, lng: cLng });
+        infowindow.open(map);
+      });
     });
 
     // Draw path
@@ -261,6 +279,7 @@ export function RealTimeMapModal({ deviceId, isOpen, onClose }: Props) {
       const infoContent = `
         <div style="font-size:12px;min-width:180px;">
           <div style="font-weight:600;margin-bottom:4px;">${evt.eventType}</div>
+          ${evt.zoneName ? `<div style="color:#3b82f6;font-weight:500;margin-bottom:4px;">Zone: ${evt.zoneName}</div>` : ''}
           <div style="color:#334155;"><strong>Time:</strong> ${new Date(evt.eventTime).toLocaleString()}</div>
           <div style="color:#334155;"><strong>Location:</strong> ${locationText}</div>
           ${distText ? `<div style="color:#334155;"><strong>Distance:</strong> ${distText}</div>` : ''}
@@ -466,7 +485,7 @@ export function RealTimeMapModal({ deviceId, isOpen, onClose }: Props) {
               {vehicle ? `${vehicle.fleet_number || vehicle.plate || ''} — Real-time Map` : 'Vehicle Map'}
             </div>
             <div className="text-[11px] text-slate-400">
-              {zones.length} high-risk/no-go zone{zones.length === 1 ? '' : 's'}
+              {zones.length} zones ({zones.filter(z => z.is_no_go).length} no-go, {zones.filter(z => z.is_high_risk).length} high-risk)
               {events.length > 0 ? ` • ${events.length} event${events.length === 1 ? '' : 's'} in last 15 min` : ''}
             </div>
           </div>

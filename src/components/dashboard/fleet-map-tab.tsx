@@ -52,6 +52,7 @@ type TelematicsEvent = {
   event_time: string;
   duration_seconds: number | null;
   distance: number | null;
+  zone_name: string | null;
 };
 
 function parseZonePoints(raw: string | { x: number; y: number }[] | undefined): { x: number; y: number }[] {
@@ -102,6 +103,7 @@ function normalizeEvent(raw: any): TelematicsEvent {
     event_time: raw.event_time || raw.eventTime || '',
     duration_seconds: raw.duration_seconds ?? raw.durationSeconds ?? null,
     distance: raw.distance ?? null,
+    zone_name: raw.zone_name || raw.zoneName || null,
   };
 }
 
@@ -540,18 +542,37 @@ export function FleetMapTab() {
       const pts = parseZonePoints(zone.points);
       if (pts.length < 3) return;
 
-      let strokeColor = '#94a3b8';
-      let fillColor = '#94a3b8';
-      let fillOpacity = 0.04;
+      let strokeColor = '#3b82f6';
+      let fillColor = '#3b82f6';
+      let fillOpacity = 0.06;
       let strokeWeight = 1;
 
       if (zone.is_no_go) { strokeColor = '#dc2626'; fillColor = '#dc2626'; fillOpacity = 0.15; strokeWeight = 2; }
-      else if (zone.is_high_risk) { strokeColor = '#ea580c'; fillColor = '#ea580c'; fillOpacity = 0.10; strokeWeight = 2; }
+      else if (zone.is_high_risk) { strokeColor = '#f97316'; fillColor = '#f97316'; fillOpacity = 0.12; strokeWeight = 2; }
+
+      const paths = pts.map((p) => ({ lat: p.y, lng: p.x }));
+      const cLat = paths.reduce((s, p) => s + p.lat, 0) / paths.length;
+      const cLng = paths.reduce((s, p) => s + p.lng, 0) / paths.length;
 
       const polygon = new window.google.maps.Polygon({
-        paths: pts.map((p) => ({ lat: p.y, lng: p.x })),
-        strokeColor, strokeOpacity: 0.8, strokeWeight, fillColor, fillOpacity, clickable: false,
+        paths,
+        strokeColor, strokeOpacity: 0.8, strokeWeight, fillColor, fillOpacity,
       });
+
+      // Click listener on polygon to show zone name
+      const infowindow = new google.maps.InfoWindow({
+        content: `<div style="font-size:12px;padding:4px;min-width:120px">
+          <b>${zone.name}</b><br/>
+          <span style="color:${zone.is_no_go ? '#dc2626' : zone.is_high_risk ? '#f97316' : '#3b82f6'};font-size:10px">
+            ${zone.is_no_go ? 'NO-GO ZONE' : zone.is_high_risk ? 'HIGH-RISK ZONE' : 'ZONE'}
+          </span>
+        </div>`,
+      });
+      google.maps.event.addListener(polygon, 'click', (e: google.maps.MapMouseEvent) => {
+        infowindow.setPosition(e.latLng || { lat: cLat, lng: cLng });
+        infowindow.open(map);
+      });
+
       polygon.setMap(map);
       zonePolygonsRef.current.push(polygon);
     });
@@ -643,6 +664,7 @@ export function FleetMapTab() {
           <span className="flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-full bg-slate-400" /> Stationary</span>
           <span className="flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-full bg-red-500" /> Alert</span>
           <span className="text-slate-300">|</span>
+          <span className="flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-sm bg-blue-500/30 border border-blue-500" /> Zone</span>
           <span className="flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-sm bg-orange-500/30 border border-orange-500" /> High Risk</span>
           <span className="flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-sm bg-red-500/30 border border-red-500" /> No-Go</span>
         </div>
@@ -729,6 +751,7 @@ export function FleetMapTab() {
                 const isEntering = e.event_type?.toUpperCase().includes('ENTERING');
                 const isLeaving = e.event_type?.toUpperCase().includes('LEAVING');
                 const isZone = isEntering || isLeaving;
+                const zoneLabel = e.zone_name || (isEntering ? 'Entering Zone' : isLeaving ? 'Exiting Zone' : e.event_type);
                 return (
                   <div key={e.id}
                     onClick={() => {
@@ -736,7 +759,6 @@ export function FleetMapTab() {
                         googleMapRef.current.panTo({ lat: e.latitude, lng: e.longitude });
                         googleMapRef.current.setZoom(16);
                         setSelectedEventIdx(idx);
-                        // Open info window for this event marker
                         const marker = eventMarkersRef.current.find(m => {
                           const title = m.getTitle() || '';
                           return title.includes(e.event_type) && title.includes(new Date(e.event_time).toLocaleTimeString());
@@ -750,7 +772,7 @@ export function FleetMapTab() {
                         {isZone ? (
                           <span className="flex items-center gap-1">
                             <span className={`inline-block h-2 w-2 rounded-full ${isEntering ? 'bg-green-500' : 'bg-amber-500'}`} />
-                            {isEntering ? 'Entering' : 'Leaving'} Zone
+                            {zoneLabel}
                           </span>
                         ) : e.event_type}
                       </span>
@@ -763,9 +785,9 @@ export function FleetMapTab() {
                       {e.speed != null && <div className="flex items-center gap-1"><Gauge className="h-3 w-3 text-slate-400" />{Math.round(e.speed)} km/h</div>}
                       {e.address && <div className="text-slate-500 truncate">{e.address}</div>}
                       {e.description && <div className="text-slate-500">{e.description}</div>}
-                      {isZone && (
+                      {isZone && e.zone_name && (
                         <div className={`mt-1 rounded-md px-2 py-0.5 text-[10px] font-medium ${isEntering ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
-                          {e.description || e.event_type}
+                          {e.zone_name}
                         </div>
                       )}
                     </div>

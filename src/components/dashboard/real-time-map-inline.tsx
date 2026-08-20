@@ -40,6 +40,7 @@ type TelematicsEvent = {
   driverName: string | null;
   address: string | null;
   eventTime: string;
+  zoneName: string | null;
 };
 
 type Props = {
@@ -68,6 +69,7 @@ function normalizeEvent(raw: any): TelematicsEvent {
     driverName: raw?.driver_name ?? raw?.driverName ?? null,
     address: raw?.address ?? null,
     eventTime: raw?.event_time ?? raw?.eventTime ?? raw?.created_at ?? new Date().toISOString(),
+    zoneName: raw?.zone_name ?? raw?.zoneName ?? null,
   };
 }
 
@@ -114,7 +116,7 @@ export function RealTimeMapInline({ deviceId, alertLat, alertLon, alertTime }: P
         const logsData = await logsRes.json().catch(() => ({}));
         const eventsData = await eventsRes.json().catch(() => ({}));
         if (!cancelled) {
-          if (zonesData?.data) setZones(zonesData.data.filter((z: Zone) => z.is_high_risk || z.is_no_go));
+          if (zonesData?.data) setZones(zonesData.data);
           if (logsData?.data) setPath(logsData.data);
           if (eventsData?.data) {
             setEvents(
@@ -174,21 +176,38 @@ export function RealTimeMapInline({ deviceId, alertLat, alertLon, alertTime }: P
       polylineRef.current = null;
     }
 
-    // High-risk / no-go zones as red polygons without labels
+    // Zones - blue/orange/red, click to see name
     zones.forEach((zone) => {
       const pts = parseZonePoints(zone.points);
       if (pts.length < 3) return;
-      const color = zone.is_no_go ? '#dc2626' : '#ef4444';
+      let strokeColor = '#3b82f6';
+      let fillColor = '#3b82f6';
+      let fillOpacity = 0.06;
+      let strokeWeight = 1;
+      if (zone.is_no_go) { strokeColor = '#dc2626'; fillColor = '#dc2626'; fillOpacity = 0.15; strokeWeight = 2; }
+      else if (zone.is_high_risk) { strokeColor = '#f97316'; fillColor = '#f97316'; fillOpacity = 0.12; strokeWeight = 2; }
+      const paths = pts.map((p) => ({ lat: p.y, lng: p.x }));
+      const cLat = paths.reduce((s, p) => s + p.lat, 0) / paths.length;
+      const cLng = paths.reduce((s, p) => s + p.lng, 0) / paths.length;
       const polygon = new window.google.maps.Polygon({
-        paths: pts.map((p) => ({ lat: p.y, lng: p.x })),
-        strokeColor: color,
-        strokeOpacity: 0.9,
-        strokeWeight: 2,
-        fillColor: color,
-        fillOpacity: 0.18,
+        paths, strokeColor, strokeOpacity: 0.8, strokeWeight, fillColor, fillOpacity,
       });
       polygon.setMap(map);
       polygonsRef.current.push(polygon);
+
+      // Click listener
+      const infowindow = new google.maps.InfoWindow({
+        content: `<div style="font-size:12px;padding:4px;min-width:120px">
+          <b>${zone.name}</b><br/>
+          <span style="color:${zone.is_no_go ? '#dc2626' : zone.is_high_risk ? '#f97316' : '#3b82f6'};font-size:10px">
+            ${zone.is_no_go ? 'NO-GO ZONE' : zone.is_high_risk ? 'HIGH-RISK ZONE' : 'ZONE'}
+          </span>
+        </div>`,
+      });
+      google.maps.event.addListener(polygon, 'click', (e: google.maps.MapMouseEvent) => {
+        infowindow.setPosition(e.latLng || { lat: cLat, lng: cLng });
+        infowindow.open(map);
+      });
     });
 
     // Path
@@ -234,6 +253,7 @@ export function RealTimeMapInline({ deviceId, alertLat, alertLon, alertTime }: P
         content: `
           <div style="font-size:12px;min-width:180px;">
             <div style="font-weight:600;margin-bottom:4px;">${evt.eventType}</div>
+            ${evt.zoneName ? `<div style="color:#3b82f6;font-weight:500;margin-bottom:4px;">Zone: ${evt.zoneName}</div>` : ''}
             <div style="color:#334155;"><strong>Time:</strong> ${new Date(evt.eventTime).toLocaleString()}</div>
             <div style="color:#334155;"><strong>Location:</strong> ${locationText}</div>
             ${distText ? `<div style="color:#334155;"><strong>Distance:</strong> ${distText}</div>` : ''}
@@ -421,6 +441,7 @@ export function RealTimeMapInline({ deviceId, alertLat, alertLon, alertTime }: P
                   <span className="mt-0.5 inline-block h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: color }} />
                   <div className="min-w-0">
                     <div className="font-medium text-slate-800">{evt.eventType}</div>
+                    {evt.zoneName && <div className="text-blue-600 font-medium">Zone: {evt.zoneName}</div>}
                     <div className="text-slate-500">{new Date(evt.eventTime).toLocaleString()}</div>
                     {evt.address ? (
                       <div className="truncate text-slate-500">{evt.address}</div>
