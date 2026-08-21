@@ -43,9 +43,8 @@ const RETRY_INTERVAL_MS = 30000;
 const SCREENSHOT_WINDOW_MS = 10 * 60 * 1000;
 const AUTO_REFRESH_MS = 2 * 60 * 1000; // 2 minutes
 const CAPTURE_RETRY_MS = 15000; // 15s retry for capturing vehicles
-const GALLERY_BATCH_SIZE = 20; // devices per batch
-const GALLERY_PAGE_SIZE = 100; // per-page results
-const GALLERY_WINDOW_HOURS = 24; // look back 24h instead of 7 days
+const GALLERY_BATCH_SIZE = 30; // devices per batch
+const GALLERY_PER_DEVICE = 2; // last 2 files per device (CH1 + CH2)
 
 function normalizeCostCenter(value: unknown): string {
   return String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
@@ -240,51 +239,45 @@ export default function ScreenshotsDashboardTab({
         };
       });
 
-      // Fetch gallery screenshots — batch by device to avoid truncation
+      // Fetch gallery screenshots — per-device to get ONLY the last screenshot per camera
       let galFailed = false;
       if (matchedDeviceIds.length > 0) {
         const now = new Date();
         const end = now.toISOString().replace("T", " ").slice(0, 19);
-        const start = new Date(now.getTime() - GALLERY_WINDOW_HOURS * 60 * 60 * 1000).toISOString().replace("T", " ").slice(0, 19);
+        const start = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString().replace("T", " ").slice(0, 19);
 
         const byDevice: Record<string, Record<number, GalleryFile>> = {};
 
-        // Process in batches of GALLERY_BATCH_SIZE
+        // Query per-device in parallel batches — each device gets its own request with pageSize: 2
         for (let i = 0; i < matchedDeviceIds.length; i += GALLERY_BATCH_SIZE) {
           if (!activeRef.current) return;
           const batch = matchedDeviceIds.slice(i, i + GALLERY_BATCH_SIZE);
-          let pageIndex = 1;
-          let hasMore = true;
 
-          while (hasMore && activeRef.current) {
-            const galRes = await fetch(`${EPS_API}/eps/gallery/files/page`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ pageSize: GALLERY_PAGE_SIZE, pageIndex, deviceIds: batch.join(","), startTime: start, endTime: end, queryType: "Device" }),
-              cache: "no-store",
-              signal: AbortSignal.timeout(30000),
-            }).catch(() => null);
+          const results = await Promise.allSettled(
+            batch.map(deviceId =>
+              fetch(`${EPS_API}/eps/gallery/files/page`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ pageSize: GALLERY_PER_DEVICE, pageIndex: 1, deviceIds: deviceId, startTime: start, endTime: end, queryType: "Device" }),
+                cache: "no-store",
+                signal: AbortSignal.timeout(15000),
+              }).then(r => r.json()).then(d => ({ deviceId, files: d.data?.files || [] }))
+            )
+          );
 
-            if (galRes && galRes.ok) {
-              const galData = await galRes.json();
-              const files: GalleryFile[] = galData.data?.files || [];
-              const total = galData.data?.total || files.length;
-
+          for (const r of results) {
+            if (r.status === "fulfilled") {
+              const { deviceId, files } = r.value;
               for (const f of files) {
                 const ch = f.channelId || 1;
-                if (!byDevice[f.deviceId]) byDevice[f.deviceId] = {};
-                const existing = byDevice[f.deviceId][ch];
+                if (!byDevice[deviceId]) byDevice[deviceId] = {};
+                const existing = byDevice[deviceId][ch];
                 if (!existing || (f.createTime || "") > (existing.createTime || "")) {
-                  byDevice[f.deviceId][ch] = f;
+                  byDevice[deviceId][ch] = f;
                 }
               }
-
-              // Check if we need more pages — stop once we have at least 2 files per device in this batch
-              hasMore = pageIndex * GALLERY_PAGE_SIZE < total && files.length === GALLERY_PAGE_SIZE;
-              pageIndex++;
             } else {
               galFailed = true;
-              hasMore = false;
             }
           }
         }
