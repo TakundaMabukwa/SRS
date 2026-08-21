@@ -35,12 +35,17 @@ type VehicleCard = {
   ch2Url: string | null;
   ch1Time: string | null;
   ch2Time: string | null;
+  capturing?: boolean;
 };
 
 const EPS_API = "/api/video-server";
 const RETRY_INTERVAL_MS = 30000;
 const SCREENSHOT_WINDOW_MS = 10 * 60 * 1000;
 const AUTO_REFRESH_MS = 2 * 60 * 1000; // 2 minutes
+const CAPTURE_RETRY_MS = 15000; // 15s retry for capturing vehicles
+const GALLERY_BATCH_SIZE = 20; // devices per batch
+const GALLERY_PAGE_SIZE = 100; // per-page results
+const GALLERY_WINDOW_HOURS = 24; // look back 24h instead of 7 days
 
 function normalizeCostCenter(value: unknown): string {
   return String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
@@ -96,6 +101,7 @@ export default function ScreenshotsDashboardTab({
   const prevCardsRef = useRef<VehicleCard[]>([]);
   const fetchInProgressRef = useRef(false);
   const offlineConfirmRef = useRef(0);
+  const capturingRef = useRef<Set<string>>(new Set());
 
   const fetchDbOnce = useCallback(async () => {
     if (dbVehiclesRef.current && dbVehiclesRef.current.length > 0) return dbVehiclesRef.current;
@@ -234,47 +240,68 @@ export default function ScreenshotsDashboardTab({
         };
       });
 
-      // Fetch gallery screenshots for matched devices
+      // Fetch gallery screenshots — batch by device to avoid truncation
       let galFailed = false;
       if (matchedDeviceIds.length > 0) {
         const now = new Date();
         const end = now.toISOString().replace("T", " ").slice(0, 19);
-        const start = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString().replace("T", " ").slice(0, 19);
+        const start = new Date(now.getTime() - GALLERY_WINDOW_HOURS * 60 * 60 * 1000).toISOString().replace("T", " ").slice(0, 19);
 
-        const galRes = await fetch(`${EPS_API}/eps/gallery/files/page`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ pageSize: 500, pageIndex: 1, deviceIds: matchedDeviceIds.join(","), startTime: start, endTime: end, queryType: "Device" }),
-          cache: "no-store",
-          signal: AbortSignal.timeout(45000),
-        }).catch(() => null);
-        if (galRes && galRes.ok) {
-          const galData = await galRes.json();
-          const files: GalleryFile[] = galData.data?.files || [];
-          const byDevice: Record<string, Record<number, GalleryFile>> = {};
-          for (const f of files) {
-            const ch = f.channelId || 1;
-            if (!byDevice[f.deviceId]) byDevice[f.deviceId] = {};
-            const existing = byDevice[f.deviceId][ch];
-            if (!existing || (f.createTime || "") > (existing.createTime || "")) {
-              byDevice[f.deviceId][ch] = f;
-            }
-          }
-          for (const card of built) {
-            if (!card.deviceId) continue;
-            const dev = byDevice[card.deviceId];
-            if (!dev) continue;
-            if (dev[1]) { card.ch1Url = toProxiedUrl(dev[1].fileUrl); card.ch1Time = dev[1].createTime; }
-            if (dev[2]) {
-              const ch2Url = toProxiedUrl(dev[2].fileUrl);
-              if (ch2Url && ch2Url !== card.ch1Url) {
-                card.ch2Url = ch2Url;
-                card.ch2Time = dev[2].createTime;
+        const byDevice: Record<string, Record<number, GalleryFile>> = {};
+
+        // Process in batches of GALLERY_BATCH_SIZE
+        for (let i = 0; i < matchedDeviceIds.length; i += GALLERY_BATCH_SIZE) {
+          if (!activeRef.current) return;
+          const batch = matchedDeviceIds.slice(i, i + GALLERY_BATCH_SIZE);
+          let pageIndex = 1;
+          let hasMore = true;
+
+          while (hasMore && activeRef.current) {
+            const galRes = await fetch(`${EPS_API}/eps/gallery/files/page`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ pageSize: GALLERY_PAGE_SIZE, pageIndex, deviceIds: batch.join(","), startTime: start, endTime: end, queryType: "Device" }),
+              cache: "no-store",
+              signal: AbortSignal.timeout(30000),
+            }).catch(() => null);
+
+            if (galRes && galRes.ok) {
+              const galData = await galRes.json();
+              const files: GalleryFile[] = galData.data?.files || [];
+              const total = galData.data?.total || files.length;
+
+              for (const f of files) {
+                const ch = f.channelId || 1;
+                if (!byDevice[f.deviceId]) byDevice[f.deviceId] = {};
+                const existing = byDevice[f.deviceId][ch];
+                if (!existing || (f.createTime || "") > (existing.createTime || "")) {
+                  byDevice[f.deviceId][ch] = f;
+                }
               }
+
+              // Check if we need more pages — stop once we have at least 2 files per device in this batch
+              hasMore = pageIndex * GALLERY_PAGE_SIZE < total && files.length === GALLERY_PAGE_SIZE;
+              pageIndex++;
+            } else {
+              galFailed = true;
+              hasMore = false;
             }
           }
-        } else {
-          galFailed = true;
+        }
+
+        // Assign URLs to cards
+        for (const card of built) {
+          if (!card.deviceId) continue;
+          const dev = byDevice[card.deviceId];
+          if (!dev) continue;
+          if (dev[1]) { card.ch1Url = toProxiedUrl(dev[1].fileUrl); card.ch1Time = dev[1].createTime; }
+          if (dev[2]) {
+            const ch2Url = toProxiedUrl(dev[2].fileUrl);
+            if (ch2Url && ch2Url !== card.ch1Url) {
+              card.ch2Url = ch2Url;
+              card.ch2Time = dev[2].createTime;
+            }
+          }
         }
       }
 
@@ -285,11 +312,26 @@ export default function ScreenshotsDashboardTab({
           const camCount = c.cameras || 1;
           return Array.from({ length: camCount }, (_, i) => ({ deviceId: c.deviceId!, channelId: i + 1 }));
         });
+        // Track these devices as "capturing"
+        for (const c of needCapture) {
+          if (c.deviceId) capturingRef.current.add(c.deviceId);
+        }
         fetch(`${EPS_API}/eps/gallery/capture`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ captures }),
         }).catch(() => {});
+      }
+
+      // Mark cards that are capturing
+      for (const card of built) {
+        if (card.deviceId && capturingRef.current.has(card.deviceId) && !card.ch1Url && !card.ch2Url) {
+          card.capturing = true;
+        }
+        // Clear capturing flag once we have screenshots
+        if (card.ch1Url || card.ch2Url) {
+          if (card.deviceId) capturingRef.current.delete(card.deviceId);
+        }
       }
 
       if (!activeRef.current) return;
@@ -324,6 +366,14 @@ export default function ScreenshotsDashboardTab({
       // If gallery failed, retry sooner
       if (galFailed) {
         scheduleRetry();
+      }
+
+      // If there are capturing vehicles, schedule a quick capture retry
+      if (capturingRef.current.size > 0) {
+        if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
+        retryTimerRef.current = setTimeout(() => {
+          if (activeRef.current) fetchData();
+        }, CAPTURE_RETRY_MS);
       }
     } catch (e: any) {
       if (e.name === "AbortError") return;
@@ -510,7 +560,7 @@ export default function ScreenshotsDashboardTab({
                           ) : (
                             <div className="absolute inset-0 flex items-center justify-center">
                               <span className="text-[10px] text-slate-600">
-                                {card.online ? "Waiting" : "Offline"}
+                                {card.online ? (card.capturing ? "Capturing..." : "Waiting") : "Offline"}
                               </span>
                             </div>
                           )}
