@@ -197,6 +197,17 @@ export default function ScreenshotsDashboardTab({
         }
       }
 
+      // Debug: log regMap and unmatched vehicles
+      console.log('[SCREENSHOTS] regMap size:', regMap.size, 'online devices:', onlineCount);
+      console.log('[SCREENSHOTS] regMap keys:', Array.from(regMap.keys()).join(', '));
+      console.log('[SCREENSHOTS] DB vehicles:', dbVehicles.length, dbVehicles.map(v => `${v.fleet_number}|${v.registration_number}|cam=${v.camera_sim_id}`).join(', '));
+
+      // Build device lookup by Mettax deviceId (for camera_sim_id fallback)
+      const deviceIdMap = new Map<string, { deviceId: string; online: boolean; cameras: number }>();
+      for (const [key, val] of regMap) {
+        deviceIdMap.set(val.deviceId, val);
+      }
+
       // Build vehicle cards from DB, matching fleet_number or registration_number -> plateName
       const matchedDeviceIds: string[] = [];
       const prevCards = prevCardsRef.current;
@@ -212,9 +223,15 @@ export default function ScreenshotsDashboardTab({
       const built: VehicleCard[] = dbVehicles.map((v) => {
         const fleetMatch = regMap.get((v.fleet_number || "").toUpperCase());
         const regMatch = regMap.get((v.registration_number || "").toUpperCase());
-        const match = fleetMatch || regMatch;
+        // Fallback: match camera_sim_id directly to Mettax deviceId
+        const camMatch = (v.camera_sim_id || "").trim() ? deviceIdMap.get((v.camera_sim_id || "").trim()) : undefined;
+        const match = fleetMatch || regMatch || camMatch;
         const deviceId = match ? match.deviceId : null;
-        if (deviceId) matchedDeviceIds.push(deviceId);
+        if (deviceId) {
+          matchedDeviceIds.push(deviceId);
+        } else {
+          console.log(`[SCREENSHOTS] UNMATCHED: fleet="${v.fleet_number}" reg="${v.registration_number}" → no Mettax device`);
+        }
         
         // Preserve previous online status and images
         const prevCard = prevCards.find((c) => 
