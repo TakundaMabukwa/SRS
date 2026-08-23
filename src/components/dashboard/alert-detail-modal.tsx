@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { ArrowLeft, AlertTriangle, Video, Download, XCircle, CheckCircle, X, FileText, MapPin, ExternalLink, Copy } from "lucide-react";
+import { ArrowLeft, AlertTriangle, Video, Download, XCircle, CheckCircle, X, FileText, MapPin, ExternalLink, Copy, Gauge, Navigation, Clock } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toSAST } from "@/lib/utils/date-formatter";
 import { UniversalVideoPlayer } from "@/components/dashboard/universal-video-player";
@@ -491,6 +491,14 @@ export function AlertDetailModal({
     setSelectedAlertPlaybackError("");
     setDerivedAlertScreenshots([]);
     setSelectedAlertPlaybackVideos([]);
+
+    // Auto-open Map tab for telematics alerts (no video, focus on location/speed)
+    const sourceType = String(selectedAlert?.source_type || "").trim().toLowerCase();
+    if (sourceType === "telematics") {
+      setActiveTab("map");
+    } else {
+      setActiveTab("screenshots");
+    }
 
     // If already on Event Video tab, fetch immediately
     const alertId = String(selectedAlert?.id || "").trim();
@@ -1043,6 +1051,30 @@ export function AlertDetailModal({
                     <h3 className="text-lg font-semibold text-slate-900 mb-4">
                       Alert Location & Geotab Zones
                     </h3>
+                    {/* Telematics alert: show speed prominently */}
+                    {String(selectedAlert?.source_type || "").trim().toLowerCase() === "telematics" && (
+                      <div className="mb-4 flex items-center gap-4 rounded-lg border border-violet-200 bg-violet-50 p-3">
+                        <div className="flex items-center gap-2 text-sm">
+                          <Gauge className="w-4 h-4 text-violet-600" />
+                          <span className="font-semibold text-violet-900">Speed:</span>
+                          <span className="text-violet-800">{selectedAlertSpeedDisplay}</span>
+                        </div>
+                        {selectedAlert?.distance != null && (
+                          <div className="flex items-center gap-2 text-sm">
+                            <Navigation className="w-4 h-4 text-violet-600" />
+                            <span className="font-semibold text-violet-900">Distance:</span>
+                            <span className="text-violet-800">{Number(selectedAlert.distance).toFixed(0)}m</span>
+                          </div>
+                        )}
+                        {selectedAlert?.duration_seconds != null && (
+                          <div className="flex items-center gap-2 text-sm">
+                            <Clock className="w-4 h-4 text-violet-600" />
+                            <span className="font-semibold text-violet-900">Duration:</span>
+                            <span className="text-violet-800">{Math.round(selectedAlert.duration_seconds)}s</span>
+                          </div>
+                        )}
+                      </div>
+                    )}
                     {selectedAlertCoordinates ? (
                       <div className="space-y-3">
                         <div className="flex items-center gap-2 text-sm text-slate-600">

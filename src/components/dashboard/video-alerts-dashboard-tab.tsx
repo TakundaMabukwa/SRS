@@ -1520,6 +1520,9 @@ export default function VideoAlertsDashboardTab({
   }, [costCenterScopedAlertCollection, hasInlineVideoEvidence]);
 
   const passesVideoReadyGate = useCallback((alert: any) => {
+    // Telematics alerts always pass (no video expected — focus is location/speed)
+    const sourceType = String(alert?.source_type || "").trim().toLowerCase();
+    if (sourceType === "telematics") return true;
     const status = String(alert?.status || "").toLowerCase();
     if (["closed", "resolved"].includes(status)) return true;
     const id = String(alert?.id || "");
@@ -1621,6 +1624,7 @@ export default function VideoAlertsDashboardTab({
       alert?.vehicleId,
       alert?.device_id,
       alert?.id,
+      alert?.source_type,
     ].some((value) => String(value || "").toLowerCase().includes(normalizedQuery));
   };
 
@@ -1986,6 +1990,11 @@ export default function VideoAlertsDashboardTab({
               {alertCount > 1 ? (
                 <Badge variant="outline" className={cn("h-5 rounded-full px-1.5 py-0 text-[10px] font-semibold", laneStyle.countBadge)}>
                   x{alertCount}
+                </Badge>
+              ) : null}
+              {alert?.source_type && alert.source_type !== "video" ? (
+                <Badge variant="outline" className="h-4 rounded-full border-violet-200 bg-violet-50 px-1 py-0 text-[8px] font-semibold text-violet-700">
+                  Telematics
                 </Badge>
               ) : null}
             </div>
@@ -2472,6 +2481,15 @@ export default function VideoAlertsDashboardTab({
           </Badge>
         </div>
 
+        {/* Source type badge (Video / Telematics) */}
+        {alert?.source_type && alert.source_type !== "video" ? (
+          <div className="mt-1">
+            <Badge variant="outline" className="rounded-full border-violet-200 bg-violet-50 px-1.5 py-0 text-[9px] font-semibold text-violet-700">
+              Telematics
+            </Badge>
+          </div>
+        ) : null}
+
         <div className="mt-2 grid grid-cols-2 gap-2 text-[11px]">
           <div>
             <div className="text-[10px] uppercase tracking-wide text-slate-400">Target</div>
@@ -2545,6 +2563,11 @@ export default function VideoAlertsDashboardTab({
           <Badge variant="outline" className={cn("capitalize text-[10px] font-semibold", getSeverityColor(severityKey))}>
             {severityKey}
           </Badge>
+          {alert?.source_type && alert.source_type !== "video" ? (
+            <Badge variant="outline" className="ml-1 rounded-full border-violet-200 bg-violet-50 px-1.5 py-0 text-[9px] font-semibold text-violet-700">
+              Telematics
+            </Badge>
+          ) : null}
           <div className="mt-1 text-[10px] uppercase tracking-wide text-slate-400">{alert.status || "new"}</div>
         </div>
         <div className="min-w-0 text-[11px] text-slate-600">
