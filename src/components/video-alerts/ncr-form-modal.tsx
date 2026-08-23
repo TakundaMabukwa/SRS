@@ -279,19 +279,34 @@ export default function NCRFormModal({ isOpen, onClose, onSaved, driverInfo, ale
                     <td className="p-1 border-r border-black font-semibold" style={{ backgroundColor: '#f1f5f9' }}>Section</td>
                     <td className="p-0" style={{ backgroundColor: '#f9fafb' }}><CellInput value={formData.section} field="section" /></td>
                   </tr>
+                </tbody>
+              </table>
+            </div>
+
+            {/* Non-Conformance Information - ALL EDITABLE */}
+            <div className="border-b-2 border-black">
+              <div className="font-bold px-2 py-1 text-xs border-b border-black" style={{ backgroundColor: '#cbd5e1' }}>Non-Conformance Information</div>
+              <table className="w-full text-xs">
+                <tbody>
+                  <tr className="border-b border-black">
+                    <td className="w-[15%] p-1 border-r border-black font-semibold" style={{ backgroundColor: '#f1f5f9' }}>Date</td>
+                    <td className="w-[20%] p-0 border-r border-black" style={{ backgroundColor: '#f9fafb' }}><CellInput value={formData.date} field="date" /></td>
+                    <td className="w-[10%] p-1 border-r border-black font-semibold" style={{ backgroundColor: '#f1f5f9' }}>Time</td>
+                    <td className="w-[15%] p-0 border-r border-black" style={{ backgroundColor: '#f9fafb' }}><CellInput value={formData.time} field="time" /></td>
+                    <td className="w-[10%] p-1 border-r border-black font-semibold" style={{ backgroundColor: '#f1f5f9' }}>Duration</td>
+                    <td className="w-[30%] p-0" style={{ backgroundColor: '#f9fafb' }}><CellInput value={formData.duration} field="duration" /></td>
+                  </tr>
                   <tr className="border-b border-black">
                     <td className="p-1 border-r border-black font-semibold" style={{ backgroundColor: '#f1f5f9' }}>Vehicle Fleet Number</td>
                     <td className="p-0 border-r border-black font-bold" style={{ backgroundColor: '#f9fafb' }}><CellInput value={formData.vehicleFleetNumber} field="vehicleFleetNumber" /></td>
-                    <td className="p-1 border-r border-black font-semibold" style={{ backgroundColor: '#f1f5f9' }}>Vehicle Registration</td>
-                    <td className="p-0 font-bold" style={{ backgroundColor: '#f9fafb' }}><CellInput value={formData.vehicleRegistration} field="vehicleRegistration" /></td>
-                  </tr>
-                  <tr className="border-b border-black">
                     <td className="p-1 border-r border-black font-semibold" style={{ backgroundColor: '#f1f5f9' }}>Area</td>
                     <td className="p-0 border-r border-black" style={{ backgroundColor: '#f9fafb' }}><CellInput value={formData.area} field="area" /></td>
                     <td className="p-1 border-r border-black font-semibold" style={{ backgroundColor: '#f1f5f9' }}>Alert ID</td>
                     <td className="p-0" style={{ backgroundColor: '#f9fafb' }}><CellInput value={formData.alertId} field="alertId" /></td>
                   </tr>
-                  <tr>
+                  <tr className="border-b border-black">
+                    <td className="p-1 border-r border-black font-semibold" style={{ backgroundColor: '#f1f5f9' }}>Vehicle Registration</td>
+                    <td className="p-0 border-r border-black font-bold" style={{ backgroundColor: '#f9fafb' }}><CellInput value={formData.vehicleRegistration} field="vehicleRegistration" /></td>
                     <td className="p-1 border-r border-black font-semibold" style={{ backgroundColor: '#f1f5f9' }}>Last Occurrence</td>
                     <td className="p-0" colSpan={3}><CellInput value={formData.lastOccurrence} field="lastOccurrence" /></td>
                   </tr>
@@ -328,7 +343,7 @@ export default function NCRFormModal({ isOpen, onClose, onSaved, driverInfo, ale
                     type="text"
                     value={otherClassification}
                     onChange={(e) => setOtherClassification(e.target.value)}
-                    className="bg-transparent border-none outline-none font-mono text-xs w-1/2"
+                    className="bg-slate-50/50 border border-dashed border-slate-300 rounded outline-none font-mono text-xs w-1/2 p-0.5 focus:border-blue-400 focus:bg-white transition-colors"
                     placeholder="Specify..."
                   />
                 </div>
