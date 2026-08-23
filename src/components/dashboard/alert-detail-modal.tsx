@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { ArrowLeft, AlertTriangle, Video, Download, XCircle, CheckCircle, X, FileText, MapPin, ExternalLink, Copy, Gauge, Navigation, Clock } from "lucide-react";
+import { ArrowLeft, AlertTriangle, Video, Download, XCircle, CheckCircle, X, FileText, MapPin, ExternalLink, Copy, Gauge, Navigation, Clock, Timer } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toSAST } from "@/lib/utils/date-formatter";
 import { UniversalVideoPlayer } from "@/components/dashboard/universal-video-player";
@@ -52,6 +52,7 @@ interface AlertDetailModalProps {
   onSidebarAction: (entry: any, action: "resolve" | "false_alert") => Promise<void>;
   onRefreshTrigger: () => void;
   triggerRealtimeLoad: () => void;
+  onFollowUp?: (originalSeverity: string) => Promise<void>;
 }
 
 const toFiniteNumber = (value: any): number | null => {
@@ -167,6 +168,7 @@ export function AlertDetailModal({
   onSidebarAction,
   onRefreshTrigger,
   triggerRealtimeLoad,
+  onFollowUp,
 }: AlertDetailModalProps) {
   const { coordinates: selectedAlertCoordinates, placeName: selectedAlertPlaceName, placeLoading: selectedAlertPlaceLoading } = useReverseGeocode(selectedAlert, isOpen);
 
@@ -360,6 +362,54 @@ export function AlertDetailModal({
   const [contentOpacity, setContentOpacity] = useState(1);
   const prevAlertIdRef = useRef<string | undefined>(undefined);
   const googleMapsToken = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_TOKEN || process.env.GOOGLE_MAPS_API_TOKEN || "";
+
+  // Follow-up timer state
+  const [followUpLoading, setFollowUpLoading] = useState(false);
+  const [followUpCountdown, setFollowUpCountdown] = useState<string | null>(null);
+  const followUpTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Compute follow-up state from alert data
+  const isFollowUpActive = useMemo(() => {
+    if (!selectedAlert?.follow_up || !selectedAlert?.follow_up_at) return false;
+    const followUpTime = new Date(selectedAlert.follow_up_at).getTime();
+    const elapsed = Date.now() - followUpTime;
+    return elapsed < 15 * 60 * 1000;
+  }, [selectedAlert?.follow_up, selectedAlert?.follow_up_at]);
+
+  // Countdown timer
+  useEffect(() => {
+    if (followUpTimerRef.current) clearInterval(followUpTimerRef.current);
+    if (!isFollowUpActive || !selectedAlert?.follow_up_at) {
+      setFollowUpCountdown(null);
+      return;
+    }
+    const updateCountdown = () => {
+      const followUpTime = new Date(selectedAlert.follow_up_at!).getTime();
+      const remaining = Math.max(0, 15 * 60 * 1000 - (Date.now() - followUpTime));
+      if (remaining <= 0) {
+        setFollowUpCountdown(null);
+        if (followUpTimerRef.current) clearInterval(followUpTimerRef.current);
+        return;
+      }
+      const mins = Math.floor(remaining / 60000);
+      const secs = Math.floor((remaining % 60000) / 1000);
+      setFollowUpCountdown(`${mins}:${secs.toString().padStart(2, '0')}`);
+    };
+    updateCountdown();
+    followUpTimerRef.current = setInterval(updateCountdown, 1000);
+    return () => { if (followUpTimerRef.current) clearInterval(followUpTimerRef.current); };
+  }, [isFollowUpActive, selectedAlert?.follow_up_at]);
+
+  const handleFollowUp = useCallback(async () => {
+    if (!onFollowUp || !selectedAlert) return;
+    const originalSeverity = selectedAlert.original_severity || selectedAlert.severity || 'medium';
+    setFollowUpLoading(true);
+    try {
+      await onFollowUp(originalSeverity);
+    } finally {
+      setFollowUpLoading(false);
+    }
+  }, [onFollowUp, selectedAlert]);
 
   const sidebarGroups = useMemo(() => {
     const raw = vehicleAlerts.length > 0 ? vehicleAlerts : (Array.isArray(selectedAlert?.recent_alerts) ? selectedAlert.recent_alerts : []);
@@ -668,6 +718,21 @@ export function AlertDetailModal({
               </select>
               {!selectedAlert?.resolved && (
                 <>
+                  <Button
+                    variant="outline"
+                    className={cn(
+                      "h-5 border px-1.5 text-[9px] hover:bg-amber-50",
+                      isFollowUpActive
+                        ? "border-amber-400 bg-amber-100 text-amber-800"
+                        : "border-amber-300/70 bg-white text-amber-700"
+                    )}
+                    disabled={alertActionLoading || followUpLoading || isFollowUpActive}
+                    onClick={handleFollowUp}
+                    title={isFollowUpActive ? `Follow-up active (${followUpCountdown})` : "Set to low priority for 15 minutes"}
+                  >
+                    <Timer className="w-2.5 h-2.5 mr-0.5" />
+                    {isFollowUpActive ? followUpCountdown || "Follow-up" : "Follow-up"}
+                  </Button>
                   <Button variant="outline" className="h-5 border-red-300/70 bg-white px-1.5 text-[9px] text-red-700 hover:bg-red-50" disabled={alertActionLoading} onClick={onFalseAlert}>
                     <XCircle className="w-2.5 h-2.5 mr-0.5" />
                     False Alert
@@ -689,11 +754,11 @@ export function AlertDetailModal({
                 <Badge className="h-5 border border-emerald-300 bg-emerald-100 text-emerald-800 text-[9px]">Resolved</Badge>
               )}
               <textarea
-                className="h-5 min-w-[150px] rounded border border-slate-300 bg-white px-1.5 text-[10px] text-slate-900 outline-none placeholder:text-slate-400 resize-none"
+                className="min-h-[60px] max-h-[120px] min-w-[200px] rounded border border-slate-300 bg-white px-2 py-1 text-[10px] text-slate-900 outline-none placeholder:text-slate-400 resize-y"
                 value={alertNotesDraft}
                 onChange={(e) => onAlertNotesDraftChange(e.target.value)}
                 placeholder="Notes..."
-                maxLength={500}
+                maxLength={2000}
                 disabled={selectedAlert?.resolved}
                 readOnly={selectedAlert?.resolved}
               />

@@ -178,7 +178,7 @@ export default function NCRFormModal({ isOpen, onClose, onSaved, driverInfo, ale
       type="text"
       value={value}
       onChange={(e) => updateField(field, e.target.value)}
-      className={`w-full bg-transparent border-none outline-none p-1 text-xs font-mono ${className}`}
+      className={`w-full bg-slate-50/50 border border-dashed border-slate-300 rounded outline-none p-1 text-xs font-mono focus:border-blue-400 focus:bg-white transition-colors ${className}`}
     />
   )
 
@@ -187,7 +187,7 @@ export default function NCRFormModal({ isOpen, onClose, onSaved, driverInfo, ale
       value={value}
       onChange={(e) => updateField(field, e.target.value)}
       rows={rows}
-      className="w-full bg-transparent border-none outline-none p-1 text-xs resize-none"
+      className="w-full bg-slate-50/50 border border-dashed border-slate-300 rounded outline-none p-1 text-xs resize-none focus:border-blue-400 focus:bg-white transition-colors"
     />
   )
 
@@ -381,7 +381,7 @@ export default function NCRFormModal({ isOpen, onClose, onSaved, driverInfo, ale
                     value={formData.correctiveAction}
                     onChange={(e) => setFormData({...formData, correctiveAction: e.target.value})}
                     rows={3}
-                    className="w-full text-xs p-1 resize-none bg-transparent border border-slate-300 rounded"
+                    className="w-full text-xs p-1 resize-none bg-slate-50/50 border border-dashed border-slate-300 rounded focus:border-blue-400 focus:bg-white transition-colors"
                   />
                 </div>
                 <div className="col-span-3 p-2 border-r border-black">
@@ -390,7 +390,7 @@ export default function NCRFormModal({ isOpen, onClose, onSaved, driverInfo, ale
                     type="text"
                     value={formData.correctiveResponsibility}
                     onChange={(e) => setFormData({...formData, correctiveResponsibility: e.target.value})}
-                    className="w-full text-xs p-1 bg-transparent border border-slate-300 rounded"
+                    className="w-full text-xs p-1 bg-slate-50/50 border border-dashed border-slate-300 rounded focus:border-blue-400 focus:bg-white transition-colors"
                   />
                 </div>
                 <div className="col-span-3 p-2">
@@ -399,7 +399,7 @@ export default function NCRFormModal({ isOpen, onClose, onSaved, driverInfo, ale
                     type="text"
                     value={formData.correctiveTargetDate}
                     onChange={(e) => setFormData({...formData, correctiveTargetDate: e.target.value})}
-                    className="w-full text-xs p-1 bg-transparent border border-slate-300 rounded"
+                    className="w-full text-xs p-1 bg-slate-50/50 border border-dashed border-slate-300 rounded focus:border-blue-400 focus:bg-white transition-colors"
                   />
                 </div>
               </div>
@@ -410,7 +410,7 @@ export default function NCRFormModal({ isOpen, onClose, onSaved, driverInfo, ale
                     value={formData.preventiveAction}
                     onChange={(e) => setFormData({...formData, preventiveAction: e.target.value})}
                     rows={3}
-                    className="w-full text-xs p-1 resize-none bg-transparent border border-slate-300 rounded"
+                    className="w-full text-xs p-1 resize-none bg-slate-50/50 border border-dashed border-slate-300 rounded focus:border-blue-400 focus:bg-white transition-colors"
                   />
                 </div>
                 <div className="col-span-3 p-2 border-r border-black">
@@ -419,7 +419,7 @@ export default function NCRFormModal({ isOpen, onClose, onSaved, driverInfo, ale
                     type="text"
                     value={formData.preventiveResponsibility}
                     onChange={(e) => setFormData({...formData, preventiveResponsibility: e.target.value})}
-                    className="w-full text-xs p-1 bg-transparent border border-slate-300 rounded"
+                    className="w-full text-xs p-1 bg-slate-50/50 border border-dashed border-slate-300 rounded focus:border-blue-400 focus:bg-white transition-colors"
                   />
                 </div>
                 <div className="col-span-3 p-2">
@@ -428,7 +428,7 @@ export default function NCRFormModal({ isOpen, onClose, onSaved, driverInfo, ale
                     type="text"
                     value={formData.preventiveTargetDate}
                     onChange={(e) => setFormData({...formData, preventiveTargetDate: e.target.value})}
-                    className="w-full text-xs p-1 bg-transparent border border-slate-300 rounded"
+                    className="w-full text-xs p-1 bg-slate-50/50 border border-dashed border-slate-300 rounded focus:border-blue-400 focus:bg-white transition-colors"
                   />
                 </div>
               </div>
@@ -464,13 +464,13 @@ export default function NCRFormModal({ isOpen, onClose, onSaved, driverInfo, ale
               <div className="grid grid-cols-12">
                 <div className="col-span-2 p-2 border-r border-black">Investigator</div>
                 <div className="col-span-3 p-2 border-r border-black">
-                  <input type="text" value={formData.investigator} onChange={(e) => setFormData({...formData, investigator: e.target.value})} className="w-full p-1 bg-transparent border border-slate-300 rounded" />
+                  <input type="text" value={formData.investigator} onChange={(e) => setFormData({...formData, investigator: e.target.value})} className="w-full p-1 bg-slate-50/50 border border-dashed border-slate-300 rounded focus:border-blue-400 focus:bg-white transition-colors" />
                 </div>
                 <div className="col-span-1 p-2 border-r border-black font-bold" style={{ backgroundColor: "#f8fafc" }}>Date</div>
                 <div className="col-span-2 p-2 border-r border-black font-mono">{new Date().toLocaleDateString('en-GB')}</div>
                 <div className="col-span-2 p-2 border-r border-black">Manager</div>
                 <div className="col-span-2 p-2">
-                  <input type="text" value={formData.manager} onChange={(e) => setFormData({...formData, manager: e.target.value})} className="w-full p-1 bg-transparent border border-slate-300 rounded" />
+                  <input type="text" value={formData.manager} onChange={(e) => setFormData({...formData, manager: e.target.value})} className="w-full p-1 bg-slate-50/50 border border-dashed border-slate-300 rounded focus:border-blue-400 focus:bg-white transition-colors" />
                 </div>
               </div>
             </div>

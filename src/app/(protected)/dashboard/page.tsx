@@ -6297,6 +6297,24 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
         onResolve={async () => {
           await closeSelectedAlert("resolved");
         }}
+        onFollowUp={async (originalSeverity: string) => {
+          const alertId = String(selectedAlert?.id || "").trim();
+          if (!alertId) return;
+          try {
+            const res = await fetch(`/api/video-server/eps/alerts/${encodeURIComponent(alertId)}/follow-up`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ originalSeverity }),
+            });
+            if (res.ok) {
+              // Update the local alert state
+              setSelectedAlert((prev: any) => prev ? { ...prev, follow_up: true, follow_up_at: new Date().toISOString(), original_severity: originalSeverity, severity: 'low' } : prev);
+              setRefreshTrigger((prev) => prev + 1);
+            }
+          } catch (err) {
+            console.error("Follow-up failed:", err);
+          }
+        }}
         onNcrFormSelect={(formType) => {
           setSelectedNcrForm(formType as '' | 'nrc-camera-covered');
           if (formType) setShowNCRModal(true);
