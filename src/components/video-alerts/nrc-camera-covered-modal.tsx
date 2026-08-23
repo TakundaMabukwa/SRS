@@ -38,11 +38,17 @@ interface CameraCoveredModalProps {
 export default function NRCCameraCoveredModal({ isOpen, onClose, onSaved, driverInfo, alertDetails }: CameraCoveredModalProps) {
   const [saving, setSaving] = useState(false)
   const [ncrNo, setNcrNo] = useState(`NCR-${Date.now()}`)
-  const [section, setSection] = useState(driverInfo.department || 'Fleet Operations')
+  const [driverName, setDriverName] = useState(driverInfo.name || 'Unknown Driver')
+  const [department, setDepartment] = useState(driverInfo.department || 'Fleet Operations')
   const [responsibleManager, setResponsibleManager] = useState(driverInfo.department ? `${driverInfo.department} Manager` : 'Fleet Manager')
+  const [section, setSection] = useState(driverInfo.department || 'Fleet Operations')
+  const [vehicleFleetNumber, setVehicleFleetNumber] = useState(driverInfo.fleetNumber || '')
+  const [vehicleRegistration, setVehicleRegistration] = useState(driverInfo.registration || '')
   const [duration, setDuration] = useState('Observed during vehicle operation')
   const [area, setArea] = useState('Fleet operation / monitored journey')
   const [otherClass, setOtherClass] = useState('Operational non-conformance requiring investigation.')
+  const [selectedClassifications, setSelectedClassifications] = useState<string[]>([])
+  const [selectedRiskRating, setSelectedRiskRating] = useState<'high' | 'medium' | 'low'>('high')
   const [description, setDescription] = useState(
     'A fleet non-conformance was identified during vehicle operations and requires formal investigation, corrective action, and management follow-up.'
   )
@@ -94,7 +100,28 @@ export default function NRCCameraCoveredModal({ isOpen, onClose, onSaved, driver
     setArea(siteLabel)
     setDuration(eventTime ? `Observed at ${eventTime}` : 'Observed at alert time')
     setOtherClass(alertDetails?.type || 'General fleet non-conformance')
-  }, [alertDetails?.type, eventSummary, eventTime, isOpen, siteLabel])
+    setDriverName(driverInfo.name || 'Unknown Driver')
+    setDepartment(driverInfo.department || 'Fleet Operations')
+    setVehicleFleetNumber(driverInfo.fleetNumber || '')
+    setVehicleRegistration(driverInfo.registration || '')
+    setResponsibleManager(driverInfo.department ? `${driverInfo.department} Manager` : 'Fleet Manager')
+    setSection(driverInfo.department || 'Fleet Operations')
+
+    const alertType = (alertDetails?.type || '').toLowerCase()
+    const autoClassify: string[] = []
+    if (/speed/i.test(alertType)) autoClassify.push('Speeding Violation')
+    if (/zone|fence|breach/i.test(alertType)) autoClassify.push('Zone Breach')
+    if (/harsh|braking|cornering/i.test(alertType)) autoClassify.push('Reckless Driving')
+    if (/seatbelt/i.test(alertType)) autoClassify.push('No Seatbelt')
+    if (/fatigue/i.test(alertType)) autoClassify.push('Poor Fatigue Management')
+    if (/phone|call/i.test(alertType)) autoClassify.push('Negligence of Driver')
+    if (/exception/i.test(alertType)) autoClassify.push('Negligence of Driver')
+    if (autoClassify.length > 0) setSelectedClassifications(autoClassify)
+
+    if (/speed/i.test(alertType)) setSelectedRiskRating('high')
+    else if (/zone|fence|breach/i.test(alertType)) setSelectedRiskRating('medium')
+    else setSelectedRiskRating('high')
+  }, [alertDetails?.type, eventSummary, eventTime, isOpen, siteLabel, driverInfo.name, driverInfo.department, driverInfo.fleetNumber, driverInfo.registration])
   useEffect(() => {
     if (!isOpen) return
     try {
@@ -119,6 +146,18 @@ export default function NRCCameraCoveredModal({ isOpen, onClose, onSaved, driver
     setSelectedRootCauses((prev) =>
       prev.includes(key) ? prev.filter((item) => item !== key) : [...prev, key]
     )
+  }
+  const toggleClassification = (value: string) => {
+    setSelectedClassifications((prev) =>
+      prev.includes(value) ? prev.filter((v) => v !== value) : [...prev, value]
+    )
+  }
+  const getClassificationCellClass = (value: string) => {
+    const isSelected = selectedClassifications.includes(value)
+    return [
+      'border-r border-black p-2 transition-colors cursor-pointer select-none',
+      isSelected ? 'bg-yellow-200 font-semibold' : 'hover:bg-slate-100',
+    ].join(' ')
   }
   const getRootCauseCellClass = (key: string, last: boolean = false) =>
     [
@@ -205,9 +244,9 @@ export default function NRCCameraCoveredModal({ isOpen, onClose, onSaved, driver
                 <div className="border-b border-black p-2 font-bold bg-slate-100">Implicated Entity Information</div>
                 <div className="grid grid-cols-8 border-b border-black text-sm">
                   <div className="col-span-1 border-r border-black p-2 bg-slate-100">Name</div>
-                  <div className="col-span-3 border-r border-black p-2">{driverInfo.name}</div>
+                  <div className="col-span-3 border-r border-black p-0"><input className="w-full h-full border border-black px-1 py-2" value={driverName} onChange={(e) => setDriverName(e.target.value)} /></div>
                   <div className="col-span-1 border-r border-black p-2 bg-slate-100">Department</div>
-                  <div className="col-span-3 p-2">{driverInfo.department || 'Fleet Operations'}</div>
+                  <div className="col-span-3 p-0"><input className="w-full h-full border border-black px-1 py-2" value={department} onChange={(e) => setDepartment(e.target.value)} /></div>
                 </div>
                 <div className="grid grid-cols-8 border-b border-black text-sm">
                   <div className="col-span-2 border-r border-black p-2 bg-slate-100">Responsible Manager</div>
@@ -226,13 +265,13 @@ export default function NRCCameraCoveredModal({ isOpen, onClose, onSaved, driver
                 </div>
                 <div className="grid grid-cols-8 border-b border-black text-sm">
                   <div className="col-span-2 border-r border-black p-2 bg-slate-100">Vehicle Fleet Number</div>
-                  <div className="col-span-2 border-r border-black p-2">{driverInfo.fleetNumber}</div>
+                  <div className="col-span-2 border-r border-black p-0"><input className="w-full h-full border border-black px-1 py-2 font-bold" value={vehicleFleetNumber} onChange={(e) => setVehicleFleetNumber(e.target.value)} /></div>
                   <div className="col-span-1 border-r border-black p-2 bg-slate-100">Area</div>
-                  <div className="col-span-3 p-2"><input className="w-full border border-black px-1" value={area} onChange={(e) => setArea(e.target.value)} /></div>
+                  <div className="col-span-3 p-0"><input className="w-full h-full border border-black px-1 py-2" value={area} onChange={(e) => setArea(e.target.value)} /></div>
                 </div>
                 <div className="grid grid-cols-8 border-b border-black text-sm">
                   <div className="col-span-2 border-r border-black p-2 bg-slate-100">Vehicle Registration</div>
-                  <div className="col-span-2 border-r border-black p-2">{driverInfo.registration || 'N/A'}</div>
+                  <div className="col-span-2 border-r border-black p-0"><input className="w-full h-full border border-black px-1 py-2 font-bold" value={vehicleRegistration} onChange={(e) => setVehicleRegistration(e.target.value)} /></div>
                   <div className="col-span-1 border-r border-black p-2 bg-slate-100">Alert ID</div>
                   <div className="col-span-3 p-2">{alertDetails?.id || 'N/A'}</div>
                 </div>
@@ -242,16 +281,16 @@ export default function NRCCameraCoveredModal({ isOpen, onClose, onSaved, driver
                 </div>
                 <div className="border-b border-black p-2 font-bold bg-slate-100">Classification Of Non-Conformance</div>
                 <div className="grid grid-cols-6 border-b border-black text-sm">
-                  <div className="border-r border-black p-2">Injury</div>
-                  <div className="border-r border-black p-2 bg-yellow-200">Negligence of Driver</div>
-                  <div className="border-r border-black p-2 bg-yellow-200">Insubordination</div>
-                  <div className="border-r border-black p-2">Speeding Violation</div>
-                  <div className="border-r border-black p-2">Traffic Violation</div>
-                  <div className="p-2">No Seatbelt</div>
+                  <div className={getClassificationCellClass('Injury')} onClick={() => toggleClassification('Injury')}>Injury {selectedClassifications.includes('Injury') && '✓'}</div>
+                  <div className={getClassificationCellClass('Negligence of Driver')} onClick={() => toggleClassification('Negligence of Driver')}>Negligence of Driver {selectedClassifications.includes('Negligence of Driver') && '✓'}</div>
+                  <div className={getClassificationCellClass('Insubordination')} onClick={() => toggleClassification('Insubordination')}>Insubordination {selectedClassifications.includes('Insubordination') && '✓'}</div>
+                  <div className={getClassificationCellClass('Speeding Violation')} onClick={() => toggleClassification('Speeding Violation')}>Speeding Violation {selectedClassifications.includes('Speeding Violation') && '✓'}</div>
+                  <div className={getClassificationCellClass('Traffic Violation')} onClick={() => toggleClassification('Traffic Violation')}>Traffic Violation {selectedClassifications.includes('Traffic Violation') && '✓'}</div>
+                  <div className={getClassificationCellClass('No Seatbelt')} onClick={() => toggleClassification('No Seatbelt')}>No Seatbelt {selectedClassifications.includes('No Seatbelt') && '✓'}</div>
                 </div>
                 <div className="grid grid-cols-6 border-b border-black text-sm">
-                  <div className="border-r border-black p-2">Customer Complaints</div>
-                  <div className="border-r border-black p-2">External / Community Complaints</div>
+                  <div className={getClassificationCellClass('Customer Complaints')} onClick={() => toggleClassification('Customer Complaints')}>Customer Complaints {selectedClassifications.includes('Customer Complaints') && '✓'}</div>
+                  <div className={getClassificationCellClass('External / Community Complaints')} onClick={() => toggleClassification('External / Community Complaints')}>External / Community Complaints {selectedClassifications.includes('External / Community Complaints') && '✓'}</div>
                   <div className="col-span-4 p-2">Other: <input className="w-[80%] border border-black px-1" value={otherClass} onChange={(e) => setOtherClass(e.target.value)} /></div>
                 </div>
                 <div className="p-2 text-sm">
@@ -289,9 +328,9 @@ export default function NRCCameraCoveredModal({ isOpen, onClose, onSaved, driver
                 </div>
                 <div className="grid grid-cols-12 border-b border-black text-sm">
                   <div className="col-span-6 border-r border-black p-2 font-bold">Risk Rating</div>
-                  <div className="col-span-2 border-r border-black p-2">High Risk</div>
-                  <div className="col-span-2 border-r border-black p-2">Medium Risk</div>
-                  <div className="col-span-2 p-2">Low Risk</div>
+                  <div className={`col-span-2 border-r border-black p-2 cursor-pointer select-none transition-colors ${selectedRiskRating === 'high' ? 'bg-yellow-200 font-semibold' : 'hover:bg-slate-100'}`} onClick={() => setSelectedRiskRating('high')}>High Risk {selectedRiskRating === 'high' && 'X'}</div>
+                  <div className={`col-span-2 border-r border-black p-2 cursor-pointer select-none transition-colors ${selectedRiskRating === 'medium' ? 'bg-yellow-200 font-semibold' : 'hover:bg-slate-100'}`} onClick={() => setSelectedRiskRating('medium')}>Medium Risk {selectedRiskRating === 'medium' && 'X'}</div>
+                  <div className={`col-span-2 p-2 cursor-pointer select-none transition-colors ${selectedRiskRating === 'low' ? 'bg-yellow-200 font-semibold' : 'hover:bg-slate-100'}`} onClick={() => setSelectedRiskRating('low')}>Low Risk {selectedRiskRating === 'low' && 'X'}</div>
                 </div>
                 <div className="grid grid-cols-12 text-sm">
                   <div className="col-span-8 border-r border-black p-2">
