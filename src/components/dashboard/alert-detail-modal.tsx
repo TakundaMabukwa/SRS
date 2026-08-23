@@ -701,7 +701,7 @@ export function AlertDetailModal({
                 {selectedAlertSeverity.toUpperCase()}
               </Badge>
               {isFollowUpActive && (
-                <Badge className="flex items-center gap-0.5 border border-amber-300 bg-amber-100 text-amber-800 text-[9px] px-1 py-0">
+                <Badge className="animate-pulse flex items-center gap-0.5 border border-amber-300 bg-amber-100 text-amber-800 text-[9px] px-1 py-0 font-bold shadow-sm shadow-amber-200/50" style={{ animationDuration: '2s' }}>
                   <Timer className="w-2 h-2" />
                   Follow-up {followUpCountdown || ""}
                 </Badge>
@@ -729,11 +729,12 @@ export function AlertDetailModal({
                     className={cn(
                       "h-5 border px-1.5 text-[9px] hover:bg-amber-50",
                       isFollowUpActive
-                        ? "border-amber-400 bg-amber-100 text-amber-800"
+                        ? "animate-pulse border-amber-400 bg-amber-100 text-amber-800 font-bold shadow-sm shadow-amber-200/50"
                         : "border-amber-300/70 bg-white text-amber-700"
                     )}
                     disabled={alertActionLoading || followUpLoading || isFollowUpActive}
                     onClick={handleFollowUp}
+                    style={isFollowUpActive ? { animationDuration: '2s' } : undefined}
                     title={isFollowUpActive ? `Follow-up active (${followUpCountdown})` : "Set to low priority for 15 minutes"}
                   >
                     <Timer className="w-2.5 h-2.5 mr-0.5" />

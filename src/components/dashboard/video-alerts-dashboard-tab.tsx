@@ -1917,18 +1917,35 @@ export default function VideoAlertsDashboardTab({
     }
   };
 
-  const getFollowUpBadge = (alert: any) => {
-    if (!alert?.follow_up || !alert?.follow_up_at) return null;
-    const followUpTime = new Date(alert.follow_up_at).getTime();
-    const remaining = Math.max(0, 15 * 60 * 1000 - (Date.now() - followUpTime));
+  const FollowUpBadge = ({ followUpAt }: { followUpAt: string }) => {
+    const [remaining, setRemaining] = useState(() => {
+      const elapsed = Date.now() - new Date(followUpAt).getTime();
+      return Math.max(0, 15 * 60 * 1000 - elapsed);
+    });
+
+    useEffect(() => {
+      const tick = () => {
+        const elapsed = Date.now() - new Date(followUpAt).getTime();
+        setRemaining(Math.max(0, 15 * 60 * 1000 - elapsed));
+      };
+      const id = setInterval(tick, 1000);
+      return () => clearInterval(id);
+    }, [followUpAt]);
+
     if (remaining <= 0) return null;
     const mins = Math.floor(remaining / 60000);
     const secs = Math.floor((remaining % 60000) / 1000);
     return (
-      <Badge className="rounded-full border border-amber-200 bg-amber-50 px-1.5 py-0 text-[10px] font-semibold text-amber-700">
+      <Badge className="animate-pulse rounded-full border border-amber-300 bg-amber-100 px-1.5 py-0 text-[10px] font-bold text-amber-800 shadow-sm shadow-amber-200/50" style={{ animationDuration: '2s' }}>
+        <Timer className="w-2.5 h-2.5 mr-0.5 inline-block" />
         Follow-up {mins}:{secs.toString().padStart(2, '0')}
       </Badge>
     );
+  };
+
+  const getFollowUpBadge = (alert: any) => {
+    if (!alert?.follow_up || !alert?.follow_up_at) return null;
+    return <FollowUpBadge followUpAt={alert.follow_up_at} />;
   };
 
   const getControlRoomLaneStyle = (severity: "critical" | "high" | "medium" | "low") => {
