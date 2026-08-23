@@ -700,6 +700,12 @@ export function AlertDetailModal({
                 <AlertTriangle className="w-2 h-2" />
                 {selectedAlertSeverity.toUpperCase()}
               </Badge>
+              {isFollowUpActive && (
+                <Badge className="flex items-center gap-0.5 border border-amber-300 bg-amber-100 text-amber-800 text-[9px] px-1 py-0">
+                  <Timer className="w-2 h-2" />
+                  Follow-up {followUpCountdown || ""}
+                </Badge>
+              )}
               <span className="text-[10px] font-semibold text-slate-100">{selectedAlertTitle}</span>
             </div>
             <div className="flex items-center gap-2 shrink-0">

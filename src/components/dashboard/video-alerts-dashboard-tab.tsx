@@ -38,7 +38,8 @@ import {
   MapPin,
   X,
   Gauge,
-  Navigation
+  Navigation,
+  Timer
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { format, differenceInHours } from "date-fns";
@@ -1916,6 +1917,20 @@ export default function VideoAlertsDashboardTab({
     }
   };
 
+  const getFollowUpBadge = (alert: any) => {
+    if (!alert?.follow_up || !alert?.follow_up_at) return null;
+    const followUpTime = new Date(alert.follow_up_at).getTime();
+    const remaining = Math.max(0, 15 * 60 * 1000 - (Date.now() - followUpTime));
+    if (remaining <= 0) return null;
+    const mins = Math.floor(remaining / 60000);
+    const secs = Math.floor((remaining % 60000) / 1000);
+    return (
+      <Badge className="rounded-full border border-amber-200 bg-amber-50 px-1.5 py-0 text-[10px] font-semibold text-amber-700">
+        Follow-up {mins}:{secs.toString().padStart(2, '0')}
+      </Badge>
+    );
+  };
+
   const getControlRoomLaneStyle = (severity: "critical" | "high" | "medium" | "low") => {
     switch (severity) {
       case "critical":
@@ -2414,6 +2429,7 @@ export default function VideoAlertsDashboardTab({
                   x{alert.count}
                 </Badge>
               ) : null}
+              {getFollowUpBadge(alert)}
             </div>
             <div className="mt-1 text-[10px] uppercase tracking-wide text-slate-400">
               {String(alert?.status || "new")}
@@ -2501,6 +2517,9 @@ export default function VideoAlertsDashboardTab({
                   Video Ready
                 </Badge>
               </div>
+            ) : null}
+            {getFollowUpBadge(alert) ? (
+              <div className="mt-1">{getFollowUpBadge(alert)}</div>
             ) : null}
             <div className="mt-0.5 text-[10px] uppercase tracking-wide text-slate-400">
               {alert.status || "new"}
@@ -2603,6 +2622,9 @@ export default function VideoAlertsDashboardTab({
             <Badge variant="outline" className="ml-1 rounded-full border-violet-200 bg-violet-50 px-1.5 py-0 text-[9px] font-semibold text-violet-700">
               Telematics
             </Badge>
+          ) : null}
+          {getFollowUpBadge(alert) ? (
+            <span className="ml-1">{getFollowUpBadge(alert)}</span>
           ) : null}
           <div className="mt-1 text-[10px] uppercase tracking-wide text-slate-400">{alert.status || "new"}</div>
         </div>

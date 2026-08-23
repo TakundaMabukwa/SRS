@@ -1194,6 +1194,24 @@ async function handleAlertHubCompatPost(pathArray: string[], baseUrl: string, bo
     );
   }
 
+  if (action === 'follow-up' || action === 'clear-follow-up') {
+    const endpoint = action === 'follow-up' ? 'follow-up' : 'clear-follow-up';
+    const followRes = await fetch(`${baseUrl}/api/alerts/${alertId}/${endpoint}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-internal-key': SRS_INTERNAL_KEY,
+      },
+      body: JSON.stringify(body || {}),
+      cache: 'no-store',
+    });
+    const followBody = await followRes.json().catch(() => ({}));
+    return okJson(
+      typeof followBody === 'object' && followBody ? (followBody as AnyRecord) : { success: followRes.ok, alertId },
+      followRes.status,
+    );
+  }
+
   if (action === 'acknowledge' || action === 'escalate') {
     return okJson({
       success: true,
