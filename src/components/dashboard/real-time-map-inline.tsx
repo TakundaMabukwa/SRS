@@ -108,7 +108,7 @@ export function RealTimeMapInline({ deviceId, alertLat, alertLon, alertTime }: P
         const to = new Date(center + 15 * 60 * 1000).toISOString();
 
         const [zonesRes, logsRes, eventsRes] = await Promise.all([
-          fetch(`${EPS}/telematics/zones`, { cache: 'no-store' }),
+          fetch(`${EPS}/telematics/zones-lite`, { cache: 'no-store' }),
           fetch(`${EPS}/telematics/log-records/${deviceId}?from=${from}&to=${to}`, { cache: 'no-store' }),
           fetch(`${EPS}/telematics/events/${deviceId}?from=${from}&to=${to}&limit=500`, { cache: 'no-store' }),
         ]);
