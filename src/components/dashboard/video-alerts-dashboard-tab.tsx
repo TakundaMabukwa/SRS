@@ -487,6 +487,18 @@ export default function VideoAlertsDashboardTab({
       }
     }
 
+    // Also try fleet_number (telematics alerts have Geotab IDs not in camera lookup)
+    const fleetNum = String(incoming?.fleet_number || "").trim().toUpperCase();
+    if (fleetNum) {
+      const details = vehicleIdentityLookup.get(fleetNum);
+      if (details) {
+        return {
+          vehicleId: identifiers[0] || fleetNum,
+          details,
+        };
+      }
+    }
+
     return {
       vehicleId: identifiers[0] || "",
       details: null,
@@ -507,9 +519,27 @@ export default function VideoAlertsDashboardTab({
     const title = String(presentation.title || incoming.title || incoming.type || incoming.alert_type || "Alert").trim();
     const severity = String(incoming.severity || incoming.priority || "low").toLowerCase();
     const resolvedIdentity = resolveVehicleIdentity(incoming);
-    const registration = String(resolvedIdentity.details?.plate || "").trim();
-    const fleetNumber = String(resolvedIdentity.details?.fleetNumber || "").trim();
+    let registration = String(resolvedIdentity.details?.plate || "").trim();
+    let fleetNumber = String(resolvedIdentity.details?.fleetNumber || "").trim();
     const fallbackVehicleId = String(resolvedIdentity.vehicleId || "").trim();
+
+    // Fall back to raw alert data when vehicle lookup fails (e.g. Geotab IDs not in camera lookup)
+    if (!fleetNumber && !registration) {
+      const rawFleet = String(incoming?.fleet_number || "").trim();
+      const rawReg = String(incoming?.vehicle_registration || "").trim();
+      if (rawFleet) {
+        fleetNumber = rawFleet;
+        registration = rawReg;
+      } else if (rawReg) {
+        if (rawReg.includes(' - ')) {
+          const parts = rawReg.split(' - ');
+          fleetNumber = parts[0]?.trim() || "";
+          registration = parts.slice(1).join(' - ').trim() || rawReg;
+        } else {
+          registration = rawReg;
+        }
+      }
+    }
     const costCenter = String(
       resolvedIdentity.details?.costCenter ||
       incoming?.cost_center ||
@@ -1172,12 +1202,17 @@ export default function VideoAlertsDashboardTab({
       const nextLookup = new Map<string, VehicleIdentity>();
       for (const row of rows) {
         const deviceId = String(row?.deviceId || "").trim();
-        if (!deviceId) continue;
-        nextLookup.set(deviceId, {
+        const entry: VehicleIdentity = {
           plate: String(row?.plate || "").trim(),
           fleetNumber: String(row?.fleetNumber || "").trim(),
           costCenter: String(row?.costCenter || "").trim(),
-        });
+        };
+        if (deviceId) nextLookup.set(deviceId, entry);
+        // Also index by fleet_number so telematics alerts can resolve by fleet
+        if (entry.fleetNumber) {
+          const fleetKey = entry.fleetNumber.toUpperCase();
+          if (!nextLookup.has(fleetKey)) nextLookup.set(fleetKey, entry);
+        }
       }
       return nextLookup;
     };
@@ -1753,7 +1788,8 @@ export default function VideoAlertsDashboardTab({
       const updatedAtMs = new Date(getGroupedAlertTimestamp(alert) || alert?.timestamp || 0).getTime() || Date.now();
 
       for (const id of ids) {
-        const vehicleKey = deviceToVehicleKey.get(id) || id;
+        const fleetKey = String(alert?.fleet_number || "").trim().toUpperCase();
+        const vehicleKey = deviceToVehicleKey.get(id) || (fleetKey ? deviceToVehicleKey.get(fleetKey) : null) || id;
         const existing = vehicleCards.get(vehicleKey);
         const alertCostCenter = String(
           alert?.cost_center ||
