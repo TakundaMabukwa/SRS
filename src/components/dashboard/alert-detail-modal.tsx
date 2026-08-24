@@ -1221,18 +1221,15 @@ export function AlertDetailModal({
                             </div>
                             <div className="space-y-1.5">
                               {nearestPoliceStations.map((station, i) => (
-                                <div key={i} className="flex items-center justify-between text-[11px]">
+                                <div key={i} className={`flex items-center justify-between text-[11px] rounded px-2 py-1 ${i === 0 ? 'bg-green-100 border border-green-200' : ''}`}>
                                   <div className="flex items-center gap-1.5">
-                                    <MapPin className="w-3 h-3 text-blue-500" />
-                                    <span className="text-blue-800 font-medium">{station.name}</span>
+                                    <MapPin className={`w-3 h-3 ${i === 0 ? 'text-green-600' : 'text-blue-500'}`} />
+                                    <span className={`font-medium ${i === 0 ? 'text-green-900' : 'text-blue-800'}`}>
+                                      {station.name}
+                                      {i === 0 && <span className="ml-1 text-[9px] font-normal text-green-700">Route plotted</span>}
+                                    </span>
                                   </div>
-                                  <div className="flex items-center gap-2">
-                                    <span className="text-blue-600">{station.distance_km} km</span>
-                                    <Button variant="outline" size="sm" className="h-5 px-1.5 text-[9px] text-blue-700 border-blue-200"
-                                      onClick={() => window.open(`https://www.google.com/maps?q=${station.lat},${station.lon}`, "_blank")}>
-                                      Directions
-                                    </Button>
-                                  </div>
+                                  <span className={`${i === 0 ? 'text-green-700 font-semibold' : 'text-blue-600'}`}>{station.distance_km} km</span>
                                 </div>
                               ))}
                             </div>

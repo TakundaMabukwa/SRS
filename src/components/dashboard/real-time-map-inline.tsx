@@ -293,39 +293,68 @@ export function RealTimeMapInline({ deviceId, alertLat, alertLon, alertTime, pol
     });
     alertMarker.addListener('click', () => alertInfo.open(map, alertMarker));
 
-    // Add police station markers
+    // Add police station markers and auto-route to closest
     if (policeStations && policeStations.length > 0) {
+      const closest = policeStations[0];
+
       policeStations.forEach((station) => {
+        const isClosest = station.name === closest.name && station.lat === closest.lat;
         const policeMarker = new window.google.maps.Marker({
           position: { lat: station.lat, lng: station.lon },
           map,
           icon: {
             path: window.google.maps.SymbolPath.CIRCLE,
-            fillColor: '#2563eb',
+            fillColor: isClosest ? '#16a34a' : '#2563eb',
             fillOpacity: 0.9,
-            strokeColor: '#1e40af',
+            strokeColor: isClosest ? '#166534' : '#1e40af',
             strokeWeight: 2,
-            scale: 7,
+            scale: isClosest ? 9 : 7,
           },
-          title: station.name,
+          title: isClosest ? `${station.name} (Closest)` : station.name,
         });
         markersRef.current.push(policeMarker);
 
         const policeInfo = new window.google.maps.InfoWindow({
           content: `
             <div style="font-size:12px;">
-              <div style="font-weight:600;color:#2563eb;">${station.name}</div>
+              <div style="font-weight:600;color:${isClosest ? '#16a34a' : '#2563eb'};">${station.name}${isClosest ? ' (Closest)' : ''}</div>
               <div style="color:#64748b;">${station.distance_km} km away</div>
-              <a href="https://www.google.com/maps?q=${station.lat},${station.lon}" target="_blank" style="color:#2563eb;font-size:10px;">Get Directions</a>
             </div>
           `,
         });
         policeMarker.addListener('click', () => policeInfo.open(map, policeMarker));
       });
-    }
 
-    map.setCenter({ lat: alertLat, lng: alertLon });
-    map.setZoom(16);
+      // Auto-route from alert to closest police station
+      const directionsService = new window.google.maps.DirectionsService();
+      const directionsRenderer = new window.google.maps.DirectionsRenderer({
+        map,
+        suppressMarkers: true,
+        polylineOptions: { strokeColor: '#2563eb', strokeWeight: 4, strokeOpacity: 0.8 },
+      });
+      directionsRendererRef.current = directionsRenderer;
+
+      directionsService.route(
+        {
+          origin: { lat: alertLat, lng: alertLon },
+          destination: { lat: closest.lat, lng: closest.lon },
+          travelMode: window.google.maps.TravelMode.DRIVING,
+        },
+        (result, status) => {
+          if (status === 'OK' && result) {
+            directionsRenderer.setDirections(result);
+            // Fit map to show full route
+            const bounds = new window.google.maps.LatLngBounds();
+            bounds.extend({ lat: alertLat, lng: alertLon });
+            bounds.extend({ lat: closest.lat, lng: closest.lon });
+            map.fitBounds(bounds, 50);
+          }
+        }
+      );
+    } else {
+      map.setCenter({ lat: alertLat, lng: alertLon });
+      map.setZoom(16);
+    }
   }, [mapsLoaded, zones, path, events, alertLat, alertLon, alertTime, policeStations]);
 
   const clearLos = () => {
