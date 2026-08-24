@@ -6356,7 +6356,24 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
               documentType: artifact.documentType,
               formType: "nrc-camera-covered",
             }])
-            toast.success("NCR saved. Alert is still open — you can fill more forms or resolve when ready.")
+            // Auto-resolve the alert after NCR is filed
+            const alertId = String(selectedAlert?.id || "").trim();
+            if (alertId) {
+              try {
+                await closeSelectedAlert("ncr", {
+                  type: "ncr",
+                  timestamp: new Date().toISOString(),
+                  filled_by: actor,
+                  link: artifact.documentUrl || "",
+                  documentName: artifact.documentName,
+                });
+                toast.success("NCR filed and alert resolved.")
+              } catch {
+                toast.success("NCR saved. Alert is still open — you can resolve manually.")
+              }
+            } else {
+              toast.success("NCR saved.")
+            }
           }}
           driverInfo={selectedAlertDriverInfo}
           alertDetails={selectedAlertReportDetails}

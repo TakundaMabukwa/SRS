@@ -175,6 +175,19 @@ const SideBar = () => {
                 </Link>
               </SidebarMenuButton>
             </SidebarMenuItem>
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                asChild
+                className={pathname.startsWith('/cost-centers') ? 'bg-white text-black hover:bg-gray-200 font-semibold' : 'text-white hover:bg-gray-800'}
+              >
+                <Link href={'/cost-centers'}>
+                  <Building2 className="size-5" />
+                  <span className={pathname.startsWith('/cost-centers') ? 'font-bold' : undefined}>
+                    Cost Centers
+                  </span>
+                </Link>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
           </SidebarMenu>
         </SidebarGroup>
       </SidebarContent>

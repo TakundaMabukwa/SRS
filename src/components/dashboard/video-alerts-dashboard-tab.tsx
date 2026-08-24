@@ -65,6 +65,7 @@ type VehicleIdentity = {
   plate: string;
   fleetNumber: string;
   costCenter: string;
+  driverName: string | null;
 };
 
 type ControlRoomVehicleCard = {
@@ -566,7 +567,7 @@ export default function VideoAlertsDashboardTab({
       device_id: String(incoming.device_id || incoming.vehicleId || incoming.vehicle_id || vehicleMeta.vehicleId || fallbackVehicleId || "").trim(),
       cost_center: costCenter,
       costCenter,
-      driver_name: incoming.driver_name || incoming.driver || incoming?.metadata?.driverName || "Unknown",
+      driver_name: resolvedIdentity.details?.driverName || incoming.driver_name || incoming.driver || incoming?.metadata?.driverName || "Unknown",
       timestamp: displayTimestamp || sourceTimestamp,
       lastOccurrenceTimestamp,
       firstOccurrenceTimestamp,
@@ -1207,6 +1208,7 @@ export default function VideoAlertsDashboardTab({
           plate: String(row?.plate || "").trim(),
           fleetNumber: String(row?.fleetNumber || "").trim(),
           costCenter: String(row?.costCenter || "").trim(),
+          driverName: String(row?.driverName || "").trim() || null,
         };
         if (deviceId) nextLookup.set(deviceId, entry);
         // Also index by fleet_number so telematics alerts can resolve by fleet
@@ -2011,7 +2013,7 @@ export default function VideoAlertsDashboardTab({
       || vehicleStatuses.get(card.deviceId);
     const geotabInfo = cardToGeotabMap.get(card.deviceId);
     const speed = status?.speed != null && status.speed > 0 ? Math.round(status.speed) : null;
-    const driverName = status?.driver_name || null;
+    const driverName = status?.driver_name || vehicleIdentityLookup.get(card.deviceId)?.driverName || vehicleIdentityLookup.get(fleetUp)?.driverName || null;
     const hasLocation = status?.latitude != null && status?.longitude != null;
 
     // Real-time Geotab events from WebSocket
