@@ -45,10 +45,13 @@ export function ResolveAlertsModal({
   const [resolvingIds, setResolvingIds] = useState<Set<string>>(new Set());
 
   const fetchAlerts = useCallback(async () => {
-    if (!deviceId) return;
+    if (!deviceId && !fleetNumber && !registration) return;
     setLoading(true);
     try {
-      const res = await fetch(`${baseUrl}/telematics/vehicle-alerts/${encodeURIComponent(deviceId)}`, {
+      const params = new URLSearchParams();
+      if (fleetNumber) params.set('fleet', fleetNumber);
+      if (registration) params.set('fleet', registration);
+      const res = await fetch(`${baseUrl}/telematics/vehicle-alerts/${encodeURIComponent(deviceId || 'none')}?${params.toString()}`, {
         cache: "no-store",
         signal: AbortSignal.timeout(10000),
       });

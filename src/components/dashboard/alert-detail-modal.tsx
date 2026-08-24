@@ -642,8 +642,7 @@ export function AlertDetailModal({
       return;
     }
     setPoliceLoading(true);
-    const epsBase = process.env.NEXT_PUBLIC_EPS_STREAMING_SERVER || 'http://209.38.252.70:3002';
-    fetch(`${epsBase}/api/police/nearest?lat=${selectedAlertCoordinates.latitude}&lon=${selectedAlertCoordinates.longitude}&limit=3`, {
+    fetch(`/api/video-server/police/nearest?lat=${selectedAlertCoordinates.latitude}&lon=${selectedAlertCoordinates.longitude}&limit=3`, {
       cache: "no-store",
       signal: AbortSignal.timeout(5000),
     })
