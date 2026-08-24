@@ -73,7 +73,7 @@ function useReverseGeocode(selectedAlert: any, isOpen: boolean) {
       { lat: alert?.metadata?.latitude, lng: alert?.metadata?.longitude },
       { lat: alert?.metadata?.locationFix?.latitude, lng: alert?.metadata?.locationFix?.longitude },
       { lat: alert?.latitude, lng: alert?.longitude },
-      { lat: alert?.lat, lng: alert?.lng },
+      { lat: alert?.lat, lng: alert?.lon || alert?.lng },
       { lat: alert?.gps?.latitude, lng: alert?.gps?.longitude },
     ];
     for (const pair of pairs) {
