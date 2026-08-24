@@ -11,7 +11,7 @@ import { Plus, Pencil, Trash2, Building2 } from "lucide-react";
 import { toast } from "sonner";
 
 type CostCenter = {
-  id: number;
+  id: string;
   name: string;
   code: string;
   description: string | null;
@@ -24,7 +24,7 @@ export default function CostCentersPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
   const [isDialogOpen, setIsDialogOpen] = useState(false);
-  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [formData, setFormData] = useState({ name: "", code: "", description: "" });
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -94,7 +94,7 @@ export default function CostCentersPage() {
     }
   };
 
-  const handleDelete = async (id: number) => {
+  const handleDelete = async (id: string) => {
     if (!confirm("Deactivate this cost center?")) return;
     try {
       const res = await fetch(`/api/cost-centers?id=${id}`, { method: "DELETE" });

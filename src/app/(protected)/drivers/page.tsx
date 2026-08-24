@@ -65,7 +65,7 @@ type Driver = {
     created_by?: string | null
     user_id?: string | null
     fleet_number?: string | null
-    cost_center_id?: number | null
+    cost_center_id?: string | null
 }
 
 export default function Drivers() {
