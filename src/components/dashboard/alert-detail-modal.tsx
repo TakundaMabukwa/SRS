@@ -1189,6 +1189,7 @@ export function AlertDetailModal({
                           alertLat={selectedAlertCoordinates.latitude}
                           alertLon={selectedAlertCoordinates.longitude}
                           alertTime={selectedAlert?.timestamp || selectedAlert?.alarm_ts || selectedAlert?.displayTimestamp}
+                          policeStations={nearestPoliceStations}
                         />
                         <div className="flex gap-2">
                           <Button

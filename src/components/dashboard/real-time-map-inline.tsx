@@ -48,6 +48,7 @@ type Props = {
   alertLat: number;
   alertLon: number;
   alertTime?: string;
+  policeStations?: Array<{ name: string; lat: number; lon: number; distance_km: number }>;
 };
 
 const EPS = '/api/video-server';
@@ -79,7 +80,7 @@ function getEventColor(eventType: string) {
   return '#eab308';
 }
 
-export function RealTimeMapInline({ deviceId, alertLat, alertLon, alertTime }: Props) {
+export function RealTimeMapInline({ deviceId, alertLat, alertLon, alertTime, policeStations }: Props) {
   const mapRef = useRef<HTMLDivElement>(null);
   const googleMapRef = useRef<google.maps.Map | null>(null);
   const markersRef = useRef<google.maps.Marker[]>([]);
@@ -292,9 +293,40 @@ export function RealTimeMapInline({ deviceId, alertLat, alertLon, alertTime }: P
     });
     alertMarker.addListener('click', () => alertInfo.open(map, alertMarker));
 
+    // Add police station markers
+    if (policeStations && policeStations.length > 0) {
+      policeStations.forEach((station) => {
+        const policeMarker = new window.google.maps.Marker({
+          position: { lat: station.lat, lng: station.lon },
+          map,
+          icon: {
+            path: window.google.maps.SymbolPath.CIRCLE,
+            fillColor: '#2563eb',
+            fillOpacity: 0.9,
+            strokeColor: '#1e40af',
+            strokeWeight: 2,
+            scale: 7,
+          },
+          title: station.name,
+        });
+        markersRef.current.push(policeMarker);
+
+        const policeInfo = new window.google.maps.InfoWindow({
+          content: `
+            <div style="font-size:12px;">
+              <div style="font-weight:600;color:#2563eb;">${station.name}</div>
+              <div style="color:#64748b;">${station.distance_km} km away</div>
+              <a href="https://www.google.com/maps?q=${station.lat},${station.lon}" target="_blank" style="color:#2563eb;font-size:10px;">Get Directions</a>
+            </div>
+          `,
+        });
+        policeMarker.addListener('click', () => policeInfo.open(map, policeMarker));
+      });
+    }
+
     map.setCenter({ lat: alertLat, lng: alertLon });
     map.setZoom(16);
-  }, [mapsLoaded, zones, path, events, alertLat, alertLon, alertTime]);
+  }, [mapsLoaded, zones, path, events, alertLat, alertLon, alertTime, policeStations]);
 
   const clearLos = () => {
     if (directionsRendererRef.current) {
