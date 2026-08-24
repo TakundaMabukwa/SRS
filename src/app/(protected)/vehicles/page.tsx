@@ -1125,6 +1125,7 @@ export default function Vehicles() {
                     <TableHead className="h-10 px-3 text-xs font-semibold text-slate-700 uppercase tracking-wider">Fleet #</TableHead>
                     <TableHead className="h-10 px-3 text-xs font-semibold text-slate-700 uppercase tracking-wider">Make</TableHead>
                     <TableHead className="h-10 px-3 text-xs font-semibold text-slate-700 uppercase tracking-wider">Color</TableHead>
+                    <TableHead className="h-10 px-3 text-xs font-semibold text-slate-700 uppercase tracking-wider">Cost Centre</TableHead>
                     <TableHead className="h-10 px-3 text-xs font-semibold text-slate-700 uppercase tracking-wider">Camera Serial</TableHead>
                     <TableHead className="h-10 px-3 text-xs font-semibold text-slate-700 uppercase tracking-wider">SIM ID</TableHead>
                     <TableHead className="h-10 px-3 text-xs font-semibold text-slate-700 uppercase tracking-wider">Install Date</TableHead>
@@ -1140,7 +1141,8 @@ export default function Vehicles() {
                       <TableCell className="px-3 py-2 text-sm font-medium text-slate-900">{(vehicle as any).registration_number || '-'}</TableCell>
                       <TableCell className="px-3 py-2 text-sm text-slate-700">{(vehicle as any).fleet_number || '-'}</TableCell>
                       <TableCell className="px-3 py-2 text-sm text-slate-700">{(vehicle as any).make || '-'}</TableCell>
-                      <TableCell className="px-3 py-2 text-sm text-slate-700">{(vehicle as any).color || '-'}</TableCell>
+                      <TableCell className="px-3 py-2 text-sm text-slate-700">{(vehicle as any).colour || '-'}</TableCell>
+                      <TableCell className="px-3 py-2 text-sm text-slate-700">{(vehicle as any).cost_centres || (vehicle as any).cost_center || '-'}</TableCell>
                       <TableCell className="px-3 py-2 text-sm text-slate-700 font-mono text-xs">{(vehicle as any).camera_serial || '-'}</TableCell>
                       <TableCell className="px-3 py-2 text-sm text-slate-700 font-mono text-xs">{(vehicle as any).camera_sim_id || '-'}</TableCell>
                       <TableCell className="px-3 py-2 text-sm text-slate-700">{(vehicle as any).installation_date || '-'}</TableCell>

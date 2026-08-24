@@ -8,6 +8,8 @@ type VehicleLookupEntry = {
   make: string | null;
   model: string | null;
   costCenter: string | null;
+  driverName: string | null;
+  driverId: string | null;
 };
 
 const VEHICLE_LOOKUP_CACHE_TTL_MS = 10 * 60 * 1000;
@@ -61,7 +63,7 @@ async function fetchAllVehicleLookupRowsFromSupabase() {
 
   const { data, error } = await supabase
     .from('vehiclesc')
-    .select('registration_number, fleet_number, make, model, camera_serial, camera_sim_id, cost_center');
+    .select('registration_number, fleet_number, make, model, camera_serial, camera_sim_id, cost_center, driver_id, drivers!vehiclesc_driver_id_fkey(first_name, surname, fleet_number, id)');
 
   if (error) {
     return {
@@ -75,12 +77,16 @@ async function fetchAllVehicleLookupRowsFromSupabase() {
   const byDevice = new Map<string, VehicleLookupEntry>();
   const byPlate = new Map<string, VehicleLookupEntry>();
   for (const row of data || []) {
+    const driver = (row as any).drivers;
+    const driverName = driver ? `${driver.first_name || ''} ${driver.surname || ''}`.trim() : null;
     const rowValues = {
       plate: cleanText(row.registration_number),
       fleetNumber: cleanText(row.fleet_number),
       make: cleanText(row.make),
       model: cleanText(row.model),
       costCenter: cleanText(row.cost_center),
+      driverName: driverName || null,
+      driverId: cleanText((row as any).driver_id),
     };
 
     const simId = String(row.camera_sim_id ?? '').trim();
@@ -225,6 +231,8 @@ export async function GET(req: NextRequest) {
         }> = [];
 
         if (vehicle.camera_sim_id && deviceIds.includes(String(vehicle.camera_sim_id))) {
+            const vDriver = (vehicle as any).drivers;
+            const vDriverName = vDriver ? `${vDriver.first_name || ''} ${vDriver.surname || ''}`.trim() : null;
             rows.push({
               deviceId: String(vehicle.camera_sim_id),
               plate: cleanText(vehicle.registration_number),
@@ -232,10 +240,14 @@ export async function GET(req: NextRequest) {
               make: cleanText(vehicle.make),
               model: cleanText(vehicle.model),
               costCenter: cleanText(vehicle.cost_center),
+              driverName: vDriverName || null,
+              driverId: cleanText((vehicle as any).driver_id),
             });
           }
 
         if (vehicle.camera_serial && deviceIds.includes(String(vehicle.camera_serial))) {
+            const vDriver = (vehicle as any).drivers;
+            const vDriverName = vDriver ? `${vDriver.first_name || ''} ${vDriver.surname || ''}`.trim() : null;
             rows.push({
               deviceId: String(vehicle.camera_serial),
               plate: cleanText(vehicle.registration_number),
@@ -243,6 +255,8 @@ export async function GET(req: NextRequest) {
               make: cleanText(vehicle.make),
               model: cleanText(vehicle.model),
               costCenter: cleanText(vehicle.cost_center),
+              driverName: vDriverName || null,
+              driverId: cleanText((vehicle as any).driver_id),
             });
           }
 
@@ -274,6 +288,8 @@ export async function GET(req: NextRequest) {
           make: vehicle.make,
           model: vehicle.model,
           costCenter: vehicle.costCenter,
+          driverName: vehicle.driverName,
+          driverId: vehicle.driverId,
         });
       }
     }
@@ -316,12 +332,14 @@ export async function GET(req: NextRequest) {
             }
             const { data: plateMatch } = await supabase
               .from('vehiclesc')
-              .select('registration_number, fleet_number, make, model, cost_center')
+              .select('registration_number, fleet_number, make, model, cost_center, driver_id, drivers(first_name, surname)')
               .ilike('registration_number', registration)
               .limit(1)
               .maybeSingle();
             if (plateMatch) {
-              return NextResponse.json({ success: true, plate: cleanText(plateMatch.registration_number), fleetNumber: cleanText(plateMatch.fleet_number), make: cleanText(plateMatch.make), model: cleanText(plateMatch.model), costCenter: cleanText(plateMatch.cost_center) });
+              const pmDriver = (plateMatch as any).drivers;
+              const pmDriverName = pmDriver ? `${pmDriver.first_name || ''} ${pmDriver.surname || ''}`.trim() : null;
+              return NextResponse.json({ success: true, plate: cleanText(plateMatch.registration_number), fleetNumber: cleanText(plateMatch.fleet_number), make: cleanText(plateMatch.make), model: cleanText(plateMatch.model), costCenter: cleanText(plateMatch.cost_center), driverName: pmDriverName || null, driverId: cleanText((plateMatch as any).driver_id) });
             }
           }
         }
@@ -329,13 +347,17 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ success: false, plate: null, message: 'Vehicle not found' });
     }
 
+    const vehicleDriver = (vehicle as any).drivers;
+    const vehicleDriverName = vehicleDriver ? `${vehicleDriver.first_name || ''} ${vehicleDriver.surname || ''}`.trim() : null;
     return NextResponse.json({ 
       success: true, 
       plate: cleanText(vehicle.registration_number),
       fleetNumber: cleanText(vehicle.fleet_number),
       make: cleanText(vehicle.make),
       model: cleanText(vehicle.model),
-      costCenter: cleanText(vehicle.cost_center)
+      costCenter: cleanText(vehicle.cost_center),
+      driverName: vehicleDriverName || null,
+      driverId: cleanText((vehicle as any).driver_id)
     });
 
   } catch (error: any) {

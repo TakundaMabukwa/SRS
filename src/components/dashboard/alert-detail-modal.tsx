@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { ArrowLeft, AlertTriangle, Video, Download, XCircle, CheckCircle, X, FileText, MapPin, ExternalLink, Copy, Gauge, Navigation, Clock, Timer } from "lucide-react";
+import { ArrowLeft, AlertTriangle, Video, Download, XCircle, CheckCircle, X, FileText, MapPin, ExternalLink, Copy, Gauge, Navigation, Clock, Timer, ShieldAlert } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toSAST } from "@/lib/utils/date-formatter";
 import { UniversalVideoPlayer } from "@/components/dashboard/universal-video-player";
@@ -277,7 +277,7 @@ export function AlertDetailModal({
   }, [getDashboardStructuredAlertMapping, selectedAlert]);
 
   const preservedVehicleRef = useRef("");
-  const [vehicleLookup, setVehicleLookup] = useState<Record<string, { fleetNumber: string; registration: string }>>({});
+  const [vehicleLookup, setVehicleLookup] = useState<Record<string, { fleetNumber: string; registration: string; driverName: string | null }>>({});
   const [geotabDeviceId, setGeotabDeviceId] = useState<string | null>(null);
 
   const selectedAlertVehicleDisplay = useMemo(() => {
@@ -311,12 +311,15 @@ export function AlertDetailModal({
   const selectedAlertDriverInfo = useMemo(() => {
     if (!selectedAlert) return { name: "Unknown", phone: "", department: "" };
     const driverInfo = selectedAlert?.driverInfo || selectedAlert?.driver_info || selectedAlert?.metadata?.driver || {};
+    const deviceId = String(selectedAlert?.device_id || selectedAlert?.deviceId || selectedAlert?.vehicleId || "").trim();
+    const lookupDriver = vehicleLookup[deviceId]?.driverName;
+    const name = lookupDriver || String(driverInfo?.name || driverInfo?.driver_name || driverInfo?.full_name || selectedAlert?.driver_name || selectedAlert?.driverName || "Unknown").trim();
     return {
-      name: String(driverInfo?.name || driverInfo?.driver_name || driverInfo?.full_name || selectedAlert?.driver_name || selectedAlert?.driverName || "Unknown").trim(),
+      name,
       phone: String(driverInfo?.phone || driverInfo?.phone_number || driverInfo?.mobile || "").trim(),
       department: String(driverInfo?.department || driverInfo?.dept || driverInfo?.cost_center || selectedAlert?.department || "").trim(),
     };
-  }, [selectedAlert]);
+  }, [selectedAlert, vehicleLookup]);
 
   const selectedAlertSpeedDisplay = useMemo(() => {
     const speedVal = selectedAlert?.speed ?? selectedAlert?.metadata?.speed ?? selectedAlert?.gps?.speed;
@@ -356,6 +359,8 @@ export function AlertDetailModal({
   const [captureRequestTrigger, setCaptureRequestTrigger] = useState(0);
   const [skycamMediaChecked, setSkycamMediaChecked] = useState(false);
   const [vehicleAlerts, setVehicleAlerts] = useState<any[]>([]);
+  const [nearestPoliceStations, setNearestPoliceStations] = useState<Array<{ name: string; distance_km: number; lat: number; lon: number }>>([]);
+  const [policeLoading, setPoliceLoading] = useState(false);
   const alertVideoRequestStateRef = useRef<Record<string, any>>({});
   const alertMediaFetchBackoffRef = useRef<Record<string, number>>({});
   const videoProxyBase = "/api/video-server";
@@ -630,6 +635,26 @@ export function AlertDetailModal({
       .catch(() => {});
   }, [selectedAlert?.id, selectedAlert?.device_id, selectedAlert?.vehicleId]);
 
+  // Fetch nearest police stations when coordinates are available (loaded in parallel)
+  useEffect(() => {
+    if (!selectedAlertCoordinates || !isOpen) {
+      setNearestPoliceStations([]);
+      return;
+    }
+    setPoliceLoading(true);
+    const epsBase = process.env.NEXT_PUBLIC_EPS_STREAMING_SERVER || 'http://209.38.252.70:3002';
+    fetch(`${epsBase}/api/police/nearest?lat=${selectedAlertCoordinates.latitude}&lon=${selectedAlertCoordinates.longitude}&limit=3`, {
+      cache: "no-store",
+      signal: AbortSignal.timeout(5000),
+    })
+      .then((res) => res.json())
+      .then((data) => {
+        setNearestPoliceStations(Array.isArray(data?.stations) ? data.stations : []);
+      })
+      .catch(() => setNearestPoliceStations([]))
+      .finally(() => setPoliceLoading(false));
+  }, [selectedAlertCoordinates?.latitude, selectedAlertCoordinates?.longitude, isOpen]);
+
   // Fetch vehicle lookup for fleet-reg format
   useEffect(() => {
     if (Object.keys(vehicleLookup).length > 0) return;
@@ -637,13 +662,14 @@ export function AlertDetailModal({
       .then((res) => res.json())
       .then((data) => {
         const vehicles = Array.isArray(data?.vehicles) ? data.vehicles : [];
-        const lookup: Record<string, { fleetNumber: string; registration: string }> = {};
+        const lookup: Record<string, { fleetNumber: string; registration: string; driverName: string | null }> = {};
         for (const v of vehicles) {
           const id = String(v?.deviceId || v?.device_id || v?.vehicleId || "").trim();
           if (id) {
             lookup[id] = {
               fleetNumber: String(v?.fleetNumber || v?.fleet_number || "").trim(),
               registration: String(v?.registration || v?.plate || v?.plateNumber || "").trim(),
+              driverName: String(v?.driverName || "").trim() || null,
             };
           }
         }
@@ -707,6 +733,11 @@ export function AlertDetailModal({
                 </Badge>
               )}
               <span className="text-[10px] font-semibold text-slate-100">{selectedAlertTitle}</span>
+              {selectedAlertDriverInfo.name && selectedAlertDriverInfo.name !== "Unknown" && (
+                <span className="text-[9px] text-slate-300 ml-1">
+                  Driver: {selectedAlertDriverInfo.name}
+                </span>
+              )}
             </div>
             <div className="flex items-center gap-2 shrink-0">
               <select
@@ -1181,6 +1212,38 @@ export function AlertDetailModal({
                             Copy Coordinates
                           </Button>
                         </div>
+                        {/* Nearest Police Stations */}
+                        {nearestPoliceStations.length > 0 && (
+                          <div className="rounded-lg border border-blue-200 bg-blue-50 p-3">
+                            <div className="flex items-center gap-2 mb-2">
+                              <ShieldAlert className="w-4 h-4 text-blue-600" />
+                              <span className="text-xs font-semibold text-blue-900">Nearest Police Station{nearestPoliceStations.length > 1 ? 's' : ''}</span>
+                            </div>
+                            <div className="space-y-1.5">
+                              {nearestPoliceStations.map((station, i) => (
+                                <div key={i} className="flex items-center justify-between text-[11px]">
+                                  <div className="flex items-center gap-1.5">
+                                    <MapPin className="w-3 h-3 text-blue-500" />
+                                    <span className="text-blue-800 font-medium">{station.name}</span>
+                                  </div>
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-blue-600">{station.distance_km} km</span>
+                                    <Button variant="outline" size="sm" className="h-5 px-1.5 text-[9px] text-blue-700 border-blue-200"
+                                      onClick={() => window.open(`https://www.google.com/maps?q=${station.lat},${station.lon}`, "_blank")}>
+                                      Directions
+                                    </Button>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                        {policeLoading && (
+                          <div className="text-[10px] text-slate-400 flex items-center gap-1">
+                            <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-blue-500"></div>
+                            Loading nearby police stations...
+                          </div>
+                        )}
                       </div>
                     ) : (
                       <div className="text-center py-12 text-slate-500">

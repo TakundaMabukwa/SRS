@@ -56,7 +56,7 @@ type Driver = {
     rear_of_driver_pic?: string | null
     professional_driving_permit?: boolean
     pdp_expiry_date?: string | null
-    hazCamDate?: string | null
+    hazcamDate?: string | null
     medic_exam_date?: string | null
     pop?: string | null
     salary?: number | null
@@ -64,6 +64,8 @@ type Driver = {
     created_at?: string | null
     created_by?: string | null
     user_id?: string | null
+    fleet_number?: string | null
+    cost_center_id?: number | null
 }
 
 export default function Drivers() {
@@ -102,6 +104,8 @@ export default function Drivers() {
     const [biWeeklyData, setBiWeeklyData] = useState<BiWeeklyCategory[]>([])
     const [dailyStats, setDailyStats] = useState<DailyStats[]>([])
 
+    type CostCenter = { id: number; name: string; code: string }
+    const [costCenters, setCostCenters] = useState<CostCenter[]>([])
 
     const emptyForm: Driver = {
         first_name: '',
@@ -130,6 +134,13 @@ export default function Drivers() {
 
     useEffect(() => {
         fetchDrivers()
+        const fetchCostCenters = async () => {
+            try {
+                const { data, error } = await supabase.from('cost_centers').select('id, name, code').eq('is_active', true).order('name')
+                if (!error) setCostCenters((data ?? []) as CostCenter[])
+            } catch {}
+        }
+        fetchCostCenters()
     }, [activeTab])
 
     useEffect(() => {
@@ -392,40 +403,6 @@ export default function Drivers() {
                         >
                             <Users className="w-4 h-4" />
                             <span>Driver Management</span>
-                        </button>
-
-                        <button
-                            onClick={() => setActiveTab('executive-dashboard')}
-                            className={`flex items-center space-x-2 px-4 py-3 rounded-lg text-sm font-medium transition-all duration-200 ${
-                                activeTab === 'executive-dashboard'
-                                    ? "bg-blue-50 text-blue-700 border border-blue-200"
-                                    : "text-gray-600 hover:text-blue-700 hover:bg-blue-50"
-                            }`}
-                        >
-                            <BarChart3 className="w-4 h-4" />
-                            <span>Executive Dashboard</span>
-                        </button>
-                        <button
-                            onClick={() => setActiveTab('drivers-performance')}
-                            className={`flex items-center space-x-2 px-4 py-3 rounded-lg text-sm font-medium transition-all duration-200 ${
-                                activeTab === 'drivers-performance'
-                                    ? "bg-blue-50 text-blue-700 border border-blue-200"
-                                    : "text-gray-600 hover:text-blue-700 hover:bg-blue-50"
-                            }`}
-                        >
-                            <Activity className="w-4 h-4" />
-                            <span>Driver Performance</span>
-                        </button>
-                        <button
-                            onClick={() => setActiveTab('driver-monitoring-config')}
-                            className={`flex items-center space-x-2 px-4 py-3 rounded-lg text-sm font-medium transition-all duration-200 ${
-                                activeTab === 'driver-monitoring-config'
-                                    ? "bg-blue-50 text-blue-700 border border-blue-200"
-                                    : "text-gray-600 hover:text-blue-700 hover:bg-blue-50"
-                            }`}
-                        >
-                            <Settings className="w-4 h-4" />
-                            <span>Driver Monitoring Config</span>
                         </button>
 
                     </div>
@@ -729,6 +706,8 @@ export default function Drivers() {
                                     <TableHead className="font-semibold">Name</TableHead>
                                     <TableHead className="font-semibold">Surname</TableHead>
                                     <TableHead className="font-semibold">Cell Number</TableHead>
+                                    <TableHead className="font-semibold">Assigned Vehicle</TableHead>
+                                    <TableHead className="font-semibold">Cost Center</TableHead>
                                     <TableHead className="font-semibold">Actions</TableHead>
                                 </TableRow>
                             </TableHeader>
@@ -752,6 +731,8 @@ export default function Drivers() {
                                             <TableCell className="text-sm font-medium">{driver.first_name || '-'}</TableCell>
                                             <TableCell className="text-sm font-medium">{driver.surname || '-'}</TableCell>
                                             <TableCell className="text-sm">{driver.cell_number || '-'}</TableCell>
+                                            <TableCell className="text-sm">{(driver as any).fleet_number || '-'}</TableCell>
+                                            <TableCell className="text-sm">{costCenters.find(c => c.id === (driver as any).cost_center_id)?.name || '-'}</TableCell>
                                             <TableCell>
                                                 <div className="flex gap-1">
                                                     <Button size="sm" variant="outline" onClick={() => handleViewDriver(driver)}>View</Button>
