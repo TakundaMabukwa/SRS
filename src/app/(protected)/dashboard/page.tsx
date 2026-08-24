@@ -97,6 +97,7 @@ import IncidentReportModal from '@/components/video-alerts/incident-report-modal
 import AccidentReportModal from '@/components/video-alerts/accident-report-modal';
 import CriminalReportModal from '@/components/video-alerts/criminal-report-modal';
 import DispatchReportModal from '@/components/video-alerts/dispatch-report-modal';
+import { ResolveAlertsModal } from '@/components/dashboard/resolve-alerts-modal';
 import IncidentReportTemplateModal from '@/components/video-alerts/incident-report-template-modal';
 import type { SavedAlertArtifact } from '@/components/video-alerts/report-support';
 import { useVideoWebSocket } from "@/hooks/use-video-websocket";
@@ -2347,6 +2348,7 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
   const [alertReason, setAlertReason] = useState("");
   const videoProxyBase = "/api/video-server";
   const [showNCRModal, setShowNCRModal] = useState(false);
+  const [showResolveModal, setShowResolveModal] = useState(false);
   const [selectedNcrForm, setSelectedNcrForm] = useState<'' | 'nrc-camera-covered'>('');
   const [showReportModal, setShowReportModal] = useState(false);
   const [selectedReportForm, setSelectedReportForm] = useState<'' | 'incident-report' | 'accident-report' | 'criminal-report' | 'dispatch-report'>('');
@@ -6295,7 +6297,7 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
           await closeSelectedAlert("false_alert");
         }}
         onResolve={async () => {
-          await closeSelectedAlert("resolved");
+          setShowResolveModal(true);
         }}
         onFollowUp={async (originalSeverity: string) => {
           const alertId = String(selectedAlert?.id || "").trim();
@@ -6343,6 +6345,7 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
           isOpen={showNCRModal}
           onClose={() => setShowNCRModal(false)}
           onSaved={async (artifact) => {
+            if (!artifact) return
             setShowNCRModal(false)
             const supabase = createClient()
             const { data: { session } } = await supabase.auth.getSession()
@@ -6360,13 +6363,7 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
             const alertId = String(selectedAlert?.id || "").trim();
             if (alertId) {
               try {
-                await closeSelectedAlert("ncr", {
-                  type: "ncr",
-                  timestamp: new Date().toISOString(),
-                  filled_by: actor,
-                  link: artifact.documentUrl || "",
-                  documentName: artifact.documentName,
-                });
+                await closeSelectedAlert("ncr", artifact, selectedAlert);
                 toast.success("NCR filed and alert resolved.")
               } catch {
                 toast.success("NCR saved. Alert is still open — you can resolve manually.")
@@ -6377,6 +6374,26 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
           }}
           driverInfo={selectedAlertDriverInfo}
           alertDetails={selectedAlertReportDetails}
+        />
+      )}
+      {showResolveModal && selectedAlert && (
+        <ResolveAlertsModal
+          isOpen={showResolveModal}
+          onClose={() => setShowResolveModal(false)}
+          onResolved={() => {
+            setShowResolveModal(false);
+            setAlertDetailModalOpen(false);
+            setSelectedAlert(null);
+            setAlertReason("");
+            setSelectedNcrForm('');
+            setSelectedReportForm('');
+            setAlertNotesDraft("");
+            setPendingDocuments([]);
+            setRefreshTrigger((prev) => prev + 1);
+          }}
+          deviceId={String(selectedAlert?.device_id || selectedAlert?.deviceId || selectedAlert?.vehicleId || "").trim()}
+          fleetNumber={String(selectedAlert?.fleet_number || selectedAlert?.fleetNumber || "").trim()}
+          registration={String(selectedAlert?.vehicle_registration || selectedAlert?.plate || selectedAlert?.registration || "").trim()}
         />
       )}
       {showReportModal && selectedAlert && selectedReportForm === 'incident-report' && (
