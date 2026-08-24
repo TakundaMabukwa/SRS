@@ -10,7 +10,7 @@ import { createClient } from "@/lib/supabase/client";
 type DbVehicle = {
   registration_number: string;
   fleet_number: string;
-  cost_center: string;
+  cost_centres: string;
   camera_sim_id: string;
 };
 
@@ -107,14 +107,14 @@ export default function ScreenshotsDashboardTab({
     try {
       const { data } = await supabase
         .from("vehiclesc")
-        .select("registration_number, fleet_number, cost_center, camera_sim_id");
+        .select("registration_number, fleet_number, cost_centres, camera_sim_id");
       const rows = (data || []) as DbVehicle[];
       const unique = new Map<string, DbVehicle>();
       for (const r of rows) {
         const reg = (r.registration_number || "").trim().toUpperCase();
         if (!reg) continue;
         if (!unique.has(reg)) {
-          unique.set(reg, { registration_number: reg, fleet_number: r.fleet_number || "", cost_center: r.cost_center || "", camera_sim_id: (r.camera_sim_id || "").trim() });
+          unique.set(reg, { registration_number: reg, fleet_number: r.fleet_number || "", cost_centres: r.cost_centres || "", camera_sim_id: (r.camera_sim_id || "").trim() });
         }
       }
       const result = Array.from(unique.values());
@@ -245,7 +245,7 @@ export default function ScreenshotsDashboardTab({
         return {
           registration: v.registration_number,
           fleetNumber: v.fleet_number,
-          costCenter: v.cost_center,
+          costCenter: v.cost_centres,
           deviceId: deviceId || prevCard?.deviceId || null,
           online,
           cameras: match ? match.cameras : (prevCard?.cameras || 0),

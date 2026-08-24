@@ -14,7 +14,7 @@ const SOUTH_AFRICA_TIME_ZONE = "Africa/Johannesburg";
 type DbVehicle = {
   registration_number: string;
   fleet_number: string;
-  cost_center: string;
+  cost_centres: string;
   camera_sim_id: string;
 };
 
@@ -148,7 +148,7 @@ export default function PlaybackDashboardTab({ selectedCostCenters = [] }: Playb
   const fetchVehicles = useCallback(async (): Promise<PlaybackVehicle[]> => {
     const { data: vehicleRows, error: vehiclesError } = await supabase
       .from("vehiclesc")
-      .select("registration_number, fleet_number, cost_center, camera_sim_id");
+      .select("registration_number, fleet_number, cost_centres, camera_sim_id");
 
     if (vehiclesError) throw new Error(vehiclesError.message || "Failed to load vehicles");
 
@@ -163,7 +163,7 @@ export default function PlaybackDashboardTab({ selectedCostCenters = [] }: Playb
         vehicleId: simId,
         registration: String((row as DbVehicle).registration_number || "").trim(),
         fleetNumber: String((row as DbVehicle).fleet_number || "").trim(),
-        costCenter: String((row as DbVehicle).cost_center || "").trim(),
+        costCenter: String((row as DbVehicle).cost_centres || "").trim(),
         deviceId: simId,
         online: false,
       });

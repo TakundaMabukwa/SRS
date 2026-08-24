@@ -63,7 +63,7 @@ async function fetchAllVehicleLookupRowsFromSupabase() {
 
   const { data, error } = await supabase
     .from('vehiclesc')
-    .select('registration_number, fleet_number, make, model, camera_serial, camera_sim_id, cost_center, driver_id, drivers!vehiclesc_driver_id_fkey(first_name, surname, fleet_number, id)');
+    .select('registration_number, fleet_number, make, model, camera_serial, camera_sim_id, cost_centres, driver_id, drivers!vehiclesc_driver_id_fkey(first_name, surname, fleet_number, id)');
 
   if (error) {
     return {
@@ -84,7 +84,7 @@ async function fetchAllVehicleLookupRowsFromSupabase() {
       fleetNumber: cleanText(row.fleet_number),
       make: cleanText(row.make),
       model: cleanText(row.model),
-      costCenter: cleanText(row.cost_center),
+      costCenter: cleanText(row.cost_centres),
       driverName: driverName || null,
       driverId: cleanText((row as any).driver_id),
     };
@@ -207,7 +207,7 @@ export async function GET(req: NextRequest) {
 
       const { data, error } = await supabase
         .from('vehiclesc')
-        .select('registration_number, fleet_number, make, model, camera_serial, camera_sim_id, cost_center')
+        .select('registration_number, fleet_number, make, model, camera_serial, camera_sim_id, cost_centres')
         .or(
           `camera_sim_id.in.(${deviceIds.join(',')}),camera_serial.in.(${deviceIds.join(',')})`
         );
@@ -239,7 +239,7 @@ export async function GET(req: NextRequest) {
               fleetNumber: cleanText(vehicle.fleet_number),
               make: cleanText(vehicle.make),
               model: cleanText(vehicle.model),
-              costCenter: cleanText(vehicle.cost_center),
+              costCenter: cleanText(vehicle.cost_centres),
               driverName: vDriverName || null,
               driverId: cleanText((vehicle as any).driver_id),
             });
@@ -254,7 +254,7 @@ export async function GET(req: NextRequest) {
               fleetNumber: cleanText(vehicle.fleet_number),
               make: cleanText(vehicle.make),
               model: cleanText(vehicle.model),
-              costCenter: cleanText(vehicle.cost_center),
+              costCenter: cleanText(vehicle.cost_centres),
               driverName: vDriverName || null,
               driverId: cleanText((vehicle as any).driver_id),
             });
@@ -305,7 +305,7 @@ export async function GET(req: NextRequest) {
     
     const { data: vehicle, error } = await supabase
       .from('vehiclesc')
-      .select('registration_number, fleet_number, make, model, camera_serial, camera_sim_id, cost_center')
+      .select('registration_number, fleet_number, make, model, camera_serial, camera_sim_id, cost_centres')
       .or(`camera_sim_id.eq.${deviceId},camera_serial.eq.${deviceId}`)
       .limit(1)
       .maybeSingle();
@@ -332,14 +332,14 @@ export async function GET(req: NextRequest) {
             }
             const { data: plateMatch } = await supabase
               .from('vehiclesc')
-              .select('registration_number, fleet_number, make, model, cost_center, driver_id, drivers(first_name, surname)')
+              .select('registration_number, fleet_number, make, model, cost_centres, driver_id, drivers(first_name, surname)')
               .ilike('registration_number', registration)
               .limit(1)
               .maybeSingle();
             if (plateMatch) {
               const pmDriver = (plateMatch as any).drivers;
               const pmDriverName = pmDriver ? `${pmDriver.first_name || ''} ${pmDriver.surname || ''}`.trim() : null;
-              return NextResponse.json({ success: true, plate: cleanText(plateMatch.registration_number), fleetNumber: cleanText(plateMatch.fleet_number), make: cleanText(plateMatch.make), model: cleanText(plateMatch.model), costCenter: cleanText(plateMatch.cost_center), driverName: pmDriverName || null, driverId: cleanText((plateMatch as any).driver_id) });
+              return NextResponse.json({ success: true, plate: cleanText(plateMatch.registration_number), fleetNumber: cleanText(plateMatch.fleet_number), make: cleanText(plateMatch.make), model: cleanText(plateMatch.model), costCenter: cleanText(plateMatch.cost_centres), driverName: pmDriverName || null, driverId: cleanText((plateMatch as any).driver_id) });
             }
           }
         }
@@ -355,7 +355,7 @@ export async function GET(req: NextRequest) {
       fleetNumber: cleanText(vehicle.fleet_number),
       make: cleanText(vehicle.make),
       model: cleanText(vehicle.model),
-      costCenter: cleanText(vehicle.cost_center),
+      costCenter: cleanText(vehicle.cost_centres),
       driverName: vehicleDriverName || null,
       driverId: cleanText((vehicle as any).driver_id)
     });

@@ -2387,7 +2387,7 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
         const supabase = createClient();
         const { data, error } = await supabase
           .from("vehiclesc")
-          .select("cost_center");
+          .select("cost_centres");
         if (error) {
           throw error;
         }
@@ -2395,7 +2395,7 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
         const byNormalized = new Map<string, string>();
         let hasUnassigned = false;
         for (const row of data || []) {
-          const raw = String((row as { cost_center?: string | null })?.cost_center || "").trim();
+          const raw = String((row as { cost_centres?: string | null })?.cost_centres || "").trim();
           const normalized = normalizeCostCenter(raw);
           if (!normalized) {
             hasUnassigned = true;
