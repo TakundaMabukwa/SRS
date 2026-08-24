@@ -1,252 +1,142 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
-import { Building2 } from "lucide-react";
+import React, { useEffect, useState, useCallback } from "react";
+import { Building2, Plus, Pencil, Trash2, X } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { createClient } from "@/lib/supabase/client";
+import { toast } from "sonner";
 
 interface CostCenter {
-  id: string;
-  cost_code: string;
-  company: string;
-  children?: Level3CostCenter[];
-}
-
-interface Level3CostCenter {
   id: number;
-  cost_code: string;
-  company: string;
-  branch: string;
-  sub_branch: string;
-  parent_cost_code: string;
+  name: string;
+  code: string;
+  description: string | null;
+  is_active: boolean;
+  created_at: string;
 }
-
-const LevelTreeDiagram = ({ costCenters }: { costCenters: CostCenter[] }) => {
-  // EPS root position
-  const epsPosition = { x: Math.max(costCenters.length * 300, 600) / 2, y: 20 };
-  
-  // Calculate positions for each parent
-  const parentPositions = costCenters.map((_, index) => ({
-    x: index * 300 + 150,
-    y: 120
-  }));
-
-  // Calculate positions for all children
-  const childrenData = costCenters.flatMap((parent, parentIndex) => {
-    if (!parent.children || parent.children.length === 0) return [];
-    
-    return parent.children.map((child, childIndex) => {
-      const position = {
-        x: childIndex * 200 + 100,
-        y: 270,
-        parentX: parentPositions[parentIndex].x,
-        parentY: parentPositions[parentIndex].y,
-        child
-      };
-      return position;
-    });
-  }).map((item, index) => ({ ...item, x: index * 200 + 100 }));
-
-  const totalWidth = Math.max(
-    costCenters.length * 300,
-    childrenData.length * 200,
-    600
-  );
-
-  return (
-    <div className="relative" style={{ width: totalWidth, height: 370 }}>
-      <svg 
-        className="absolute inset-0 pointer-events-none" 
-        width={totalWidth} 
-        height={370}
-      >
-        {/* EPS to Parents lines */}
-        {costCenters.map((_, index) => (
-          <g key={`eps-${index}`}>
-            <line
-              x1={epsPosition.x}
-              y1={60}
-              x2={epsPosition.x}
-              y2={90}
-              stroke="#9CA3AF"
-              strokeWidth="2"
-            />
-            <line
-              x1={Math.min(epsPosition.x, parentPositions[index].x)}
-              y1={90}
-              x2={Math.max(epsPosition.x, parentPositions[index].x)}
-              y2={90}
-              stroke="#9CA3AF"
-              strokeWidth="2"
-            />
-            <line
-              x1={parentPositions[index].x}
-              y1={90}
-              x2={parentPositions[index].x}
-              y2={120}
-              stroke="#9CA3AF"
-              strokeWidth="2"
-            />
-          </g>
-        ))}
-        
-        {/* Parents to Children lines */}
-        {childrenData.map((childData, index) => {
-          const parentIndex = costCenters.findIndex(p => 
-            p.children?.some(c => c.id === childData.child.id)
-          );
-          const parentX = parentPositions[parentIndex]?.x || 0;
-          
-          return (
-            <g key={index}>
-              <line
-                x1={parentX}
-                y1={160}
-                x2={parentX}
-                y2={200}
-                stroke="#9CA3AF"
-                strokeWidth="2"
-              />
-              <line
-                x1={Math.min(parentX, childData.x)}
-                y1={200}
-                x2={Math.max(parentX, childData.x)}
-                y2={200}
-                stroke="#9CA3AF"
-                strokeWidth="2"
-              />
-              <line
-                x1={childData.x}
-                y1={200}
-                x2={childData.x}
-                y2={240}
-                stroke="#9CA3AF"
-                strokeWidth="2"
-              />
-            </g>
-          );
-        })}
-      </svg>
-
-      {/* Level 0: EPS Root */}
-      <div
-        className="absolute bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-lg p-4 shadow-lg group"
-        style={{
-          left: epsPosition.x - 100,
-          top: epsPosition.y,
-          width: 200
-        }}
-      >
-        <div className="flex items-center justify-center">
-          <Building2 className="h-6 w-6 mr-2" />
-          <div className="font-bold text-lg">EPS</div>
-        </div>
-        <div className="opacity-0 group-hover:opacity-100 transition-opacity text-xs text-center mt-1">
-          EPS Couriers
-        </div>
-      </div>
-
-      {/* Level 1: Parents */}
-      {costCenters.map((parent, index) => (
-        <div
-          key={parent.id}
-          className="absolute bg-blue-50 border-2 border-blue-200 rounded-lg p-3 shadow-md group hover:bg-blue-100 transition-colors"
-          style={{
-            left: parentPositions[index].x - 100,
-            top: parentPositions[index].y,
-            width: 200
-          }}
-        >
-          <div className="flex items-center justify-center">
-            <Building2 className="h-5 w-5 mr-2 text-blue-600" />
-            <div className="font-semibold text-blue-900">{parent.company}</div>
-          </div>
-          <div className="opacity-0 group-hover:opacity-100 transition-opacity text-xs text-blue-700 text-center mt-1">
-            {parent.cost_code}
-          </div>
-        </div>
-      ))}
-
-      {/* Level 2: Children */}
-      {childrenData.map((childData, index) => (
-        <div
-          key={childData.child.id}
-          className="absolute bg-white border border-gray-300 rounded-lg p-3 shadow-sm group hover:bg-gray-50 transition-colors"
-          style={{
-            left: childData.x - 90,
-            top: childData.y,
-            width: 180
-          }}
-        >
-          <div className="flex items-center justify-center">
-            <Building2 className="h-4 w-4 mr-2 text-gray-600" />
-            <div className="font-medium text-gray-900 text-sm text-center">
-              {childData.child.company} - {childData.child.branch}
-              {childData.child.sub_branch && ` / ${childData.child.sub_branch}`}
-            </div>
-          </div>
-          <div className="opacity-0 group-hover:opacity-100 transition-opacity text-xs text-gray-600 text-center mt-1">
-            {childData.child.cost_code}
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-};
 
 export default function CostCenterPage() {
   const [costCenters, setCostCenters] = useState<CostCenter[]>([]);
   const [loading, setLoading] = useState(true);
+  const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [formData, setFormData] = useState({ name: "", code: "", description: "" });
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [searchTerm, setSearchTerm] = useState("");
   const supabase = createClient();
 
-  const fetchCostCenters = async () => {
+  const fetchCostCenters = useCallback(async () => {
+    setLoading(true);
     try {
-      const [
-        { data: parentCenters },
-        { data: level3Centers }
-      ] = await Promise.all([
-        supabase.from('cost_centers').select('*'),
-        supabase.from('level_3_cost_centers').select('*')
-      ]);
-
-      // Build tree structure
-      const tree = (parentCenters || []).map(parent => ({
-        ...parent,
-        children: (level3Centers || []).filter(child => 
-          child.parent_cost_code === parent.cost_code
-        )
-      }));
-
-      setCostCenters(tree);
-    } catch (error) {
-      console.error('Error fetching cost centers:', error);
+      const { data, error } = await supabase
+        .from("cost_centers")
+        .select("*")
+        .order("name");
+      if (error) throw error;
+      setCostCenters(data || []);
+    } catch (err) {
+      console.error("Error fetching cost centers:", err);
+      toast.error("Failed to load cost centers");
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
-  };
+  }, [supabase]);
 
   useEffect(() => {
     fetchCostCenters();
-  }, []);
+  }, [fetchCostCenters]);
 
-  const totalParents = costCenters.length;
-  const totalChildren = costCenters.reduce((sum, parent) => sum + (parent.children?.length || 0), 0);
+  const filtered = costCenters.filter(
+    (cc) =>
+      cc.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      cc.code.toLowerCase().includes(searchTerm.toLowerCase())
+  );
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!formData.name.trim() || !formData.code.trim()) {
+      toast.error("Name and code are required");
+      return;
+    }
+    setIsSubmitting(true);
+    try {
+      if (editingId) {
+        const { error } = await supabase
+          .from("cost_centers")
+          .update({ name: formData.name, code: formData.code, description: formData.description || null, updated_at: new Date().toISOString() })
+          .eq("id", editingId);
+        if (error) throw error;
+        toast.success("Cost center updated");
+      } else {
+        const { error } = await supabase
+          .from("cost_centers")
+          .insert({ name: formData.name, code: formData.code, description: formData.description || null });
+        if (error) throw error;
+        toast.success("Cost center added");
+      }
+      setIsDialogOpen(false);
+      setFormData({ name: "", code: "", description: "" });
+      setEditingId(null);
+      fetchCostCenters();
+    } catch (err: any) {
+      console.error("Save error:", err);
+      toast.error(err?.message?.includes("duplicate") ? "Code already exists" : "Failed to save");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleDelete = async (id: number) => {
+    if (!confirm("Delete this cost center?")) return;
+    try {
+      const { error } = await supabase.from("cost_centers").delete().eq("id", id);
+      if (error) throw error;
+      toast.success("Cost center deleted");
+      fetchCostCenters();
+    } catch (err) {
+      console.error("Delete error:", err);
+      toast.error("Failed to delete");
+    }
+  };
+
+  const openAdd = () => {
+    setFormData({ name: "", code: "", description: "" });
+    setEditingId(null);
+    setIsDialogOpen(true);
+  };
+
+  const openEdit = (cc: CostCenter) => {
+    setFormData({ name: cc.name, code: cc.code, description: cc.description || "" });
+    setEditingId(cc.id);
+    setIsDialogOpen(true);
+  };
+
+  const totalActive = costCenters.filter((c) => c.is_active).length;
 
   return (
     <div className="p-6 space-y-6 w-full">
-      {/* Title Section */}
-      <div>
-        <h1 className="text-2xl font-bold">Cost Centers</h1>
-        <p className="text-gray-500">Hierarchical view of cost centers and their sub-centers</p>
+      {/* Title */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold">Cost Centers</h1>
+          <p className="text-gray-500">Manage cost centers for vehicles and drivers</p>
+        </div>
+        <Button onClick={openAdd} className="flex items-center gap-2">
+          <Plus className="w-4 h-4" /> Add Cost Center
+        </Button>
       </div>
 
-      {/* Stats Section */}
+      {/* Stats */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <Card>
           <CardContent className="p-4 flex items-center space-x-4">
             <Building2 className="h-8 w-8 text-blue-500" />
             <div>
-              <p className="text-sm text-gray-500">Parent Centers</p>
-              <p className="text-xl font-semibold">{totalParents}</p>
+              <p className="text-sm text-gray-500">Total</p>
+              <p className="text-xl font-semibold">{costCenters.length}</p>
             </div>
           </CardContent>
         </Card>
@@ -254,8 +144,8 @@ export default function CostCenterPage() {
           <CardContent className="p-4 flex items-center space-x-4">
             <Building2 className="h-8 w-8 text-green-500" />
             <div>
-              <p className="text-sm text-gray-500">Sub Centers</p>
-              <p className="text-xl font-semibold">{totalChildren}</p>
+              <p className="text-sm text-gray-500">Active</p>
+              <p className="text-xl font-semibold">{totalActive}</p>
             </div>
           </CardContent>
         </Card>
@@ -263,29 +153,106 @@ export default function CostCenterPage() {
           <CardContent className="p-4 flex items-center space-x-4">
             <Building2 className="h-8 w-8 text-purple-500" />
             <div>
-              <p className="text-sm text-gray-500">Total Centers</p>
-              <p className="text-xl font-semibold">{totalParents + totalChildren}</p>
+              <p className="text-sm text-gray-500">Inactive</p>
+              <p className="text-xl font-semibold">{costCenters.length - totalActive}</p>
             </div>
           </CardContent>
         </Card>
       </div>
 
-      {/* Tree Diagram */}
+      {/* Search + Table */}
       <Card>
         <CardHeader>
-          <CardTitle>EPS Cost Center Hierarchy</CardTitle>
-          <p className="text-sm text-gray-600">Hover over boxes to see cost codes</p>
+          <CardTitle>Cost Centers</CardTitle>
+          <Input
+            placeholder="Search by name or code..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="max-w-sm"
+          />
         </CardHeader>
-        <CardContent className="overflow-x-auto">
+        <CardContent>
           {loading ? (
-            <div className="text-center py-8">Loading cost centers...</div>
-          ) : costCenters.length === 0 ? (
-            <div className="text-center py-8 text-gray-500">No cost centers found</div>
+            <div className="text-center py-8">Loading...</div>
+          ) : filtered.length === 0 ? (
+            <div className="text-center py-8 text-gray-500">
+              {costCenters.length === 0 ? "No cost centers yet. Click Add to create one." : "No results found."}
+            </div>
           ) : (
-            <LevelTreeDiagram costCenters={costCenters} />
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b bg-gray-50">
+                    <th className="px-4 py-2 text-left font-semibold">Name</th>
+                    <th className="px-4 py-2 text-left font-semibold">Code</th>
+                    <th className="px-4 py-2 text-left font-semibold">Description</th>
+                    <th className="px-4 py-2 text-left font-semibold">Status</th>
+                    <th className="px-4 py-2 text-left font-semibold">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filtered.map((cc) => (
+                    <tr key={cc.id} className="border-b hover:bg-gray-50">
+                      <td className="px-4 py-3 font-medium">{cc.name}</td>
+                      <td className="px-4 py-3 font-mono text-xs">{cc.code}</td>
+                      <td className="px-4 py-3 text-gray-500">{cc.description || "—"}</td>
+                      <td className="px-4 py-3">
+                        <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${cc.is_active ? "bg-green-100 text-green-800" : "bg-gray-100 text-gray-600"}`}>
+                          {cc.is_active ? "Active" : "Inactive"}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex gap-1">
+                          <Button variant="outline" size="sm" onClick={() => openEdit(cc)}>
+                            <Pencil className="w-3 h-3" />
+                          </Button>
+                          <Button variant="outline" size="sm" onClick={() => handleDelete(cc.id)}>
+                            <Trash2 className="w-3 h-3 text-red-500" />
+                          </Button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
         </CardContent>
       </Card>
+
+      {/* Add/Edit Dialog */}
+      {isDialogOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-semibold">{editingId ? "Edit Cost Center" : "Add Cost Center"}</h2>
+              <button onClick={() => setIsDialogOpen(false)} className="text-gray-400 hover:text-gray-600">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <div>
+                <Label>Name</Label>
+                <Input value={formData.name} onChange={(e) => setFormData({ ...formData, name: e.target.value })} placeholder="e.g. Fleet Operations" />
+              </div>
+              <div>
+                <Label>Code</Label>
+                <Input value={formData.code} onChange={(e) => setFormData({ ...formData, code: e.target.value })} placeholder="e.g. FLEET-01" disabled={!!editingId} />
+              </div>
+              <div>
+                <Label>Description</Label>
+                <Input value={formData.description} onChange={(e) => setFormData({ ...formData, description: e.target.value })} placeholder="Optional description" />
+              </div>
+              <div className="flex justify-end gap-2 pt-2">
+                <Button type="button" variant="outline" onClick={() => setIsDialogOpen(false)}>Cancel</Button>
+                <Button type="submit" disabled={isSubmitting}>
+                  {isSubmitting ? "Saving..." : editingId ? "Update" : "Create"}
+                </Button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
