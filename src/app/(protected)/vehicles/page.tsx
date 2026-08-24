@@ -291,20 +291,22 @@ export default function Vehicles() {
     }
   };
   useEffect(() => {
-    const vehiclesc = supabase
-      .channel("schema-db-changes")
+    fetchVehicles();
+
+    const channel = supabase
+      .channel("vehiclesc-changes-" + Math.random())
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "vehiclesc" },
         (payload) => {
           console.log("Change received!", payload);
+          fetchVehicles();
         }
       )
       .subscribe();
-    fetchVehicles();
 
     return () => {
-      vehiclesc.unsubscribe;
+      supabase.removeChannel(channel);
     };
   }, []);
 
