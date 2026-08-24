@@ -183,6 +183,21 @@ export default function Drivers() {
         }
     }
 
+    const handleUpdateDriverCostCenter = async (driverId: number, costCenterId: number | null) => {
+        try {
+            const { error } = await supabase
+                .from('drivers')
+                .update({ cost_center_id: costCenterId })
+                .eq('id', driverId)
+            if (error) throw error
+            setDrivers(prev => prev.map(d => d.id === driverId ? { ...d, cost_center_id: costCenterId } : d))
+            toast.success('Cost center updated')
+        } catch (err) {
+            console.error('Failed to update cost center', err)
+            toast.error('Failed to update cost center')
+        }
+    }
+
     // Small utility: uploads a File to the `license_info` bucket and returns the public URL
     const uploadToStorage = async (file: File, folder: string): Promise<string | null> => {
         try {
@@ -732,7 +747,18 @@ export default function Drivers() {
                                             <TableCell className="text-sm font-medium">{driver.surname || '-'}</TableCell>
                                             <TableCell className="text-sm">{driver.cell_number || '-'}</TableCell>
                                             <TableCell className="text-sm">{(driver as any).fleet_number || '-'}</TableCell>
-                                            <TableCell className="text-sm">{costCenters.find(c => c.id === (driver as any).cost_center_id)?.name || '-'}</TableCell>
+                                            <TableCell className="text-sm">
+                                                <select
+                                                    className="w-full rounded border border-slate-200 bg-white px-2 py-1 text-xs focus:border-blue-500 focus:outline-none"
+                                                    value={(driver as any).cost_center_id || ''}
+                                                    onChange={(e) => handleUpdateDriverCostCenter(driver.id, e.target.value ? Number(e.target.value) : null)}
+                                                >
+                                                    <option value="">Unassigned</option>
+                                                    {costCenters.map(cc => (
+                                                        <option key={cc.id} value={cc.id}>{cc.name}</option>
+                                                    ))}
+                                                </select>
+                                            </TableCell>
                                             <TableCell>
                                                 <div className="flex gap-1">
                                                     <Button size="sm" variant="outline" onClick={() => handleViewDriver(driver)}>View</Button>

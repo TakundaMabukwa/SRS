@@ -103,8 +103,8 @@ interface Driver {
 
 interface CostCenter {
   id: number;
-  company: string;
-  cost_code: string;
+  name: string;
+  code: string;
 }
 
 export default function Vehicles() {
@@ -135,9 +135,10 @@ export default function Vehicles() {
     
     const getCostCenters = async () => {
       const { data, error } = await supabase
-        .from("level_3_cost_centers")
-        .select("id, company, cost_code")
-        .order("company");
+        .from("cost_centers")
+        .select("id, name, code")
+        .eq("is_active", true)
+        .order("name");
       if (error) {
         console.error("Error fetching cost centers:", error);
         setCostCenters([]);
@@ -158,6 +159,21 @@ export default function Vehicles() {
     );
     setFilteredDrivers(filtered);
   }, [searchTerm, drivers]);
+
+  const handleUpdateVehicleCostCenter = async (vehicleId: number, costCenterId: number | null) => {
+    try {
+      const { error } = await supabase
+        .from('vehiclesc')
+        .update({ cost_center_id: costCenterId })
+        .eq('id', vehicleId)
+      if (error) throw error
+      setVehicles(prev => prev.map(v => v.id === vehicleId ? { ...v, cost_center_id: costCenterId } : v))
+      toast.success('Cost center updated')
+    } catch (err) {
+      console.error('Failed to update cost center', err)
+      toast.error('Failed to update cost center')
+    }
+  }
 
 
   const [technicians, setTechnicians] = useState<Technician[]>([]);
@@ -877,8 +893,8 @@ export default function Vehicles() {
                           </FormControl>
                           <SelectContent>
                             {costCenters.map((center) => (
-                              <SelectItem key={center.id} value={center.company}>
-                                {center.company}
+                              <SelectItem key={center.id} value={center.name}>
+                                {center.name}
                               </SelectItem>
                             ))}
                           </SelectContent>
@@ -1142,7 +1158,18 @@ export default function Vehicles() {
                       <TableCell className="px-3 py-2 text-sm text-slate-700">{(vehicle as any).fleet_number || '-'}</TableCell>
                       <TableCell className="px-3 py-2 text-sm text-slate-700">{(vehicle as any).make || '-'}</TableCell>
                       <TableCell className="px-3 py-2 text-sm text-slate-700">{(vehicle as any).colour || '-'}</TableCell>
-                      <TableCell className="px-3 py-2 text-sm text-slate-700">{(vehicle as any).cost_centres || (vehicle as any).cost_center || '-'}</TableCell>
+                      <TableCell className="px-3 py-2 text-sm text-slate-700">
+                        <select
+                          className="w-full rounded border border-slate-200 bg-white px-2 py-1 text-xs focus:border-blue-500 focus:outline-none"
+                          value={(vehicle as any).cost_center_id || ''}
+                          onChange={(e) => handleUpdateVehicleCostCenter(vehicle.id, e.target.value ? Number(e.target.value) : null)}
+                        >
+                          <option value="">Unassigned</option>
+                          {costCenters.map(cc => (
+                            <option key={cc.id} value={cc.id}>{cc.name}</option>
+                          ))}
+                        </select>
+                      </TableCell>
                       <TableCell className="px-3 py-2 text-sm text-slate-700 font-mono text-xs">{(vehicle as any).camera_serial || '-'}</TableCell>
                       <TableCell className="px-3 py-2 text-sm text-slate-700 font-mono text-xs">{(vehicle as any).camera_sim_id || '-'}</TableCell>
                       <TableCell className="px-3 py-2 text-sm text-slate-700">{(vehicle as any).installation_date || '-'}</TableCell>
