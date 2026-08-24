@@ -6360,8 +6360,7 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
               formType: "nrc-camera-covered",
             }])
             // Auto-resolve the alert after NCR is filed
-            const alertId = String(selectedAlert?.id || "").trim();
-            if (alertId) {
+            if (selectedAlert?.id) {
               try {
                 await closeSelectedAlert("ncr", artifact, selectedAlert);
                 toast.success("NCR filed and alert resolved.")

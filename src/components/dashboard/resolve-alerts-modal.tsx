@@ -66,8 +66,8 @@ export function ResolveAlertsModal({
 
   useEffect(() => {
     if (isOpen && deviceId) {
-      fetchAlerts();
       setSelectedIds(new Set());
+      fetchAlerts();
     }
   }, [isOpen, deviceId, fetchAlerts]);
 
@@ -141,7 +141,6 @@ export function ResolveAlertsModal({
 
   const handleResolveAll = useCallback(async () => {
     if (alerts.length === 0) return;
-    setSelectedIds(new Set(alerts.map((a) => a.group_id)));
     setResolving(true);
     let resolved = 0;
     let failed = 0;
