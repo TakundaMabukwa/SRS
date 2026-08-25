@@ -506,7 +506,7 @@ function inlineElementStyles(element: HTMLElement) {
 
 export function getSafeHtml2CanvasOptions(element: HTMLElement) {
   return {
-    scale: 2,
+    scale: 1,
     useCORS: true,
     allowTaint: true,
     logging: false,
