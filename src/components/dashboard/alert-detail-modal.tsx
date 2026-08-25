@@ -1220,35 +1220,6 @@ export function AlertDetailModal({
                             Copy Coordinates
                           </Button>
                         </div>
-                        {/* Nearest Police Stations */}
-                        {nearestPoliceStations.length > 0 && (
-                          <div className="rounded-lg border border-blue-200 bg-blue-50 p-3">
-                            <div className="flex items-center gap-2 mb-2">
-                              <ShieldAlert className="w-4 h-4 text-blue-600" />
-                              <span className="text-xs font-semibold text-blue-900">Nearest Police Station{nearestPoliceStations.length > 1 ? 's' : ''}</span>
-                            </div>
-                            <div className="space-y-1.5">
-                              {nearestPoliceStations.map((station, i) => (
-                                <div key={i} className={`flex items-center justify-between text-[11px] rounded px-2 py-1 ${i === 0 ? 'bg-green-100 border border-green-200' : ''}`}>
-                                  <div className="flex items-center gap-1.5">
-                                    <MapPin className={`w-3 h-3 ${i === 0 ? 'text-green-600' : 'text-blue-500'}`} />
-                                    <span className={`font-medium ${i === 0 ? 'text-green-900' : 'text-blue-800'}`}>
-                                      {station.name}
-                                      {i === 0 && <span className="ml-1 text-[9px] font-normal text-green-700">Route plotted</span>}
-                                    </span>
-                                  </div>
-                                  <span className={`${i === 0 ? 'text-green-700 font-semibold' : 'text-blue-600'}`}>{station.distance_km} km</span>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-                        {policeLoading && (
-                          <div className="text-[10px] text-slate-400 flex items-center gap-1">
-                            <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-blue-500"></div>
-                            Loading nearby police stations...
-                          </div>
-                        )}
                       </div>
                     ) : (
                       <div className="text-center py-12 text-slate-500">
@@ -1365,6 +1336,41 @@ export function AlertDetailModal({
                   )}
                 </div>
               </Card>
+
+              {/* Nearest Police Stations */}
+              {(nearestPoliceStations.length > 0 || policeLoading) && (
+                <Card className="border-slate-200 bg-white p-4 shadow-sm">
+                  <div className="mb-2">
+                    <div className="flex items-center gap-2">
+                      <ShieldAlert className="w-4 h-4 text-blue-600" />
+                      <h3 className="font-semibold text-slate-900">Nearest Police Station{nearestPoliceStations.length > 1 ? 's' : ''}</h3>
+                    </div>
+                    <p className="text-xs text-slate-500">Auto-routed to closest</p>
+                  </div>
+                  {policeLoading && (
+                    <div className="flex items-center gap-1.5 text-[11px] text-slate-400 py-2">
+                      <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-blue-500"></div>
+                      Loading nearby police stations...
+                    </div>
+                  )}
+                  <div className="space-y-1.5">
+                    {nearestPoliceStations.map((station, i) => (
+                      <div key={`ps-${i}`} className={`flex items-center justify-between text-[11px] rounded px-2 py-1.5 ${i === 0 ? 'bg-green-50 border border-green-200' : 'bg-slate-50 border border-slate-200'}`}>
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <MapPin className={`w-3 h-3 flex-shrink-0 ${i === 0 ? 'text-green-600' : 'text-blue-500'}`} />
+                          <span className={`font-medium truncate ${i === 0 ? 'text-green-900' : 'text-slate-800'}`}>
+                            {station.name}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2 flex-shrink-0">
+                          {i === 0 && <span className="text-[9px] font-medium text-green-700 bg-green-100 px-1.5 py-0.5 rounded">Route plotted</span>}
+                          <span className={`font-semibold ${i === 0 ? 'text-green-700' : 'text-slate-500'}`}>{station.distance_km} km</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </Card>
+              )}
 
               {/* Map Section */}
               <Card className="hidden p-4 border-slate-200 bg-white shadow-sm">

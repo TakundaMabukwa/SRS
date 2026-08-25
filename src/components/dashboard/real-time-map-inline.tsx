@@ -303,68 +303,83 @@ export function RealTimeMapInline({ deviceId, alertLat, alertLon, alertTime, pol
     const map = googleMapRef.current;
     if (!map || !window.google) return;
 
-    // Clear previous police markers
-    policeMarkersRef.current.forEach((m) => m.setMap(null));
-    policeMarkersRef.current = [];
-    clearLos();
+    const renderPolice = () => {
+      // Clear previous police markers
+      policeMarkersRef.current.forEach((m) => m.setMap(null));
+      policeMarkersRef.current = [];
+      clearLos();
 
-    if (!policeStations || policeStations.length === 0) return;
+      if (!policeStations || policeStations.length === 0) return;
 
-    const closest = policeStations[0];
+      const closest = policeStations[0];
 
-    policeStations.forEach((station) => {
-      const isClosest = station.name === closest.name && station.lat === closest.lat;
-      const policeMarker = new window.google.maps.Marker({
-        position: { lat: station.lat, lng: station.lon },
-        map,
-        icon: {
-          path: window.google.maps.SymbolPath.CIRCLE,
-          fillColor: isClosest ? '#16a34a' : '#2563eb',
-          fillOpacity: 0.9,
-          strokeColor: isClosest ? '#166534' : '#1e40af',
-          strokeWeight: 2,
-          scale: isClosest ? 9 : 7,
-        },
-        title: isClosest ? `${station.name} (Closest)` : station.name,
+      policeStations.forEach((station) => {
+        const isClosest = station.name === closest.name && station.lat === closest.lat;
+        const policeMarker = new window.google.maps.Marker({
+          position: { lat: station.lat, lng: station.lon },
+          map,
+          icon: {
+            path: window.google.maps.SymbolPath.CIRCLE,
+            fillColor: isClosest ? '#16a34a' : '#2563eb',
+            fillOpacity: 0.9,
+            strokeColor: isClosest ? '#166534' : '#1e40af',
+            strokeWeight: 2,
+            scale: isClosest ? 9 : 7,
+          },
+          title: isClosest ? `${station.name} (Closest)` : station.name,
+        });
+        policeMarkersRef.current.push(policeMarker);
+
+        const policeInfo = new window.google.maps.InfoWindow({
+          content: `
+            <div style="font-size:12px;">
+              <div style="font-weight:600;color:${isClosest ? '#16a34a' : '#2563eb'};">${station.name}${isClosest ? ' (Closest)' : ''}</div>
+              <div style="color:#64748b;">${station.distance_km} km away</div>
+            </div>
+          `,
+        });
+        policeMarker.addListener('click', () => policeInfo.open(map, policeMarker));
       });
-      policeMarkersRef.current.push(policeMarker);
 
-      const policeInfo = new window.google.maps.InfoWindow({
-        content: `
-          <div style="font-size:12px;">
-            <div style="font-weight:600;color:${isClosest ? '#16a34a' : '#2563eb'};">${station.name}${isClosest ? ' (Closest)' : ''}</div>
-            <div style="color:#64748b;">${station.distance_km} km away</div>
-          </div>
-        `,
-      });
-      policeMarker.addListener('click', () => policeInfo.open(map, policeMarker));
-    });
+      // Auto-route from alert to closest police station
+      if (window.google.maps.DirectionsService && window.google.maps.DirectionsRenderer) {
+        const directionsService = new window.google.maps.DirectionsService();
+        const directionsRenderer = new window.google.maps.DirectionsRenderer({
+          map,
+          suppressMarkers: true,
+          polylineOptions: { strokeColor: '#2563eb', strokeWeight: 4, strokeOpacity: 0.8 },
+        });
+        directionsRendererRef.current = directionsRenderer;
 
-    // Auto-route from alert to closest police station
-    const directionsService = new window.google.maps.DirectionsService();
-    const directionsRenderer = new window.google.maps.DirectionsRenderer({
-      map,
-      suppressMarkers: true,
-      polylineOptions: { strokeColor: '#2563eb', strokeWeight: 4, strokeOpacity: 0.8 },
-    });
-    directionsRendererRef.current = directionsRenderer;
-
-    directionsService.route(
-      {
-        origin: { lat: alertLat, lng: alertLon },
-        destination: { lat: closest.lat, lng: closest.lon },
-        travelMode: window.google.maps.TravelMode.DRIVING,
-      },
-      (result, status) => {
-        if (status === 'OK' && result) {
-          directionsRenderer.setDirections(result);
-          const bounds = new window.google.maps.LatLngBounds();
-          bounds.extend({ lat: alertLat, lng: alertLon });
-          bounds.extend({ lat: closest.lat, lng: closest.lon });
-          map.fitBounds(bounds, 50);
-        }
+        directionsService.route(
+          {
+            origin: { lat: alertLat, lng: alertLon },
+            destination: { lat: closest.lat, lng: closest.lon },
+            travelMode: window.google.maps.TravelMode.DRIVING,
+          },
+          (result, status) => {
+            if (status === 'OK' && result) {
+              directionsRenderer.setDirections(result);
+              const bounds = new window.google.maps.LatLngBounds();
+              bounds.extend({ lat: alertLat, lng: alertLon });
+              bounds.extend({ lat: closest.lat, lng: closest.lon });
+              map.fitBounds(bounds, 50);
+            }
+          }
+        );
       }
-    );
+    };
+
+    // Wait for map to be idle before rendering directions
+    if (map.getCenter()) {
+      renderPolice();
+    } else {
+      const listener = map.addListener('idle', () => {
+        renderPolice();
+        google.maps.event.removeListener(listener);
+      });
+      return () => { google.maps.event.removeListener(listener); };
+    }
 
     return () => {
       policeMarkersRef.current.forEach((m) => m.setMap(null));

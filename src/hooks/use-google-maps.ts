@@ -43,7 +43,7 @@ export function useGoogleMaps() {
     if (!existingScript) {
       const script = document.createElement('script');
       script.id = 'google-maps-script';
-      script.src = `https://maps.googleapis.com/maps/api/js?key=${API_KEY}&loading=async&callback=__googleMapsInit`;
+      script.src = `https://maps.googleapis.com/maps/api/js?key=${API_KEY}&libraries=directions&loading=async&callback=__googleMapsInit`;
       script.async = true;
       script.defer = true;
       script.onerror = () => setError('Failed to load Google Maps');
