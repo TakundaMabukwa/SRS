@@ -34,6 +34,16 @@ export function ResolveAlertsModal({
   const [resolving, setResolving] = useState(false);
   const [resolvingIds, setResolvingIds] = useState<Set<string>>(new Set());
 
+  const alertTypeName = (type: string) => {
+    const map: Record<string, string> = {
+      exceptionEvent: "Exception Event", zoneBreach: "Zone Breach", speeding: "Speeding",
+      harshDriving: "Harsh Driving", seatBelt: "Seat Belt", closeProximity: "Close Proximity",
+      laneShift: "Lane Shift", occlusion: "Occlusion", tow: "Tow", idle: "Idle",
+      forwardCollisionWarning: "Forward Collision", highRiskZoneEntry: "High Risk Zone Entry",
+    };
+    return map[type] || type?.replace(/([A-Z])/g, " $1").replace(/_/g, " ")?.trim() || "Alert";
+  };
+
   const allAlerts = useMemo(() => {
     const merged: any[] = [];
 
@@ -241,15 +251,6 @@ export function ResolveAlertsModal({
     return `${d.toLocaleDateString("en-ZA", { day: "2-digit", month: "short" })} ${d.toLocaleTimeString("en-ZA", { hour: "2-digit", minute: "2-digit" })}`;
   };
 
-  const alertTypeName = (type: string) => {
-    const map: Record<string, string> = {
-      exceptionEvent: "Exception Event", zoneBreach: "Zone Breach", speeding: "Speeding",
-      harshDriving: "Harsh Driving", seatBelt: "Seat Belt", closeProximity: "Close Proximity",
-      laneShift: "Lane Shift", occlusion: "Occlusion", tow: "Tow", idle: "Idle",
-      forwardCollisionWarning: "Forward Collision", highRiskZoneEntry: "High Risk Zone Entry",
-    };
-    return map[type] || type?.replace(/([A-Z])/g, " $1").replace(/_/g, " ")?.trim() || "Alert";
-  };
 
   if (!isOpen) return null;
 
