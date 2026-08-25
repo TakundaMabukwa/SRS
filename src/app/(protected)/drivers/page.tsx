@@ -107,6 +107,9 @@ export default function Drivers() {
     type CostCenter = { id: number; name: string; code: string }
     const [costCenters, setCostCenters] = useState<CostCenter[]>([])
 
+    type Vehicle = { id: number; fleet_number: string; registration_number: string; cost_center: string; cost_center_id: number | null }
+    const [vehicles, setVehicles] = useState<Vehicle[]>([])
+
     const emptyForm: Driver = {
         first_name: '',
         surname: '',
@@ -128,6 +131,8 @@ export default function Drivers() {
         salary: null,
         hourly_rate: null,
         created_by: null,
+        fleet_number: null,
+        cost_center_id: null,
     }
 
     const [formData, setFormData] = useState<Driver>(emptyForm)
@@ -140,7 +145,18 @@ export default function Drivers() {
                 if (!error) setCostCenters((data ?? []) as CostCenter[])
             } catch {}
         }
+        const fetchVehicles = async () => {
+            try {
+                const { data, error } = await supabase
+                    .from('vehiclesc')
+                    .select('id, fleet_number, registration_number, cost_center, cost_center_id')
+                    .not('fleet_number', 'is', null)
+                    .order('fleet_number')
+                if (!error) setVehicles((data ?? []) as Vehicle[])
+            } catch {}
+        }
         fetchCostCenters()
+        fetchVehicles()
     }, [activeTab])
 
     useEffect(() => {
@@ -620,6 +636,46 @@ export default function Drivers() {
                                 </div>
                             </div>
 
+                            {/* Assignment */}
+                            <div className="bg-slate-50 rounded-md p-4 border border-slate-200">
+                                <div className="flex items-center space-x-2 mb-3">
+                                    <div className="flex justify-center items-center bg-slate-600 rounded w-6 h-6">
+                                        <Settings className="w-3 h-3 text-white" />
+                                    </div>
+                                    <h3 className="text-sm font-semibold text-slate-800">Assignment</h3>
+                                </div>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <div>
+                                        <Label htmlFor="cost_center_id">Cost Center</Label>
+                                        <select
+                                            id="cost_center_id"
+                                            className="w-full rounded border border-slate-300 bg-white px-3 py-2 text-sm"
+                                            value={(formData as any).cost_center_id || ''}
+                                            onChange={(e) => handleInputChange('cost_center_id', e.target.value ? Number(e.target.value) : null)}
+                                        >
+                                            <option value="">Select Cost Center</option>
+                                            {costCenters.map(cc => (
+                                                <option key={cc.id} value={cc.id}>{cc.name}</option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <Label htmlFor="fleet_number">Assigned Vehicle</Label>
+                                        <select
+                                            id="fleet_number"
+                                            className="w-full rounded border border-slate-300 bg-white px-3 py-2 text-sm"
+                                            value={(formData as any).fleet_number || ''}
+                                            onChange={(e) => handleInputChange('fleet_number', e.target.value)}
+                                        >
+                                            <option value="">Select Vehicle</option>
+                                            {vehicles.map(v => (
+                                                <option key={v.id} value={v.fleet_number}>{v.fleet_number} - {v.registration_number}</option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                </div>
+                            </div>
+
                             {/* Actions */}
                             <div className="flex justify-end space-x-2 pt-2 border-t border-slate-200">
                                 <Button type="button" variant="outline" onClick={() => { setIsAddDialogOpen(false); resetForm() }} disabled={isSubmitting} className="text-slate-600 border-slate-300">Cancel</Button>
@@ -909,6 +965,27 @@ export default function Drivers() {
                                     <div>
                                         <p className="text-sm font-medium text-gray-600">POP</p>
                                         <p className="text-gray-900">{selectedDriver.pop || "Not set"}</p>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Assignment Information */}
+                            <div className="space-y-4">
+                                <h3 className="text-lg font-semibold text-gray-900">
+                                    Assignment
+                                </h3>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                    <div>
+                                        <p className="text-sm font-medium text-gray-600">Cost Center</p>
+                                        <p className="text-gray-900">
+                                            {costCenters.find(cc => cc.id === selectedDriver.cost_center_id)?.name || (selectedDriver as any).cost_center || "Not assigned"}
+                                        </p>
+                                    </div>
+                                    <div>
+                                        <p className="text-sm font-medium text-gray-600">Assigned Vehicle</p>
+                                        <p className="text-gray-900">
+                                            {(selectedDriver as any).fleet_number || "Not assigned"}
+                                        </p>
                                     </div>
                                 </div>
                             </div>
