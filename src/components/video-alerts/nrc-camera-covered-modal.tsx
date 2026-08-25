@@ -96,16 +96,25 @@ export default function NRCCameraCoveredModal({ isOpen, onClose, onSaved, driver
   )
   useEffect(() => {
     if (!isOpen) return
+    const fetchCurrentUser = async () => {
+      const { createClient } = await import('@/lib/supabase/client')
+      const supabase = createClient()
+      const { data: { session } } = await supabase.auth.getSession()
+      return session?.user?.email || session?.user?.user_metadata?.email || session?.user?.user_metadata?.name || 'Fleet Manager'
+    }
+    const costCenter = driverInfo.department || 'Fleet Operations'
+    fetchCurrentUser().then((currentUser) => {
+      setResponsibleManager(currentUser)
+    })
     setDescription(eventSummary)
     setArea(siteLabel)
     setDuration(eventTime ? `Observed at ${eventTime}` : 'Observed at alert time')
     setOtherClass(alertDetails?.type || 'General fleet non-conformance')
     setDriverName(driverInfo.name || 'Unknown Driver')
-    setDepartment(driverInfo.department || 'Fleet Operations')
+    setDepartment(costCenter)
     setVehicleFleetNumber(driverInfo.fleetNumber || '')
     setVehicleRegistration(driverInfo.registration || '')
-    setResponsibleManager(driverInfo.department ? `${driverInfo.department} Manager` : 'Fleet Manager')
-    setSection(driverInfo.department || 'Fleet Operations')
+    setSection(costCenter)
 
     const alertType = (alertDetails?.type || '').toLowerCase()
     const autoClassify: string[] = []

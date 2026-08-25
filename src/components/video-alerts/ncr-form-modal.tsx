@@ -93,20 +93,33 @@ export default function NCRFormModal({ isOpen, onClose, onSaved, driverInfo, ale
     const dateStr = ts.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' })
     const timeStr = ts.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false })
 
-    setFormData((prev) => ({
-      ...prev,
-      name: driverInfo.name || prev.name,
-      vehicleFleetNumber: driverInfo.fleetNumber || prev.vehicleFleetNumber,
-      vehicleRegistration: driverInfo.registration || prev.vehicleRegistration || driverInfo.fleetNumber,
-      department: driverInfo.department || prev.department,
-      date: dateStr,
-      time: timeStr,
-      duration: `Observed at ${timeStr}`,
-      alertId: alertDetails?.id || prev.alertId,
-      lastOccurrence: ts.toLocaleString('en-GB'),
-      area: locationText || prev.area,
-      description: `Alert ${alertDetails?.id || ''} generated for driver ${driverInfo.name || 'Unknown'} on fleet ${driverInfo.fleetNumber} at ${ts.toLocaleString('en-GB')} (${locationText}). The event should be investigated against the recorded video evidence, screenshots, and alert timeline.`,
-    }))
+    const fetchCurrentUser = async () => {
+      const { createClient } = await import('@/lib/supabase/client')
+      const supabase = createClient()
+      const { data: { session } } = await supabase.auth.getSession()
+      return session?.user?.email || session?.user?.user_metadata?.email || session?.user?.user_metadata?.name || 'Fleet Manager'
+    }
+
+    fetchCurrentUser().then((currentUser) => {
+      const costCenter = driverInfo.department || 'Fleet Operations'
+      setFormData((prev) => ({
+        ...prev,
+        name: driverInfo.name || prev.name,
+        vehicleFleetNumber: driverInfo.fleetNumber || prev.vehicleFleetNumber,
+        vehicleRegistration: driverInfo.registration || prev.vehicleRegistration || driverInfo.fleetNumber,
+        department: costCenter,
+        section: costCenter,
+        responsibleManager: currentUser,
+        date: dateStr,
+        time: timeStr,
+        duration: `Observed at ${timeStr}`,
+        alertId: alertDetails?.id || prev.alertId,
+        lastOccurrence: ts.toLocaleString('en-GB'),
+        area: locationText || prev.area,
+        description: `Alert ${alertDetails?.id || ''} generated for driver ${driverInfo.name || 'Unknown'} on fleet ${driverInfo.fleetNumber} at ${ts.toLocaleString('en-GB')} (${locationText}). The event should be investigated against the recorded video evidence, screenshots, and alert timeline.`,
+      }))
+    })
+  }, [isOpen, alertDetails?.id, alertDetails?.type, driverInfo.name, driverInfo.fleetNumber, driverInfo.registration, driverInfo.department, driverInfo.timestamp, locationText])
 
     const alertType = (alertDetails?.type || '').toLowerCase()
     const autoClassify: string[] = []

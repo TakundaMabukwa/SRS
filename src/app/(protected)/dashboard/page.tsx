@@ -3305,6 +3305,8 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
       fleetNumber,
       registration: registration || undefined,
       department:
+        clean(selectedAlert?.cost_center) ||
+        clean(metadata?.cost_center) ||
         clean(selectedAlert?.department) ||
         clean(metadata?.department) ||
         "Fleet Operations",
