@@ -8,6 +8,7 @@ type VehicleLookupEntry = {
   make: string | null;
   model: string | null;
   costCenter: string | null;
+  costCenterId: number | null;
   driverName: string | null;
   driverId: string | null;
 };
@@ -63,7 +64,7 @@ async function fetchAllVehicleLookupRowsFromSupabase() {
 
   const { data, error } = await supabase
     .from('vehiclesc')
-    .select('registration_number, fleet_number, make, model, camera_serial, camera_sim_id, cost_centres, driver_id, drivers!vehiclesc_driver_id_fkey(first_name, surname, fleet_number, id)');
+    .select('registration_number, fleet_number, make, model, camera_serial, camera_sim_id, cost_centres, cost_center_id, driver_id, drivers!vehiclesc_driver_id_fkey(first_name, surname, fleet_number, id)');
 
   if (error) {
     return {
@@ -85,6 +86,7 @@ async function fetchAllVehicleLookupRowsFromSupabase() {
       make: cleanText(row.make),
       model: cleanText(row.model),
       costCenter: cleanText(row.cost_centres),
+      costCenterId: (row as any).cost_center_id ? Number((row as any).cost_center_id) : null,
       driverName: driverName || null,
       driverId: cleanText((row as any).driver_id),
     };

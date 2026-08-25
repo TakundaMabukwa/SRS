@@ -76,12 +76,12 @@ function withCacheBuster(url: string): string {
 
 type ScreenshotsDashboardTabProps = {
   detachable?: boolean;
-  selectedCostCenters?: string[];
+  selectedCostCenterIds?: number[];
 };
 
 export default function ScreenshotsDashboardTab({
   detachable = true,
-  selectedCostCenters = [],
+  selectedCostCenterIds = [],
 }: ScreenshotsDashboardTabProps) {
   const supabase = createClient();
   const dbVehiclesRef = useRef<DbVehicle[] | null>(null);
@@ -439,8 +439,8 @@ export default function ScreenshotsDashboardTab({
   }, [failedImages]);
 
   const selectedCostCenterSet = useMemo(
-    () => new Set(selectedCostCenters.map((v) => normalizeCostCenter(v)).filter(Boolean)),
-    [selectedCostCenters]
+    () => new Set<string>(),
+    [selectedCostCenterIds]
   );
 
   const scopedCards = useMemo(

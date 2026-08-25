@@ -58,13 +58,14 @@ type VideoAlertsDashboardTabProps = {
   standaloneSeverity?: "critical" | "high" | "medium" | "low" | "all" | null;
   standaloneMode?: boolean;
   suspendBackgroundWork?: boolean;
-  selectedCostCenters?: string[];
+  selectedCostCenterIds?: number[];
 };
 
 type VehicleIdentity = {
   plate: string;
   fleetNumber: string;
   costCenter: string;
+  costCenterId: number | null;
   driverName: string | null;
 };
 
@@ -73,6 +74,7 @@ type ControlRoomVehicleCard = {
   plate: string;
   fleetNumber: string;
   costCenter: string;
+  costCenterId: number | null;
   hasAlert: boolean;
   alert: any | null;
   severity: "critical" | "high" | "medium" | "low";
@@ -253,7 +255,7 @@ export default function VideoAlertsDashboardTab({
   standaloneSeverity = null,
   standaloneMode = false,
   suspendBackgroundWork = false,
-  selectedCostCenters = [],
+  selectedCostCenterIds = [],
 }: VideoAlertsDashboardTabProps) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
@@ -1208,6 +1210,7 @@ export default function VideoAlertsDashboardTab({
           plate: String(row?.plate || "").trim(),
           fleetNumber: String(row?.fleetNumber || "").trim(),
           costCenter: String(row?.costCenter || "").trim(),
+          costCenterId: row?.costCenterId ?? row?.cost_center_id ?? null,
           driverName: String(row?.driverName || "").trim() || null,
         };
         if (deviceId) nextLookup.set(deviceId, entry);
@@ -1511,32 +1514,14 @@ export default function VideoAlertsDashboardTab({
   ), [groupedAlerts, mergedAlerts, showRawAlerts]);
 
   const selectedCostCenterSet = useMemo(
-    () =>
-      new Set(
-        selectedCostCenters
-          .map((value) => normalizeCostCenter(value))
-          .filter(Boolean)
-      ),
-    [selectedCostCenters]
+    () => new Set(selectedCostCenterIds.filter(Boolean)),
+    [selectedCostCenterIds]
   );
 
   const alertMatchesCostCenter = useCallback((alert: any) => {
+    // ID-based filtering is handled at vehicle level in controlRoomBoard
     if (selectedCostCenterSet.size === 0) return true;
-
-    const candidates = [
-      alert?.cost_center,
-      alert?.costCenter,
-      alert?.metadata?.cost_center,
-      alert?.metadata?.costCenter,
-    ]
-      .map((value) => normalizeCostCenter(value))
-      .filter(Boolean);
-
-    if (candidates.length === 0) {
-      return selectedCostCenterSet.has("unassigned");
-    }
-
-    return candidates.some((value) => selectedCostCenterSet.has(value));
+    return true;
   }, [selectedCostCenterSet]);
 
   const costCenterScopedAlertCollection = useMemo(
@@ -1746,11 +1731,10 @@ export default function VideoAlertsDashboardTab({
   const controlRoomBoard = useMemo(() => {
     const vehicleCards = new Map<string, ControlRoomVehicleCard>();
 
-    const includeCostCenter = (value: string) => {
+    const includeCostCenter = (costCenterId: number | null) => {
       if (selectedCostCenterSet.size === 0) return true;
-      const normalized = normalizeCostCenter(value);
-      if (!normalized) return selectedCostCenterSet.has("unassigned");
-      return selectedCostCenterSet.has(normalized);
+      if (!costCenterId) return selectedCostCenterSet.has(0);
+      return selectedCostCenterSet.has(costCenterId);
     };
 
     // Build a vehicle-keyed map (by plate or fleet) so multiple deviceIds for same vehicle collapse to one card
@@ -1760,12 +1744,13 @@ export default function VideoAlertsDashboardTab({
       const vehicleKey = String(details?.fleetNumber || details?.plate || deviceId).trim().toUpperCase();
       deviceToVehicleKey.set(deviceId, vehicleKey);
       if (!vehicleCards.has(vehicleKey)) {
-        if (!includeCostCenter(details?.costCenter || "")) continue;
+        if (!includeCostCenter(details?.costCenterId ?? null)) continue;
         vehicleCards.set(vehicleKey, {
           deviceId,
           plate: String(details?.plate || "").trim(),
           fleetNumber: String(details?.fleetNumber || "").trim(),
           costCenter: String(details?.costCenter || "").trim(),
+          costCenterId: details?.costCenterId ?? null,
           hasAlert: false,
           alert: null,
           severity: "low",

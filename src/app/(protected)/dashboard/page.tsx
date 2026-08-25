@@ -65,6 +65,7 @@ import Link from "next/link";
 import DetailCard from "@/components/ui/detail-card";
 import { onCreate } from "@/hooks/use-auth";
 import { useGlobalContext } from "@/context/global-context/context";
+import { useCostCenters } from "@/context/cost-centers-context";
 import { ProgressWithWaypoints } from '@/components/ui/progress-with-waypoints'
 import { Progress } from '@/components/ui/progress'
 import {
@@ -2271,9 +2272,10 @@ function TripReportsSection() {
 }
 
 export default function Dashboard() {
+  const { costCenters, costCenterMap, getCostCenterName } = useCostCenters();
   const [activeTab, setActiveTab] = useState<string>("video-alerts");
   const [costCenterOptions, setCostCenterOptions] = useState<string[]>([]);
-  const [selectedCostCenters, setSelectedCostCenters] = useState<string[]>([]);
+  const [selectedCostCenterIds, setSelectedCostCenterIds] = useState<number[]>([]);
   const [auditData, setAuditData] = useState<any[]>([]);
   const [auditLoading, setAuditLoading] = useState(true);
   const [userRole, setUserRole] = useState<string>("");
@@ -2368,17 +2370,15 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
   const normalizeCostCenter = useCallback((value: unknown) => {
     return String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
   }, []);
-  const toggleCostCenterFilter = useCallback((costCenter: string) => {
-    const normalizedTarget = normalizeCostCenter(costCenter);
-    if (!normalizedTarget) return;
-    setSelectedCostCenters((previous) => {
-      const exists = previous.some((value) => normalizeCostCenter(value) === normalizedTarget);
+  const toggleCostCenterFilter = useCallback((costCenterId: number) => {
+    setSelectedCostCenterIds((previous) => {
+      const exists = previous.includes(costCenterId);
       if (exists) {
-        return previous.filter((value) => normalizeCostCenter(value) !== normalizedTarget);
+        return previous.filter((id) => id !== costCenterId);
       }
-      return [...previous, costCenter];
+      return [...previous, costCenterId];
     });
-  }, [normalizeCostCenter]);
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -2430,10 +2430,10 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
     };
   }, [normalizeCostCenter]);
   const selectedCostCenterSummary = useMemo(() => {
-    if (selectedCostCenters.length === 0) return "All Cost Centers";
-    if (selectedCostCenters.length === 1) return selectedCostCenters[0];
-    return `${selectedCostCenters.length} Cost Centers`;
-  }, [selectedCostCenters]);
+    if (selectedCostCenterIds.length === 0) return "All Cost Centers";
+    if (selectedCostCenterIds.length === 1) return getCostCenterName(selectedCostCenterIds[0]) || `ID: ${selectedCostCenterIds[0]}`;
+    return `${selectedCostCenterIds.length} Cost Centers`;
+  }, [selectedCostCenterIds, getCostCenterName]);
   const showCostCenterFilter = useMemo(
     () => ["video-alerts", "screenshots", "playback", "alert-config", "live-stream"].includes(activeTab),
     [activeTab]
@@ -4676,21 +4676,21 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
                 <DropdownMenuLabel>Cost Center Filter</DropdownMenuLabel>
                 <DropdownMenuSeparator />
                 <DropdownMenuCheckboxItem
-                  checked={selectedCostCenters.length === 0}
+                  checked={selectedCostCenterIds.length === 0}
                   onSelect={(event) => event.preventDefault()}
-                  onCheckedChange={() => setSelectedCostCenters([])}
+                  onCheckedChange={() => setSelectedCostCenterIds([])}
                 >
                   All Cost Centers
                 </DropdownMenuCheckboxItem>
                 <DropdownMenuSeparator />
-                {costCenterOptions.map((costCenter) => (
+                {costCenters.map((cc) => (
                   <DropdownMenuCheckboxItem
-                    key={costCenter}
-                    checked={selectedCostCenters.some((value) => normalizeCostCenter(value) === normalizeCostCenter(costCenter))}
+                    key={cc.id}
+                    checked={selectedCostCenterIds.includes(cc.id)}
                     onSelect={(event) => event.preventDefault()}
-                    onCheckedChange={() => toggleCostCenterFilter(costCenter)}
+                    onCheckedChange={() => toggleCostCenterFilter(cc.id)}
                   >
-                    {costCenter}
+                    {cc.name}
                   </DropdownMenuCheckboxItem>
                 ))}
               </DropdownMenuContent>
@@ -4703,16 +4703,16 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
           <VideoAlertsDashboardTab
             onOpenAlertDetail={openAlertDetailRealtime}
             suspendBackgroundWork={alertDetailModalOpen}
-            selectedCostCenters={selectedCostCenters}
+            selectedCostCenterIds={selectedCostCenterIds}
           />
         )}
 
         {activeTab === "screenshots" && (
-          <ScreenshotsDashboardTab selectedCostCenters={selectedCostCenters} />
+          <ScreenshotsDashboardTab selectedCostCenterIds={selectedCostCenterIds} />
         )}
 
         {activeTab === "playback" && (
-          <PlaybackDashboardTab selectedCostCenters={selectedCostCenters} />
+          <PlaybackDashboardTab selectedCostCenterIds={selectedCostCenterIds} />
         )}
 
         {activeTab === "alert-config" && (
@@ -4720,7 +4720,7 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
         )}
 
         <div style={{ display: activeTab === "live-stream" ? "" : "none" }} className="w-full">
-          <LiveStreamTab selectedCostCenters={selectedCostCenters} />
+          <LiveStreamTab selectedCostCenterIds={selectedCostCenterIds} />
         </div>
 
         {activeTab === "fleet-map" && (

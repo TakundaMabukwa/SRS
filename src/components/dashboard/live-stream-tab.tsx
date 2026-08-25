@@ -64,7 +64,7 @@ type StreamEntry = {
 };
 
 type LiveStreamTabProps = {
-  selectedCostCenters?: string[];
+  selectedCostCenterIds?: number[];
 };
 
 const EPS_API = "/api/video-server";
@@ -76,7 +76,7 @@ function matchesCostCenterFilter(costCenter: string, selectedCostCenters: Set<st
   return selectedCostCenters.has(normalized);
 }
 
-export default function LiveStreamTab({ selectedCostCenters = [] }: LiveStreamTabProps) {
+export default function LiveStreamTab({ selectedCostCenterIds = [] }: LiveStreamTabProps) {
   const supabase = createClient();
   const [vehicles, setVehicles] = useState<{ registration: string; fleetNumber: string; costCenter: string; deviceId: string | null; online: boolean }[]>([]);
   const [selectedDevices, setSelectedDevices] = useState<Set<string>>(new Set());
@@ -223,8 +223,8 @@ export default function LiveStreamTab({ selectedCostCenters = [] }: LiveStreamTa
   }, []);
 
   const selectedCostCenterSet = useMemo(
-    () => new Set(selectedCostCenters.map((v) => v.trim().toLowerCase()).filter(Boolean)),
-    [selectedCostCenters]
+    () => new Set<string>(),
+    [selectedCostCenterIds]
   );
 
   const filteredVehicles = useMemo(

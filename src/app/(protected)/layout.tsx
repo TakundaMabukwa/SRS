@@ -33,6 +33,7 @@ import { PAGES, Permission, hasPermission } from "@/lib/permissions/permissions"
 import { createClient } from "@/lib/supabase/client";
 import { ElevationNotification } from "@/components/ui/elevation-notification";
 import { VideoAlertsProvider } from "@/context/video-alerts-context";
+import { CostCentersProvider } from "@/context/cost-centers-context";
 import AlertBellNotification from "@/components/notifications/alert-bell-notification";
 
 interface ProtectedLayoutProps {
@@ -351,7 +352,9 @@ export default function ProtectedLayout({ children }: ProtectedLayoutProps) {
         {/* Content Area */}
         <main className="flex-1 overflow-y-auto bg-gray-50 p-6">
           <div className="max-w-7xl mx-auto">
-            <GlobalProvider>{children}</GlobalProvider>
+            <CostCentersProvider>
+              <GlobalProvider>{children}</GlobalProvider>
+            </CostCentersProvider>
           </div>
         </main>
         

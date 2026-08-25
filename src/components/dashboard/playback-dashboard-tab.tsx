@@ -119,10 +119,10 @@ function sastDateToRange(dateStr: string): { start: string; end: string } {
 }
 
 type PlaybackDashboardTabProps = {
-  selectedCostCenters?: string[];
+  selectedCostCenterIds?: number[];
 };
 
-export default function PlaybackDashboardTab({ selectedCostCenters = [] }: PlaybackDashboardTabProps) {
+export default function PlaybackDashboardTab({ selectedCostCenterIds = [] }: PlaybackDashboardTabProps) {
   const supabase = createClient();
   const [vehicles, setVehicles] = useState<PlaybackVehicle[]>([]);
   const [loading, setLoading] = useState(true);
@@ -253,8 +253,8 @@ export default function PlaybackDashboardTab({ selectedCostCenters = [] }: Playb
   }, [refreshAll]);
 
   const selectedCostCenterSet = useMemo(
-    () => new Set(selectedCostCenters.map((v) => normalizeCostCenter(v)).filter(Boolean)),
-    [selectedCostCenters]
+    () => new Set<string>(),
+    [selectedCostCenterIds]
   );
 
   const filteredVehicles = useMemo(() => {
