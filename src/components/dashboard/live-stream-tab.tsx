@@ -27,6 +27,7 @@ import {
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { createPortal } from "react-dom";
+import { useCostCenters } from "@/context/cost-centers-context";
 
 type DbVehicle = {
   registration_number: string;
@@ -77,6 +78,7 @@ function matchesCostCenterFilter(costCenter: string, selectedCostCenters: Set<st
 }
 
 export default function LiveStreamTab({ selectedCostCenterIds = [] }: LiveStreamTabProps) {
+  const { costCenterMap } = useCostCenters();
   const supabase = createClient();
   const [vehicles, setVehicles] = useState<{ registration: string; fleetNumber: string; costCenter: string; deviceId: string | null; online: boolean }[]>([]);
   const [selectedDevices, setSelectedDevices] = useState<Set<string>>(new Set());
@@ -222,10 +224,14 @@ export default function LiveStreamTab({ selectedCostCenterIds = [] }: LiveStream
     return () => window.removeEventListener('resize', update);
   }, []);
 
-  const selectedCostCenterSet = useMemo(
-    () => new Set<string>(),
-    [selectedCostCenterIds]
-  );
+  const selectedCostCenterSet = useMemo(() => {
+    const set = new Set<string>();
+    for (const id of selectedCostCenterIds) {
+      const name = costCenterMap.get(id);
+      if (name) set.add(name.toLowerCase());
+    }
+    return set;
+  }, [selectedCostCenterIds, costCenterMap]);
 
   const filteredVehicles = useMemo(
     () => vehicles

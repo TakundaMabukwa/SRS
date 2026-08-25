@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Video, RefreshCw, Search, Wifi, WifiOff, Play, Loader2, X, ChevronLeft, Clock, Calendar, Download } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { UniversalVideoPlayer } from "./universal-video-player";
+import { useCostCenters } from "@/context/cost-centers-context";
 
 const EPS_API = "/api/video-server";
 const SOUTH_AFRICA_TIME_ZONE = "Africa/Johannesburg";
@@ -123,6 +124,7 @@ type PlaybackDashboardTabProps = {
 };
 
 export default function PlaybackDashboardTab({ selectedCostCenterIds = [] }: PlaybackDashboardTabProps) {
+  const { costCenterMap } = useCostCenters();
   const supabase = createClient();
   const [vehicles, setVehicles] = useState<PlaybackVehicle[]>([]);
   const [loading, setLoading] = useState(true);
@@ -252,10 +254,14 @@ export default function PlaybackDashboardTab({ selectedCostCenterIds = [] }: Pla
     void refreshAll();
   }, [refreshAll]);
 
-  const selectedCostCenterSet = useMemo(
-    () => new Set<string>(),
-    [selectedCostCenterIds]
-  );
+  const selectedCostCenterSet = useMemo(() => {
+    const set = new Set<string>();
+    for (const id of selectedCostCenterIds) {
+      const name = costCenterMap.get(id);
+      if (name) set.add(name.toLowerCase());
+    }
+    return set;
+  }, [selectedCostCenterIds, costCenterMap]);
 
   const filteredVehicles = useMemo(() => {
     const needle = vehicleSearch.trim().toLowerCase();

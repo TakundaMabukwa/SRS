@@ -6,6 +6,7 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { RefreshCw, Shield, ExternalLink, X } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { useCostCenters } from "@/context/cost-centers-context";
 
 type DbVehicle = {
   registration_number: string;
@@ -83,6 +84,7 @@ export default function ScreenshotsDashboardTab({
   detachable = true,
   selectedCostCenterIds = [],
 }: ScreenshotsDashboardTabProps) {
+  const { costCenterMap } = useCostCenters();
   const supabase = createClient();
   const dbVehiclesRef = useRef<DbVehicle[] | null>(null);
   const [cards, setCards] = useState<VehicleCard[]>([]);
@@ -438,10 +440,14 @@ export default function ScreenshotsDashboardTab({
     failedImagesRef.current = failedImages;
   }, [failedImages]);
 
-  const selectedCostCenterSet = useMemo(
-    () => new Set<string>(),
-    [selectedCostCenterIds]
-  );
+  const selectedCostCenterSet = useMemo(() => {
+    const set = new Set<string>();
+    for (const id of selectedCostCenterIds) {
+      const name = costCenterMap.get(id);
+      if (name) set.add(name.toLowerCase());
+    }
+    return set;
+  }, [selectedCostCenterIds, costCenterMap]);
 
   const scopedCards = useMemo(
     () => cards
