@@ -1798,7 +1798,7 @@ export default function VideoAlertsDashboardTab({
           existing?.costCenter ||
           ""
         ).trim();
-        if (!includeCostCenter(alertCostCenter)) continue;
+        if (!includeCostCenter(existing?.costCenterId ?? null, alertCostCenter)) continue;
 
         const nextCard: ControlRoomVehicleCard = existing || {
           deviceId: id,

@@ -75,18 +75,45 @@ async function fetchAllVehicleLookupRowsFromSupabase() {
     };
   }
 
+  const { data: costCenterRows } = await supabase
+    .from('cost_centers')
+    .select('id, name, code');
+
+  const costCenterByName = new Map<string, number>();
+  const costCenterByCode = new Map<string, number>();
+  for (const cc of costCenterRows || []) {
+    const name = String(cc.name || '').trim().toLowerCase();
+    const code = String(cc.code || '').trim().toLowerCase();
+    if (name) costCenterByName.set(name, Number(cc.id));
+    if (code) costCenterByCode.set(code, Number(cc.id));
+  }
+
+  const resolveCostCenterId = (textValue: string | null, existingId: number | null): number | null => {
+    if (existingId) return existingId;
+    if (!textValue) return null;
+    const normalized = textValue.trim().toLowerCase();
+    if (costCenterByName.has(normalized)) return costCenterByName.get(normalized)!;
+    if (costCenterByCode.has(normalized)) return costCenterByCode.get(normalized)!;
+    for (const [name, id] of costCenterByName) {
+      if (normalized.includes(name) || name.includes(normalized)) return id;
+    }
+    return null;
+  };
+
   const byDevice = new Map<string, VehicleLookupEntry>();
   const byPlate = new Map<string, VehicleLookupEntry>();
   for (const row of data || []) {
     const driver = (row as any).drivers;
     const driverName = driver ? `${driver.first_name || ''} ${driver.surname || ''}`.trim() : null;
+    const costCenterText = cleanText(row.cost_center) || cleanText(row.cost_centres);
+    const costCenterIdRaw = (row as any).cost_center_id ? Number((row as any).cost_center_id) : null;
     const rowValues = {
       plate: cleanText(row.registration_number),
       fleetNumber: cleanText(row.fleet_number),
       make: '',
       model: '',
-      costCenter: cleanText(row.cost_center) || cleanText(row.cost_centres),
-      costCenterId: (row as any).cost_center_id ? Number((row as any).cost_center_id) : null,
+      costCenter: costCenterText,
+      costCenterId: resolveCostCenterId(costCenterText, costCenterIdRaw),
       driverName: driverName || null,
       driverId: cleanText((row as any).driver_id),
     };
