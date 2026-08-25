@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 
 import { useVideoWebSocket } from "@/hooks/use-video-websocket";
 import { useGeotabWs } from "@/hooks/use-geotab-ws";
+import { useCostCenters } from "@/context/cost-centers-context";
 import { RealTimeMapModal } from "@/components/dashboard/real-time-map-modal";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -258,6 +259,7 @@ export default function VideoAlertsDashboardTab({
   selectedCostCenterIds = [],
 }: VideoAlertsDashboardTabProps) {
   const router = useRouter();
+  const { costCenterMap } = useCostCenters();
   const [loading, setLoading] = useState(false);
   const videoProxyBase = "/api/video-server";
   const [searchTerm, setSearchTerm] = useState("");
@@ -1731,10 +1733,19 @@ export default function VideoAlertsDashboardTab({
   const controlRoomBoard = useMemo(() => {
     const vehicleCards = new Map<string, ControlRoomVehicleCard>();
 
-    const includeCostCenter = (costCenterId: number | null) => {
+    const includeCostCenter = (costCenterId: number | null, costCenterText: string) => {
       if (selectedCostCenterSet.size === 0) return true;
-      if (!costCenterId) return selectedCostCenterSet.has(0);
-      return selectedCostCenterSet.has(costCenterId);
+      // Check by ID first
+      if (costCenterId && selectedCostCenterSet.has(costCenterId)) return true;
+      // Fallback: match text against selected cost center names
+      if (costCenterText) {
+        const normalized = costCenterText.trim().toLowerCase();
+        for (const id of selectedCostCenterSet) {
+          const name = costCenterMap.get(id);
+          if (name && name.toLowerCase() === normalized) return true;
+        }
+      }
+      return false;
     };
 
     // Build a vehicle-keyed map (by plate or fleet) so multiple deviceIds for same vehicle collapse to one card
@@ -1744,7 +1755,7 @@ export default function VideoAlertsDashboardTab({
       const vehicleKey = String(details?.fleetNumber || details?.plate || deviceId).trim().toUpperCase();
       deviceToVehicleKey.set(deviceId, vehicleKey);
       if (!vehicleCards.has(vehicleKey)) {
-        if (!includeCostCenter(details?.costCenterId ?? null)) continue;
+        if (!includeCostCenter(details?.costCenterId ?? null, details?.costCenter || "")) continue;
         vehicleCards.set(vehicleKey, {
           deviceId,
           plate: String(details?.plate || "").trim(),

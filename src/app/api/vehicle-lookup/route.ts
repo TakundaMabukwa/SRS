@@ -64,7 +64,7 @@ async function fetchAllVehicleLookupRowsFromSupabase() {
 
   const { data, error } = await supabase
     .from('vehiclesc')
-    .select('registration_number, fleet_number, make, model, camera_serial, camera_sim_id, cost_centres, cost_center_id, driver_id, drivers!vehiclesc_driver_id_fkey(first_name, surname, fleet_number, id)');
+    .select('registration_number, fleet_number, make, model, camera_serial, camera_sim_id, cost_centres, cost_center_id, driver_id, drivers!vehiclesc_driver_id_fkey(first_name, surname, fleet_number, id), cost_centers!vehiclesc_cost_center_id_fkey(id, name, code)');
 
   if (error) {
     return {
@@ -75,46 +75,22 @@ async function fetchAllVehicleLookupRowsFromSupabase() {
     };
   }
 
-  // Fetch cost_centers to resolve cost_center_id from cost_centres text
-  const { data: costCenterRows } = await supabase
-    .from('cost_centers')
-    .select('id, name, code')
-    .eq('is_active', true);
-
-  const costCenterByName = new Map<string, number>();
-  const costCenterByCode = new Map<string, number>();
-  for (const cc of costCenterRows || []) {
-    const name = String(cc.name || '').trim().toLowerCase();
-    const code = String(cc.code || '').trim().toLowerCase();
-    if (name) costCenterByName.set(name, cc.id);
-    if (code) costCenterByCode.set(code, cc.id);
-  }
-
-  const resolveCostCenterId = (textValue: string | null, existingId: number | null): number | null => {
-    if (existingId) return existingId;
-    if (!textValue) return null;
-    const normalized = textValue.trim().toLowerCase();
-    if (costCenterByName.has(normalized)) return costCenterByName.get(normalized)!;
-    if (costCenterByCode.has(normalized)) return costCenterByCode.get(normalized)!;
-    // Try partial match
-    for (const [name, id] of costCenterByName) {
-      if (normalized.includes(name) || name.includes(normalized)) return id;
-    }
-    return null;
-  };
-
   const byDevice = new Map<string, VehicleLookupEntry>();
   const byPlate = new Map<string, VehicleLookupEntry>();
   for (const row of data || []) {
     const driver = (row as any).drivers;
     const driverName = driver ? `${driver.first_name || ''} ${driver.surname || ''}`.trim() : null;
+    const cc = (row as any).cost_centers;
+    const costCenterIdFromFk = (row as any).cost_center_id ? Number((row as any).cost_center_id) : null;
+    const costCenterIdFromJoin = cc?.id ? Number(cc.id) : null;
+    const costCenterNameFromJoin = cc?.name ? String(cc.name).trim() : null;
     const rowValues = {
       plate: cleanText(row.registration_number),
       fleetNumber: cleanText(row.fleet_number),
       make: cleanText(row.make),
       model: cleanText(row.model),
-      costCenter: cleanText(row.cost_centres),
-      costCenterId: resolveCostCenterId(cleanText(row.cost_centres), (row as any).cost_center_id ? Number((row as any).cost_center_id) : null),
+      costCenter: costCenterNameFromJoin || cleanText(row.cost_centres),
+      costCenterId: costCenterIdFromFk || costCenterIdFromJoin || null,
       driverName: driverName || null,
       driverId: cleanText((row as any).driver_id),
     };
