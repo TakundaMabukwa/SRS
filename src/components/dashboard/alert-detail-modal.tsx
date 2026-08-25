@@ -635,12 +635,20 @@ export function AlertDetailModal({
       .catch(() => {});
   }, [selectedAlert?.id, selectedAlert?.device_id, selectedAlert?.vehicleId]);
 
-  // Fetch nearest police stations when coordinates are available (loaded in parallel)
+  // Fetch nearest police stations when coordinates are available
+  const lastFetchedKeyRef = useRef<string>("");
   useEffect(() => {
-    if (!selectedAlertCoordinates || !isOpen) {
+    if (!isOpen) {
       setNearestPoliceStations([]);
+      lastFetchedKeyRef.current = "";
       return;
     }
+    if (!selectedAlertCoordinates?.latitude || !selectedAlertCoordinates?.longitude) return;
+
+    const key = `${selectedAlertCoordinates.latitude.toFixed(6)},${selectedAlertCoordinates.longitude.toFixed(6)}`;
+    if (lastFetchedKeyRef.current === key) return;
+    lastFetchedKeyRef.current = key;
+
     setPoliceLoading(true);
     fetch(`/api/video-server/police/nearest?lat=${selectedAlertCoordinates.latitude}&lon=${selectedAlertCoordinates.longitude}&limit=3`, {
       cache: "no-store",
@@ -650,7 +658,7 @@ export function AlertDetailModal({
       .then((data) => {
         setNearestPoliceStations(Array.isArray(data?.stations) ? data.stations : []);
       })
-      .catch(() => setNearestPoliceStations([]))
+      .catch(() => {})
       .finally(() => setPoliceLoading(false));
   }, [selectedAlertCoordinates?.latitude, selectedAlertCoordinates?.longitude, isOpen]);
 
