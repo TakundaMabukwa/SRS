@@ -110,21 +110,40 @@ export function ResolveAlertsModal({
 
       const fetchVideo = async () => {
         try {
-          const res = await fetch(`${baseUrl}/alerts/active?limit=200`, {
+          const res = await fetch(`${baseUrl}/eps/alerts/active?limit=1000`, {
             cache: "no-store",
-            signal: AbortSignal.timeout(10000),
+            signal: AbortSignal.timeout(15000),
           });
-          const data = await res.json();
-          const all = Array.isArray(data?.alerts) ? data.alerts : [];
+          let json: any;
+          const contentType = res.headers.get("content-type") || "";
+          const text = await res.text();
+          if (contentType.toLowerCase().includes("application/json") && text) {
+            try { json = JSON.parse(text); } catch { return []; }
+          } else { return []; }
+
+          const all: any[] = Array.isArray(json?.alerts)
+            ? json.alerts
+            : Array.isArray(json?.data?.alerts)
+              ? json.data.alerts
+              : Array.isArray(json?.data)
+                ? json.data
+                : [];
+
           const deviceNorm = deviceId?.trim().toLowerCase();
           const fleetNorm = fleetNumber?.trim().toLowerCase();
           const regNorm = registration?.trim().toLowerCase();
+
           return all.filter((a: any) => {
-            if (a.source_type !== "video") return false;
-            const aDevice = String(a.device_id || a.vehicleId || "").trim().toLowerCase();
-            const aReg = String(a.vehicle_registration || "").trim().toLowerCase();
-            if (deviceNorm && aDevice === deviceNorm) return true;
-            if (regNorm && aReg.includes(regNorm)) return true;
+            const aSource = String(a?.source_type || a?.source || "").trim().toLowerCase();
+            if (aSource !== "video") return false;
+            const aDevice = String(a.device_id || a.vehicleId || a.deviceId || "").trim().toLowerCase();
+            const aFleet = String(a.fleet_number || a.fleetNumber || "").trim().toLowerCase();
+            const aReg = String(a.vehicle_registration || a.plate || a.registration || "").trim().toLowerCase();
+            if (deviceNorm && aDevice && aDevice === deviceNorm) return true;
+            if (fleetNorm && aFleet && aFleet === fleetNorm) return true;
+            if (fleetNorm && aFleet && aFleet.includes(fleetNorm)) return true;
+            if (regNorm && aReg && aReg.includes(regNorm)) return true;
+            if (fleetNorm && aFleet && fleetNorm.includes(aFleet)) return true;
             return false;
           });
         } catch { return []; }
