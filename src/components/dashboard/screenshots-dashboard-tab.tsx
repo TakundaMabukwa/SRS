@@ -64,8 +64,10 @@ function parseDate(value?: string | null): number {
   return Number.isNaN(parsed) ? 0 : parsed;
 }
 
-function toProxiedUrl(rawUrl: string): string {
+function resolveScreenshotUrl(rawUrl: string): string {
   if (!rawUrl) return "";
+  if (rawUrl.startsWith("https://www.skycamx.co.za/")) return rawUrl;
+  if (rawUrl.startsWith("https://skycamx.co.za/")) return rawUrl;
   return `${EPS_API}/eps/stream/stream/proxy?url=${encodeURIComponent(rawUrl)}`;
 }
 
@@ -199,11 +201,6 @@ export default function ScreenshotsDashboardTab({
         }
       }
 
-      // Debug: log regMap and unmatched vehicles
-      console.log('[SCREENSHOTS] regMap size:', regMap.size, 'online devices:', onlineCount);
-      console.log('[SCREENSHOTS] regMap keys:', Array.from(regMap.keys()).join(', '));
-      console.log('[SCREENSHOTS] DB vehicles:', dbVehicles.length, dbVehicles.map(v => `${v.fleet_number}|${v.registration_number}|cam=${v.camera_sim_id}`).join(', '));
-
       // Build device lookup by Mettax deviceId (for camera_sim_id fallback)
       const deviceIdMap = new Map<string, { deviceId: string; online: boolean; cameras: number }>();
       for (const [key, val] of regMap) {
@@ -231,8 +228,6 @@ export default function ScreenshotsDashboardTab({
         const deviceId = match ? match.deviceId : null;
         if (deviceId) {
           matchedDeviceIds.push(deviceId);
-        } else {
-          console.log(`[SCREENSHOTS] UNMATCHED: fleet="${v.fleet_number}" reg="${v.registration_number}" → no Mettax device`);
         }
         
         // Preserve previous online status and images
@@ -258,16 +253,33 @@ export default function ScreenshotsDashboardTab({
         };
       });
 
-      // Fetch gallery screenshots — per-device to get ONLY the last screenshot per camera
+      // PHASE A — Show cached images IMMEDIATELY, then fire capture for vehicles without screenshots
+      prevCardsRef.current = built;
+      setCards(built); // instant paint with cached URLs
+
+      // Fire capture for vehicles without screenshots — using current cycle's deviceId matches
+      const needCaptureInitial = built.filter((c) => c.online && c.deviceId && !c.ch1Url && !c.ch2Url);
+      if (needCaptureInitial.length > 0) {
+        const captures = needCaptureInitial.flatMap((c) =>
+          Array.from({ length: c.cameras || 1 }, (_, i) => ({ deviceId: c.deviceId!, channelId: i + 1 }))
+        );
+        for (const c of needCaptureInitial) { if (c.deviceId) capturingRef.current.add(c.deviceId); }
+        setTimeout(() => {
+          fetch(`${EPS_API}/eps/gallery/capture`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ captures }),
+          }).catch(() => {});
+        }, 0);
+      }
+
+      // PHASE B — Fetch gallery screenshots progressively per batch, updating only changed cards
       let galFailed = false;
       if (matchedDeviceIds.length > 0) {
         const now = new Date();
         const end = now.toISOString().replace("T", " ").slice(0, 19);
         const start = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString().replace("T", " ").slice(0, 19);
 
-        const byDevice: Record<string, Record<number, GalleryFile>> = {};
-
-        // Query per-device in parallel batches — each device gets its own request with pageSize: 2
         for (let i = 0; i < matchedDeviceIds.length; i += GALLERY_BATCH_SIZE) {
           if (!activeRef.current) return;
           const batch = matchedDeviceIds.slice(i, i + GALLERY_BATCH_SIZE);
@@ -279,55 +291,74 @@ export default function ScreenshotsDashboardTab({
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ pageSize: GALLERY_PER_DEVICE, pageIndex: 1, deviceIds: deviceId, startTime: start, endTime: end, queryType: "Device" }),
                 cache: "no-store",
-                signal: AbortSignal.timeout(15000),
+                signal: AbortSignal.timeout(12000),
               }).then(r => r.json()).then(d => ({ deviceId, files: d.data?.files || [] }))
             )
           );
 
+          // Build per-device lookup for this batch
+          const batchResult: Record<string, Record<number, GalleryFile>> = {};
           for (const r of results) {
             if (r.status === "fulfilled") {
               const { deviceId, files } = r.value;
               for (const f of files) {
                 const ch = f.channelId || 1;
-                if (!byDevice[deviceId]) byDevice[deviceId] = {};
-                const existing = byDevice[deviceId][ch];
+                if (!batchResult[deviceId]) batchResult[deviceId] = {};
+                const existing = batchResult[deviceId][ch];
                 if (!existing || (f.createTime || "") > (existing.createTime || "")) {
-                  byDevice[deviceId][ch] = f;
+                  batchResult[deviceId][ch] = f;
                 }
               }
             } else {
               galFailed = true;
             }
           }
-        }
 
-        // Assign URLs to cards
-        for (const card of built) {
-          if (!card.deviceId) continue;
-          const dev = byDevice[card.deviceId];
-          if (!dev) continue;
-          if (dev[1]) { card.ch1Url = toProxiedUrl(dev[1].fileUrl); card.ch1Time = dev[1].createTime; }
-          if (dev[2]) {
-            const ch2Url = toProxiedUrl(dev[2].fileUrl);
-            if (ch2Url && ch2Url !== card.ch1Url) {
-              card.ch2Url = ch2Url;
-              card.ch2Time = dev[2].createTime;
+          // Update only cards that got new URLs from this batch — in-place mutation
+          let cardsUpdated = false;
+          for (const card of built) {
+            if (!card.deviceId) continue;
+            const dev = batchResult[card.deviceId];
+            if (!dev) continue;
+            const newCh1 = dev[1] ? resolveScreenshotUrl(dev[1].fileUrl) : null;
+            const newCh2 = dev[2] ? resolveScreenshotUrl(dev[2].fileUrl) : null;
+            const newCh1Time = dev[1]?.createTime || null;
+            const newCh2Time = dev[2]?.createTime || null;
+            if (
+              (newCh1 && newCh1 !== card.ch1Url) ||
+              (newCh2 && newCh2 !== card.ch2Url) ||
+              (newCh1Time && newCh1Time !== card.ch1Time) ||
+              (newCh2Time && newCh2Time !== card.ch2Time)
+            ) {
+              if (newCh1) { card.ch1Url = newCh1; card.ch1Time = newCh1Time; }
+              if (newCh2 && newCh2 !== card.ch1Url) { card.ch2Url = newCh2; card.ch2Time = newCh2Time; }
+              if (card.deviceId) capturingRef.current.delete(card.deviceId);
+              cardsUpdated = true;
             }
           }
+
+          if (cardsUpdated) setCards(built); // same array ref — React only re-renders changed cards
         }
       }
 
-      // Auto-trigger captures for online vehicles with no screenshots (fire-and-forget)
-      const needCapture = built.filter((c) => c.online && c.deviceId && !c.ch1Url && !c.ch2Url);
-      if (needCapture.length > 0) {
-        const captures = needCapture.flatMap((c) => {
-          const camCount = c.cameras || 1;
-          return Array.from({ length: camCount }, (_, i) => ({ deviceId: c.deviceId!, channelId: i + 1 }));
-        });
-        // Track these devices as "capturing"
-        for (const c of needCapture) {
-          if (c.deviceId) capturingRef.current.add(c.deviceId);
+      // PHASE C — Final state after all gallery batches complete
+      for (const card of built) {
+        if (card.deviceId && capturingRef.current.has(card.deviceId) && !card.ch1Url && !card.ch2Url) {
+          card.capturing = true;
         }
+      }
+
+      if (!activeRef.current) return;
+
+      if (!galFailed) setFailedImages(new Set());
+
+      // Fire capture again for any vehicles still without screenshots after gallery
+      const needCaptureFinal = built.filter((c) => c.online && c.deviceId && !c.ch1Url && !c.ch2Url);
+      if (needCaptureFinal.length > 0) {
+        const captures = needCaptureFinal.flatMap((c) =>
+          Array.from({ length: c.cameras || 1 }, (_, i) => ({ deviceId: c.deviceId!, channelId: i + 1 }))
+        );
+        for (const c of needCaptureFinal) { if (c.deviceId) capturingRef.current.add(c.deviceId); }
         fetch(`${EPS_API}/eps/gallery/capture`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -335,57 +366,15 @@ export default function ScreenshotsDashboardTab({
         }).catch(() => {});
       }
 
-      // Mark cards that are capturing
-      for (const card of built) {
-        if (card.deviceId && capturingRef.current.has(card.deviceId) && !card.ch1Url && !card.ch2Url) {
-          card.capturing = true;
-        }
-        // Clear capturing flag once we have screenshots
-        if (card.ch1Url || card.ch2Url) {
-          if (card.deviceId) capturingRef.current.delete(card.deviceId);
-        }
-      }
-
-      if (!activeRef.current) return;
-
-      // Clear failed images when new gallery data arrives
-      if (!galFailed) {
-        setFailedImages(new Set());
-      }
-
-      // Only preserve previous images when gallery returned nothing new for that card
-      const prevImages = prevCardsRef.current;
-      const currentFailed = failedImagesRef.current;
-      for (const card of built) {
-        const prev = prevImages.find((c) => c.registration === card.registration);
-        if (prev) {
-          // If card has new gallery data, use it (don't preserve old)
-          // Only preserve old if card got no gallery data at all (deviceId missing or no dev entry)
-          if (!card.deviceId) {
-            // No device match — keep previous images
-            if (!card.ch1Url && prev.ch1Url && !currentFailed.has(prev.ch1Url)) { card.ch1Url = prev.ch1Url; card.ch1Time = prev.ch1Time; }
-            if (!card.ch2Url && prev.ch2Url && !currentFailed.has(prev.ch2Url) && prev.ch2Url !== card.ch1Url) { card.ch2Url = prev.ch2Url; card.ch2Time = prev.ch2Time; }
-          }
-        }
-      }
-
       prevCardsRef.current = built;
-      setCards(built);
       if (built.some((c) => c.ch1Url || c.ch2Url)) setLastScreenshotAt(new Date());
       setError(null);
       setLoading(false);
 
-      // If gallery failed, retry sooner
-      if (galFailed) {
-        scheduleRetry();
-      }
-
-      // If there are capturing vehicles, schedule a quick capture retry
+      if (galFailed) scheduleRetry();
       if (capturingRef.current.size > 0) {
         if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
-        retryTimerRef.current = setTimeout(() => {
-          if (activeRef.current) fetchData();
-        }, CAPTURE_RETRY_MS);
+        retryTimerRef.current = setTimeout(() => { if (activeRef.current) fetchData(); }, CAPTURE_RETRY_MS);
       }
     } catch (e: any) {
       if (e.name === "AbortError") return;
