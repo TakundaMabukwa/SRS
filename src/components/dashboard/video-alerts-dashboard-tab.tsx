@@ -7,6 +7,7 @@ import { useRouter } from "next/navigation";
 import { useVideoWebSocket } from "@/hooks/use-video-websocket";
 import { useGeotabWs } from "@/hooks/use-geotab-ws";
 import { useCostCenters } from "@/context/cost-centers-context";
+import { createClient } from "@/lib/supabase/client";
 import { RealTimeMapModal } from "@/components/dashboard/real-time-map-modal";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -60,6 +61,15 @@ type VideoAlertsDashboardTabProps = {
   standaloneMode?: boolean;
   suspendBackgroundWork?: boolean;
   selectedCostCenterIds?: number[];
+  onDriversLoaded?: (drivers: Map<string, DriverInfo>) => void;
+};
+
+type DriverInfo = {
+  firstName: string;
+  surname: string;
+  cellNumber: string;
+  fleetNumber: string;
+  costCenterId: number | null;
 };
 
 type VehicleIdentity = {
@@ -257,6 +267,7 @@ export default function VideoAlertsDashboardTab({
   standaloneMode = false,
   suspendBackgroundWork = false,
   selectedCostCenterIds = [],
+  onDriversLoaded,
 }: VideoAlertsDashboardTabProps) {
   const router = useRouter();
   const { costCenterMap } = useCostCenters();
@@ -281,6 +292,7 @@ export default function VideoAlertsDashboardTab({
   const [exactVideoReady, setExactVideoReady] = useState<Record<string, boolean>>({});
   const [vehicleIdentityLookup, setVehicleIdentityLookup] = useState<Map<string, VehicleIdentity>>(new Map());
   const [vehicleIdentityLookupReady, setVehicleIdentityLookupReady] = useState(false);
+  const [driversByFleetNumber, setDriversByFleetNumber] = useState<Map<string, DriverInfo>>(new Map());
   const [popoutTargets, setPopoutTargets] = useState<Record<string, HTMLElement | null>>({});
   const popoutTargetsRef = useRef<Record<string, HTMLElement | null>>({});
   const availabilityCacheRef = useRef<Map<string, any[]>>(new Map());
@@ -676,6 +688,35 @@ export default function VideoAlertsDashboardTab({
     } catch {
       // ignore malformed local storage
     }
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const supabase = createClient();
+    async function loadDrivers() {
+      const { data, error } = await supabase
+        .from("drivers")
+        .select("first_name, surname, cell_number, fleet_number, cost_center_id");
+      if (error || !data || cancelled) return;
+      const map = new Map<string, DriverInfo>();
+      for (const row of data) {
+        const fleetNum = String(row.fleet_number || "").trim();
+        if (!fleetNum) continue;
+        map.set(fleetNum, {
+          firstName: String(row.first_name || "").trim(),
+          surname: String(row.surname || "").trim(),
+          cellNumber: String(row.cell_number || "").trim(),
+          fleetNumber: fleetNum,
+          costCenterId: row.cost_center_id ?? null,
+        });
+      }
+      if (!cancelled) {
+        setDriversByFleetNumber(map);
+        onDriversLoaded?.(map);
+      }
+    }
+    void loadDrivers();
+    return () => { cancelled = true; };
   }, []);
 
   const persistPinnedVehicleIds = useCallback((next: string[]) => {

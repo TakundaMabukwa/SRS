@@ -26,6 +26,7 @@ export interface ReportDriverInfo {
   department?: string
   timestamp: string
   location?: string
+  cellNumber?: string
 }
 
 export function resolveAlertEventTimestamp(

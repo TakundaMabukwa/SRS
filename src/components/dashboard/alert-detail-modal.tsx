@@ -53,6 +53,13 @@ interface AlertDetailModalProps {
   onRefreshTrigger: () => void;
   triggerRealtimeLoad: () => void;
   onFollowUp?: (originalSeverity: string) => Promise<void>;
+  driversByFleetNumber?: Map<string, {
+    firstName: string;
+    surname: string;
+    cellNumber: string;
+    fleetNumber: string;
+    costCenterId: number | null;
+  }>;
 }
 
 const toFiniteNumber = (value: any): number | null => {
@@ -169,6 +176,7 @@ export function AlertDetailModal({
   onRefreshTrigger,
   triggerRealtimeLoad,
   onFollowUp,
+  driversByFleetNumber,
 }: AlertDetailModalProps) {
   const { coordinates: selectedAlertCoordinates, placeName: selectedAlertPlaceName, placeLoading: selectedAlertPlaceLoading } = useReverseGeocode(selectedAlert, isOpen);
 
@@ -312,14 +320,17 @@ export function AlertDetailModal({
     if (!selectedAlert) return { name: "Unknown", phone: "", department: "" };
     const driverInfo = selectedAlert?.driverInfo || selectedAlert?.driver_info || selectedAlert?.metadata?.driver || {};
     const deviceId = String(selectedAlert?.device_id || selectedAlert?.deviceId || selectedAlert?.vehicleId || "").trim();
+    const fleetNum = String(selectedAlert?.fleet_number || selectedAlert?.fleetNumber || "").trim().toUpperCase();
     const lookupDriver = vehicleLookup[deviceId]?.driverName;
-    const name = lookupDriver || String(driverInfo?.name || driverInfo?.driver_name || driverInfo?.full_name || selectedAlert?.driver_name || selectedAlert?.driverName || "Unknown").trim();
+    const driverFromMap = fleetNum && driversByFleetNumber ? driversByFleetNumber.get(fleetNum) : null;
+    const name = lookupDriver || (driverFromMap ? `${driverFromMap.firstName} ${driverFromMap.surname}`.trim() : String(driverInfo?.name || driverInfo?.driver_name || driverInfo?.full_name || selectedAlert?.driver_name || selectedAlert?.driverName || "Unknown").trim());
+    const phone = driverFromMap?.cellNumber || String(driverInfo?.phone || driverInfo?.phone_number || driverInfo?.mobile || "").trim();
     return {
       name,
-      phone: String(driverInfo?.phone || driverInfo?.phone_number || driverInfo?.mobile || "").trim(),
+      phone,
       department: String(driverInfo?.department || driverInfo?.dept || driverInfo?.cost_center || selectedAlert?.department || "").trim(),
     };
-  }, [selectedAlert, vehicleLookup]);
+  }, [selectedAlert, vehicleLookup, driversByFleetNumber]);
 
   const selectedAlertSpeedDisplay = useMemo(() => {
     const speedVal = selectedAlert?.speed ?? selectedAlert?.metadata?.speed ?? selectedAlert?.gps?.speed;
@@ -740,11 +751,6 @@ export function AlertDetailModal({
                 </Badge>
               )}
               <span className="text-[10px] font-semibold text-slate-100">{selectedAlertTitle}</span>
-              {selectedAlertDriverInfo.name && selectedAlertDriverInfo.name !== "Unknown" && (
-                <span className="text-[9px] text-slate-300 ml-1">
-                  Driver: {selectedAlertDriverInfo.name}
-                </span>
-              )}
             </div>
             <div className="flex items-center gap-2 shrink-0">
               <select
@@ -1371,6 +1377,35 @@ export function AlertDetailModal({
                   </div>
                 </Card>
               )}
+
+              {/* Responsible Vehicle */}
+              <Card className="border-slate-200 bg-white p-4 shadow-sm">
+                <div className="mb-2">
+                  <div className="flex items-center gap-2">
+                    <ShieldAlert className="w-4 h-4 text-slate-600" />
+                    <h3 className="font-semibold text-slate-900">Responsible Vehicle</h3>
+                  </div>
+                </div>
+                <div className="space-y-1.5 text-[11px]">
+                  <div className="flex items-start gap-2">
+                    <span className="text-slate-500 w-20 shrink-0">Driver:</span>
+                    <span className="text-slate-800 font-medium">
+                      {selectedAlertDriverInfo.name && selectedAlertDriverInfo.name !== "Unknown" ? selectedAlertDriverInfo.name : "—"}
+                      {selectedAlertDriverInfo.phone ? ` · ${selectedAlertDriverInfo.phone}` : ""}
+                    </span>
+                  </div>
+                  <div className="flex items-start gap-2">
+                    <span className="text-slate-500 w-20 shrink-0">Vehicle:</span>
+                    <span className="text-slate-800 font-medium">{selectedAlertVehicleDisplay}</span>
+                  </div>
+                  <div className="flex items-start gap-2">
+                    <span className="text-slate-500 w-20 shrink-0">Cost Center:</span>
+                    <span className="text-slate-800 font-medium">
+                      {selectedAlertDriverInfo.department || "—"}
+                    </span>
+                  </div>
+                </div>
+              </Card>
 
               {/* Map Section */}
               <Card className="hidden p-4 border-slate-200 bg-white shadow-sm">

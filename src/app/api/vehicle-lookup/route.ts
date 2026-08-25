@@ -81,11 +81,14 @@ async function fetchAllVehicleLookupRowsFromSupabase() {
 
   const costCenterByName = new Map<string, number>();
   const costCenterByCode = new Map<string, number>();
+  const costCenterById = new Map<number, string>();
   for (const cc of costCenterRows || []) {
+    const id = Number(cc.id);
     const name = String(cc.name || '').trim().toLowerCase();
     const code = String(cc.code || '').trim().toLowerCase();
-    if (name) costCenterByName.set(name, Number(cc.id));
-    if (code) costCenterByCode.set(code, Number(cc.id));
+    if (name) costCenterByName.set(name, id);
+    if (code) costCenterByCode.set(code, id);
+    if (id && cc.name) costCenterById.set(id, cc.name.trim());
   }
 
   const resolveCostCenterId = (textValue: string | null, existingId: number | null): number | null => {
@@ -107,13 +110,15 @@ async function fetchAllVehicleLookupRowsFromSupabase() {
     const driverName = driver ? `${driver.first_name || ''} ${driver.surname || ''}`.trim() : null;
     const costCenterText = cleanText(row.cost_center) || cleanText(row.cost_centres);
     const costCenterIdRaw = (row as any).cost_center_id ? Number((row as any).cost_center_id) : null;
+    const costCenterId = resolveCostCenterId(costCenterText, costCenterIdRaw);
+    const costCenterDisplay = costCenterText || (costCenterId ? costCenterById.get(costCenterId) || null : null);
     const rowValues = {
       plate: cleanText(row.registration_number),
       fleetNumber: cleanText(row.fleet_number),
       make: '',
       model: '',
-      costCenter: costCenterText,
-      costCenterId: resolveCostCenterId(costCenterText, costCenterIdRaw),
+      costCenter: costCenterDisplay,
+      costCenterId: costCenterId,
       driverName: driverName || null,
       driverId: cleanText((row as any).driver_id),
     };

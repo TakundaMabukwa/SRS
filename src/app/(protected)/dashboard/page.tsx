@@ -2362,6 +2362,8 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
   const [selectedTripForIncident, setSelectedTripForIncident] = useState<any>(null);
   const [timelinePlaybackByAlert, setTimelinePlaybackByAlert] = useState<Record<string, Array<{ key: string; label: string; url: string }>>>({});
   const [timelinePlaybackLoading, setTimelinePlaybackLoading] = useState<Record<string, boolean>>({});
+  type DriverInfo = { firstName: string; surname: string; cellNumber: string; fleetNumber: string; costCenterId: number | null };
+  const [driversByFleetNumber, setDriversByFleetNumber] = useState<Map<string, DriverInfo>>(new Map());
   const normalizeCostCenter = useCallback((value: unknown) => {
     return String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
   }, []);
@@ -3294,16 +3296,22 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
       clean(selectedAlert?.vehicleId) ||
       clean(selectedAlert?.vehicle_id) ||
       "Unknown Vehicle";
+    const fleetUpper = fleetNumber.toUpperCase();
+    const driverFromMap = fleetUpper && driversByFleetNumber?.has(fleetUpper)
+      ? driversByFleetNumber.get(fleetUpper)
+      : null;
     return {
-      name:
-        clean(selectedAlert?.driver_name) ||
-        clean(selectedAlert?.driverName) ||
-        clean(selectedAlert?.vehicle?.driver_name) ||
-        clean(metadata?.driver_name) ||
-        clean(metadata?.driverName) ||
-        "Unknown Driver",
+      name: driverFromMap
+        ? `${driverFromMap.firstName} ${driverFromMap.surname}`.trim()
+        : clean(selectedAlert?.driver_name) ||
+          clean(selectedAlert?.driverName) ||
+          clean(selectedAlert?.vehicle?.driver_name) ||
+          clean(metadata?.driver_name) ||
+          clean(metadata?.driverName) ||
+          "Unknown Driver",
       fleetNumber,
       registration: registration || undefined,
+      cellNumber: driverFromMap?.cellNumber || clean(selectedAlert?.driver_phone || metadata?.driver_phone || selectedAlert?.driverPhone || metadata?.driverPhone || ""),
       department:
         clean(selectedAlert?.cost_center) ||
         clean(metadata?.cost_center) ||
@@ -3322,6 +3330,7 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
     selectedAlertDisplayTs,
     selectedAlertLastOccurrenceTs,
     selectedAlertLocationText,
+    driversByFleetNumber,
   ]);
   const selectedAlertFleetNumber = String(
     selectedAlertDriverInfo.fleetNumber || ""
@@ -4654,6 +4663,7 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
             onOpenAlertDetail={openAlertDetailRealtime}
             suspendBackgroundWork={alertDetailModalOpen}
             selectedCostCenterIds={selectedCostCenterIds}
+            onDriversLoaded={setDriversByFleetNumber}
           />
         )}
 
@@ -6208,6 +6218,7 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
       {alertDetailModalOpen && selectedAlert && (
         <AlertDetailModal
           isOpen={alertDetailModalOpen}
+          driversByFleetNumber={driversByFleetNumber}
         selectedAlert={selectedAlert}
         alertReason={alertReason}
         onAlertReasonChange={(nextReason) => {
