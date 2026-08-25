@@ -4,7 +4,7 @@ import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
-import { X, CheckCircle, AlertTriangle, Loader2, Shield, Square, CheckSquare, ArrowLeft, Clock } from "lucide-react";
+import { X, CheckCircle, AlertTriangle, Loader2, Shield, Square, CheckSquare, ArrowLeft, Clock, Video, Radio } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
@@ -36,7 +36,7 @@ export function ResolveAlertsModal({
   const alertsWithKeys = useMemo(() => {
     return alerts.map((alert: any, index: number) => ({
       ...alert,
-      _key: alert.group_id || alert.id || `alert-${index}`,
+      _key: String(alert.group_id || alert.id || alert.last_alert_id || `alert-${index}`),
     }));
   }, [alerts]);
 
@@ -64,7 +64,7 @@ export function ResolveAlertsModal({
       const data = await res.json();
       const groups = Array.isArray(data?.alerts) ? data.alerts : [];
       setAlerts(groups);
-      setSelectedIds(new Set(groups.map((a: any, i: number) => a.group_id || a.id || `alert-${i}`)));
+      setSelectedIds(new Set(groups.map((a: any, i: number) => String(a.group_id || a.id || a.last_alert_id || `alert-${i}`))));
     } catch {
       setAlerts([]);
     } finally {
@@ -188,6 +188,22 @@ export function ResolveAlertsModal({
     return `${d.toLocaleDateString("en-ZA", { day: "2-digit", month: "short" })} ${d.toLocaleTimeString("en-ZA", { hour: "2-digit", minute: "2-digit" })}`;
   };
 
+  const alertTypeName = (type: string) => {
+    const map: Record<string, string> = {
+      exceptionEvent: "Exception Event",
+      zoneBreach: "Zone Breach",
+      speeding: "Speeding",
+      harshDriving: "Harsh Driving",
+      seatBelt: "Seat Belt",
+      closeProximity: "Close Proximity",
+      laneShift: "Lane Shift",
+      occlusion: "Occlusion",
+      tow: "Tow",
+      idle: "Idle",
+    };
+    return map[type] || type?.replace(/([A-Z])/g, " $1").replace(/_/g, " ")?.trim() || "Alert";
+  };
+
   if (!isOpen) return null;
 
   const allSelected = selectedIds.size === alertsWithKeys.length && alertsWithKeys.length > 0;
@@ -278,9 +294,19 @@ export function ResolveAlertsModal({
               {Object.entries(groupByType).map(([type, typeAlerts]) => (
                 <div key={`group-${type}`}>
                   <div className="flex items-center gap-2 mb-1.5 px-1">
-                    <Badge variant="outline" className="text-[10px] px-1.5 py-0 font-semibold uppercase">
-                      {type}
-                    </Badge>
+                    <div className="flex items-center gap-1">
+                      {type === "video" ? (
+                        <Video className="w-3 h-3 text-purple-600" />
+                      ) : (
+                        <Radio className="w-3 h-3 text-blue-600" />
+                      )}
+                      <Badge variant="outline" className={cn(
+                        "text-[10px] px-1.5 py-0 font-semibold uppercase",
+                        type === "video" ? "border-purple-300 text-purple-700" : "border-blue-300 text-blue-700"
+                      )}>
+                        {type}
+                      </Badge>
+                    </div>
                     <span className="text-[10px] text-slate-400">{typeAlerts.length} alert{typeAlerts.length !== 1 ? "s" : ""}</span>
                   </div>
                   <div className="space-y-1">
@@ -291,13 +317,13 @@ export function ResolveAlertsModal({
                         <Card
                           key={alert._key}
                           className={cn(
-                            "flex items-center gap-2 px-3 py-1.5 transition-all cursor-pointer",
+                            "flex items-start gap-2.5 px-3 py-2 transition-all cursor-pointer",
                             isSelected ? "border-blue-300 bg-blue-50/50 ring-1 ring-blue-200" : "border-slate-200 bg-white hover:bg-slate-50",
                             isResolvingThis && "opacity-60"
                           )}
                           onClick={() => !isResolvingThis && toggleSelect(alert._key)}
                         >
-                          <div className="flex-shrink-0">
+                          <div className="mt-0.5 flex-shrink-0">
                             {isResolvingThis ? (
                               <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-600" />
                             ) : isSelected ? (
@@ -306,23 +332,31 @@ export function ResolveAlertsModal({
                               <Square className="w-3.5 h-3.5 text-slate-300" />
                             )}
                           </div>
-                          <Badge className={cn("text-[9px] px-1 py-0 border flex-shrink-0", severityColor(alert.severity))}>
-                            {alert.severity?.toUpperCase()}
-                          </Badge>
-                          <span className="text-[11px] font-medium text-slate-800 truncate flex-1 min-w-0">
-                            {alert.alert_type?.replace(/_/g, " ")}
-                          </span>
-                          {alert.unresolved_count > 1 && (
-                            <Badge variant="outline" className="text-[9px] px-1 py-0 text-orange-600 border-orange-300 flex-shrink-0">
-                              {alert.unresolved_count}x
-                            </Badge>
-                          )}
-                          {formatTimestamp(alert.first_seen || alert.timestamp || alert.created_at) && (
-                            <span className="text-[9px] text-slate-400 flex items-center gap-0.5 flex-shrink-0">
-                              <Clock className="w-2.5 h-2.5" />
-                              {formatTimestamp(alert.first_seen || alert.timestamp || alert.created_at)}
-                            </span>
-                          )}
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="text-[11px] font-semibold text-slate-900">
+                                {alert.alarm_text || alertTypeName(alert.alarm_type || alert.alert_type || "alert")}
+                              </span>
+                              <Badge className={cn("text-[9px] px-1 py-0 border", severityColor(alert.severity || "medium"))}>
+                                {(alert.severity || "medium").toUpperCase()}
+                              </Badge>
+                              {alert.count > 1 && (
+                                <Badge variant="outline" className="text-[9px] px-1 py-0 text-orange-600 border-orange-300">
+                                  {alert.count}x
+                                </Badge>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-3 mt-0.5 text-[10px] text-slate-500">
+                              <span className="font-medium text-slate-600">{alertTypeName(alert.alarm_type || alert.alert_type)}</span>
+                              {alert.device_name && <span>{alert.device_name}</span>}
+                              {alert.last_alert_ts && (
+                                <span className="flex items-center gap-0.5">
+                                  <Clock className="w-2.5 h-2.5" />
+                                  {formatTimestamp(alert.last_alert_ts)}
+                                </span>
+                              )}
+                            </div>
+                          </div>
                         </Card>
                       );
                     })}
