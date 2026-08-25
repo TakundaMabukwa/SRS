@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useMemo, useCallback } from "react";
+import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
@@ -12,7 +12,7 @@ interface ResolveAlertsModalProps {
   isOpen: boolean;
   onClose: () => void;
   onResolved: () => void;
-  alerts: any[];
+  deviceId: string;
   fleetNumber: string;
   registration: string;
   baseUrl?: string;
@@ -22,11 +22,13 @@ export function ResolveAlertsModal({
   isOpen,
   onClose,
   onResolved,
-  alerts,
+  deviceId,
   fleetNumber,
   registration,
   baseUrl = "/api/video-server",
 }: ResolveAlertsModalProps) {
+  const [alerts, setAlerts] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [resolving, setResolving] = useState(false);
   const [resolvingIds, setResolvingIds] = useState<Set<string>>(new Set());
@@ -34,7 +36,7 @@ export function ResolveAlertsModal({
   const alertsWithKeys = useMemo(() => {
     return alerts.map((alert: any, index: number) => ({
       ...alert,
-      _key: alert.id || alert.group_id || `alert-${index}`,
+      _key: alert.group_id || alert.id || `alert-${index}`,
     }));
   }, [alerts]);
 
@@ -47,6 +49,35 @@ export function ResolveAlertsModal({
     });
     return groups;
   }, [alertsWithKeys]);
+
+  const fetchAlerts = useCallback(async () => {
+    if (!deviceId && !fleetNumber && !registration) return;
+    setLoading(true);
+    try {
+      const params = new URLSearchParams();
+      if (fleetNumber) params.set('fleet', fleetNumber);
+      if (registration) params.set('fleet', registration);
+      const res = await fetch(`${baseUrl}/telematics/vehicle-alerts/${encodeURIComponent(deviceId || 'none')}?${params.toString()}`, {
+        cache: "no-store",
+        signal: AbortSignal.timeout(10000),
+      });
+      const data = await res.json();
+      const groups = Array.isArray(data?.alerts) ? data.alerts : [];
+      setAlerts(groups);
+      setSelectedIds(new Set(groups.map((a: any, i: number) => a.group_id || a.id || `alert-${i}`)));
+    } catch {
+      setAlerts([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [deviceId, fleetNumber, registration, baseUrl]);
+
+  useEffect(() => {
+    if (isOpen && (deviceId || fleetNumber || registration)) {
+      setSelectedIds(new Set());
+      fetchAlerts();
+    }
+  }, [isOpen, deviceId, fleetNumber, registration, fetchAlerts]);
 
   const toggleSelect = useCallback((key: string) => {
     setSelectedIds((prev) => {
@@ -65,10 +96,10 @@ export function ResolveAlertsModal({
   }, [alertsWithKeys]);
 
   const resolveAlert = useCallback(
-    async (alertId: string) => {
-      setResolvingIds((prev) => new Set(prev).add(alertId));
+    async (alertKey: string) => {
+      setResolvingIds((prev) => new Set(prev).add(alertKey));
       try {
-        const res = await fetch(`${baseUrl}/alerts/${encodeURIComponent(alertId)}/close`, {
+        const res = await fetch(`${baseUrl}/alerts/${encodeURIComponent(alertKey)}/close`, {
           method: "POST",
           headers: { "Content-Type": "application/json", "x-internal-key": "srs-internal-2026" },
           body: JSON.stringify({ closureType: "resolved", notes: "Bulk resolved from resolve modal" }),
@@ -80,7 +111,7 @@ export function ResolveAlertsModal({
       } finally {
         setResolvingIds((prev) => {
           const next = new Set(prev);
-          next.delete(alertId);
+          next.delete(alertKey);
           return next;
         });
       }
@@ -110,10 +141,11 @@ export function ResolveAlertsModal({
       toast.success(`${resolved} alert${resolved !== 1 ? "s" : ""} resolved${failed > 0 ? ` (${failed} failed)` : ""}`);
       setSelectedIds(new Set());
       onResolved();
+      fetchAlerts();
     } else {
       toast.error("Failed to resolve alerts");
     }
-  }, [selectedIds, resolveAlert, onResolved]);
+  }, [selectedIds, resolveAlert, onResolved, fetchAlerts]);
 
   const handleResolveAll = useCallback(async () => {
     if (alertsWithKeys.length === 0) return;
@@ -134,10 +166,11 @@ export function ResolveAlertsModal({
       toast.success(`${resolved} alert${resolved !== 1 ? "s" : ""} resolved${failed > 0 ? ` (${failed} failed)` : ""}`);
       setSelectedIds(new Set());
       onResolved();
+      fetchAlerts();
     } else {
       toast.error("Failed to resolve alerts");
     }
-  }, [alertsWithKeys, resolveAlert, onResolved]);
+  }, [alertsWithKeys, resolveAlert, onResolved, fetchAlerts]);
 
   const severityColor = (sev: string) => {
     switch (sev?.toLowerCase()) {
@@ -172,7 +205,7 @@ export function ResolveAlertsModal({
             <div>
               <h2 className="text-sm font-bold text-white">Resolve Alerts</h2>
               <p className="text-[11px] text-white/70">
-                {fleetNumber || registration ? `${fleetNumber || "—"} ${registration ? `(${registration})` : ""}` : ""}
+                {fleetNumber || registration ? `${fleetNumber || "—"} ${registration ? `(${registration})` : ""}` : deviceId}
               </p>
             </div>
           </div>
@@ -229,7 +262,12 @@ export function ResolveAlertsModal({
 
         {/* Alert List */}
         <div className="flex-1 overflow-y-auto p-3 min-h-0">
-          {alertsWithKeys.length === 0 ? (
+          {loading ? (
+            <div className="flex items-center justify-center py-12">
+              <Loader2 className="w-5 h-5 animate-spin text-slate-400" />
+              <span className="ml-2 text-sm text-slate-500">Loading alerts...</span>
+            </div>
+          ) : alertsWithKeys.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-12 text-center">
               <CheckCircle className="w-10 h-10 text-emerald-400 mb-3" />
               <p className="text-sm font-medium text-slate-700">No active alerts</p>
@@ -279,10 +317,10 @@ export function ResolveAlertsModal({
                               {alert.unresolved_count}x
                             </Badge>
                           )}
-                          {formatTimestamp(alert.timestamp || alert.created_at) && (
+                          {formatTimestamp(alert.first_seen || alert.timestamp || alert.created_at) && (
                             <span className="text-[9px] text-slate-400 flex items-center gap-0.5 flex-shrink-0">
                               <Clock className="w-2.5 h-2.5" />
-                              {formatTimestamp(alert.timestamp || alert.created_at)}
+                              {formatTimestamp(alert.first_seen || alert.timestamp || alert.created_at)}
                             </span>
                           )}
                         </Card>
