@@ -64,7 +64,7 @@ async function fetchAllVehicleLookupRowsFromSupabase() {
 
   const { data, error } = await supabase
     .from('vehiclesc')
-    .select('registration_number, fleet_number, make, model, camera_serial, camera_sim_id, cost_centres, cost_center_id, driver_id, drivers!vehiclesc_driver_id_fkey(first_name, surname, fleet_number, id), cost_centers!vehiclesc_cost_center_id_fkey(id, name, code)');
+    .select('registration_number, fleet_number, cost_centres, cost_center, cost_center_id, driver_id, drivers!vehiclesc_driver_id_fkey(first_name, surname, fleet_number, id)');
 
   if (error) {
     return {
@@ -80,33 +80,21 @@ async function fetchAllVehicleLookupRowsFromSupabase() {
   for (const row of data || []) {
     const driver = (row as any).drivers;
     const driverName = driver ? `${driver.first_name || ''} ${driver.surname || ''}`.trim() : null;
-    const cc = (row as any).cost_centers;
-    const costCenterIdFromFk = (row as any).cost_center_id ? Number((row as any).cost_center_id) : null;
-    const costCenterIdFromJoin = cc?.id ? Number(cc.id) : null;
-    const costCenterNameFromJoin = cc?.name ? String(cc.name).trim() : null;
     const rowValues = {
       plate: cleanText(row.registration_number),
       fleetNumber: cleanText(row.fleet_number),
-      make: cleanText(row.make),
-      model: cleanText(row.model),
-      costCenter: costCenterNameFromJoin || cleanText(row.cost_centres),
-      costCenterId: costCenterIdFromFk || costCenterIdFromJoin || null,
+      make: '',
+      model: '',
+      costCenter: cleanText(row.cost_center) || cleanText(row.cost_centres),
+      costCenterId: (row as any).cost_center_id ? Number((row as any).cost_center_id) : null,
       driverName: driverName || null,
       driverId: cleanText((row as any).driver_id),
     };
 
-    const simId = String(row.camera_sim_id ?? '').trim();
-    if (simId) {
-      byDevice.set(simId, {
-        deviceId: simId,
-        ...rowValues,
-      });
-    }
-
-    const serialId = String(row.camera_serial ?? '').trim();
-    if (serialId) {
-      byDevice.set(serialId, {
-        deviceId: serialId,
+    const fleetNum = String(row.fleet_number ?? '').trim().toUpperCase();
+    if (fleetNum) {
+      byDevice.set(fleetNum, {
+        deviceId: fleetNum,
         ...rowValues,
       });
     }
@@ -114,15 +102,7 @@ async function fetchAllVehicleLookupRowsFromSupabase() {
     const plate = String(row.registration_number ?? '').trim().toUpperCase();
     if (plate) {
       byPlate.set(plate, {
-        deviceId: simId || serialId || plate,
-        ...rowValues,
-      });
-    }
-
-    const fleetNum = String(row.fleet_number ?? '').trim().toUpperCase();
-    if (fleetNum && !byPlate.has(fleetNum)) {
-      byPlate.set(fleetNum, {
-        deviceId: simId || serialId || plate,
+        deviceId: fleetNum || plate,
         ...rowValues,
       });
     }
