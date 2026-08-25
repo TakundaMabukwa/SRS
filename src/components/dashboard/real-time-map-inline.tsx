@@ -302,12 +302,13 @@ export function RealTimeMapInline({ deviceId, alertLat, alertLon, alertTime, pol
   useEffect(() => {
     const map = googleMapRef.current;
     if (!map || !window.google) return;
+    let cancelled = false;
 
     const renderPolice = () => {
+      if (cancelled) return;
       // Clear previous police markers
       policeMarkersRef.current.forEach((m) => m.setMap(null));
       policeMarkersRef.current = [];
-      clearLos();
 
       if (!policeStations || policeStations.length === 0) return;
 
@@ -347,7 +348,7 @@ export function RealTimeMapInline({ deviceId, alertLat, alertLon, alertTime, pol
         const directionsRenderer = new window.google.maps.DirectionsRenderer({
           map,
           suppressMarkers: true,
-          polylineOptions: { strokeColor: '#2563eb', strokeWeight: 4, strokeOpacity: 0.8 },
+          polylineOptions: { strokeColor: '#2563eb', strokeWeight: 5, strokeOpacity: 0.9 },
         });
         directionsRendererRef.current = directionsRenderer;
 
@@ -358,33 +359,39 @@ export function RealTimeMapInline({ deviceId, alertLat, alertLon, alertTime, pol
             travelMode: window.google.maps.TravelMode.DRIVING,
           },
           (result, status) => {
+            if (cancelled) return;
             if (status === 'OK' && result) {
               directionsRenderer.setDirections(result);
-              const bounds = new window.google.maps.LatLngBounds();
-              bounds.extend({ lat: alertLat, lng: alertLon });
-              bounds.extend({ lat: closest.lat, lng: closest.lon });
-              map.fitBounds(bounds, 50);
+            } else {
+              console.warn('Directions API failed:', status);
             }
           }
         );
       }
     };
 
-    // Wait for map to be idle before rendering directions
-    if (map.getCenter()) {
+    // Always wait for map idle before rendering directions
+    const idleListener = map.addListener('idle', () => {
+      google.maps.event.removeListener(idleListener);
       renderPolice();
-    } else {
-      const listener = map.addListener('idle', () => {
-        renderPolice();
-        google.maps.event.removeListener(listener);
-      });
-      return () => { google.maps.event.removeListener(listener); };
-    }
+    });
+
+    // Fallback: if map is already idle, the event won't fire again — use a timeout
+    const fallbackTimer = setTimeout(() => {
+      google.maps.event.removeListener(idleListener);
+      renderPolice();
+    }, 2000);
 
     return () => {
+      cancelled = true;
+      google.maps.event.removeListener(idleListener);
+      clearTimeout(fallbackTimer);
       policeMarkersRef.current.forEach((m) => m.setMap(null));
       policeMarkersRef.current = [];
-      clearLos();
+      if (directionsRendererRef.current) {
+        directionsRendererRef.current.setMap(null);
+        directionsRendererRef.current = null;
+      }
     };
   }, [policeStations, alertLat, alertLon]);
 
