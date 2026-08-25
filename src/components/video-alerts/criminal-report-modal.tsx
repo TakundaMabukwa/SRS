@@ -69,6 +69,14 @@ export default function CriminalReportModal({ isOpen, onClose, onSaved, driverIn
     setCitySite(siteLabel)
     setSpecificArea(locationText)
     setDescription(eventSummary)
+    const fetchCurrentUser = async () => {
+      const { createClient } = await import('@/lib/supabase/client')
+      const supabase = createClient()
+      const { data: { session } } = await supabase.auth.getSession()
+      const currentUser = session?.user?.email || session?.user?.user_metadata?.email || session?.user?.user_metadata?.name || 'Fleet Manager'
+      setReportedBy(currentUser)
+    }
+    fetchCurrentUser()
   }, [eventSummary, isOpen, locationText, siteLabel])
   const annexureScreenshots = useMemo(() => normalizeReportScreenshots(alertDetails?.screenshots), [alertDetails?.screenshots])
   const annexureVideos = useMemo(() => normalizeReportVideos(alertDetails?.videos), [alertDetails?.videos])

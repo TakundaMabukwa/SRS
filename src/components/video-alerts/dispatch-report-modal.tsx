@@ -89,7 +89,16 @@ export default function DispatchReportModal({
     setReason(alertDetails?.type || '')
     setSpecificArea(locationText)
     setIncidentDescription(eventSummary)
-  }, [alertDetails?.type, eventSummary, isOpen, locationText])
+    setAffectedDepartment(driverInfo.department || 'Fleet Operations')
+    const fetchCurrentUser = async () => {
+      const { createClient } = await import('@/lib/supabase/client')
+      const supabase = createClient()
+      const { data: { session } } = await supabase.auth.getSession()
+      const currentUser = session?.user?.email || session?.user?.user_metadata?.email || session?.user?.user_metadata?.name || 'Fleet Manager'
+      setDispatchedBy(currentUser)
+    }
+    fetchCurrentUser()
+  }, [alertDetails?.type, eventSummary, isOpen, locationText, driverInfo.department])
 
   const handlePrint = () => window.print()
 

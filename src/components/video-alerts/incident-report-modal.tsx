@@ -68,6 +68,14 @@ export default function IncidentReportModal({ isOpen, onClose, onSaved, driverIn
     setTypeOfIncident(alertDetails?.type || 'Vehicle incident')
     setPersonsInvolved(driverInfo.name || '')
     setDescription(eventSummary)
+    const fetchCurrentUser = async () => {
+      const { createClient } = await import('@/lib/supabase/client')
+      const supabase = createClient()
+      const { data: { session } } = await supabase.auth.getSession()
+      const currentUser = session?.user?.email || session?.user?.user_metadata?.email || session?.user?.user_metadata?.name || 'Fleet Manager'
+      setReportCompiledBy(currentUser)
+    }
+    fetchCurrentUser()
   }, [alertDetails?.type, driverInfo.name, eventSummary, isOpen])
   const annexureScreenshots = useMemo(() => normalizeReportScreenshots(alertDetails?.screenshots), [alertDetails?.screenshots])
   const annexureVideos = useMemo(() => normalizeReportVideos(alertDetails?.videos), [alertDetails?.videos])
