@@ -201,13 +201,11 @@ export function ResolveAlertsModal({
     setResolvingIds(new Set());
     if (resolved > 0) {
       toast.success(`${resolved} alert${resolved !== 1 ? "s" : ""} resolved${failed > 0 ? ` (${failed} failed)` : ""}`);
-      setSelectedIds(new Set());
       onResolved();
-      fetchAlerts();
     } else {
       toast.error("Failed to resolve alerts");
     }
-  }, [selectedIds, allAlerts, resolveSingle, onResolved, fetchAlerts]);
+  }, [selectedIds, allAlerts, resolveSingle, onResolved]);
 
   const handleResolveAll = useCallback(async () => {
     if (allAlerts.length === 0) return;
@@ -227,13 +225,11 @@ export function ResolveAlertsModal({
     setResolvingIds(new Set());
     if (resolved > 0) {
       toast.success(`${resolved} alert${resolved !== 1 ? "s" : ""} resolved${failed > 0 ? ` (${failed} failed)` : ""}`);
-      setSelectedIds(new Set());
       onResolved();
-      fetchAlerts();
     } else {
       toast.error("Failed to resolve alerts");
     }
-  }, [allAlerts, resolveSingle, onResolved, fetchAlerts]);
+  }, [allAlerts, resolveSingle, onResolved]);
 
   const severityColor = (sev: string) => {
     switch (sev?.toLowerCase()) {
