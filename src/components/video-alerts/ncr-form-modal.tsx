@@ -92,6 +92,7 @@ export default function NCRFormModal({ isOpen, onClose, onSaved, driverInfo, ale
     const ts = driverInfo.timestamp ? new Date(driverInfo.timestamp) : new Date()
     const dateStr = ts.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' })
     const timeStr = ts.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false })
+    const costCenter = driverInfo.department || 'Fleet Operations'
 
     const fetchCurrentUser = async () => {
       const { createClient } = await import('@/lib/supabase/client')
@@ -101,7 +102,6 @@ export default function NCRFormModal({ isOpen, onClose, onSaved, driverInfo, ale
     }
 
     fetchCurrentUser().then((currentUser) => {
-      const costCenter = driverInfo.department || 'Fleet Operations'
       setFormData((prev) => ({
         ...prev,
         name: driverInfo.name || prev.name,
@@ -119,7 +119,6 @@ export default function NCRFormModal({ isOpen, onClose, onSaved, driverInfo, ale
         description: `Alert ${alertDetails?.id || ''} generated for driver ${driverInfo.name || 'Unknown'} on fleet ${driverInfo.fleetNumber} at ${ts.toLocaleString('en-GB')} (${locationText}). The event should be investigated against the recorded video evidence, screenshots, and alert timeline.`,
       }))
     })
-  }, [isOpen, alertDetails?.id, alertDetails?.type, driverInfo.name, driverInfo.fleetNumber, driverInfo.registration, driverInfo.department, driverInfo.timestamp, locationText])
 
     const alertType = (alertDetails?.type || '').toLowerCase()
     const autoClassify: string[] = []
@@ -138,6 +137,7 @@ export default function NCRFormModal({ isOpen, onClose, onSaved, driverInfo, ale
 
     if (/speed/i.test(alertType)) setRiskRating('high')
     else if (/zone|fence|breach/i.test(alertType)) setRiskRating('medium')
+    else setRiskRating('high')
   }, [isOpen, alertDetails?.id, alertDetails?.type, driverInfo.name, driverInfo.fleetNumber, driverInfo.registration, driverInfo.department, driverInfo.timestamp, locationText])
 
   const toggleClassification = (value: string) => {
