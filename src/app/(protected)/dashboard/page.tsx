@@ -2314,6 +2314,21 @@ export default function Dashboard() {
   const [videoModalOpen, setVideoModalOpen] = useState(false);
   const [currentTripForVideo, setCurrentTripForVideo] = useState<any>(null);
   const [selectedAlert, setSelectedAlert] = useState<any>(null);
+  const resolveVehicleAlerts = useMemo(() => {
+    if (!selectedAlert) return [];
+    const vid = extractVehicleKey(selectedAlert);
+    const device = normalizeId(selectedAlert?.device_id || selectedAlert?.deviceId);
+    const fleet = normalizeId(selectedAlert?.fleet_number || selectedAlert?.fleetNumber);
+    const reg = normalizeId(selectedAlert?.vehicle_registration || selectedAlert?.plate || selectedAlert?.registration);
+    return groupedAlerts.filter((a: any) => {
+      const aVid = extractVehicleKey(a);
+      if (vid && aVid && aVid === vid) return true;
+      if (device && normalizeId(a?.device_id || a?.deviceId) === device) return true;
+      if (fleet && normalizeId(a?.fleet_number || a?.fleetNumber) === fleet) return true;
+      if (reg && normalizeId(a?.vehicle_registration || a?.plate || a?.registration) === reg) return true;
+      return false;
+    });
+  }, [selectedAlert, groupedAlerts, extractVehicleKey, normalizeId]);
 const [alertDetailModalOpen, setAlertDetailModalOpen] = useState(false);
 const [alertRealtimeLoading, setAlertRealtimeLoading] = useState(false);
 const [alertNotesDraft, setAlertNotesDraft] = useState("");
@@ -2349,21 +2364,6 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
   const videoProxyBase = "/api/video-server";
   const [showNCRModal, setShowNCRModal] = useState(false);
   const [showResolveModal, setShowResolveModal] = useState(false);
-  const resolveVehicleAlerts = useMemo(() => {
-    if (!selectedAlert) return [];
-    const vid = extractVehicleKey(selectedAlert);
-    const device = normalizeId(selectedAlert?.device_id || selectedAlert?.deviceId);
-    const fleet = normalizeId(selectedAlert?.fleet_number || selectedAlert?.fleetNumber);
-    const reg = normalizeId(selectedAlert?.vehicle_registration || selectedAlert?.plate || selectedAlert?.registration);
-    return groupedAlerts.filter((a: any) => {
-      const aVid = extractVehicleKey(a);
-      if (vid && aVid && aVid === vid) return true;
-      if (device && normalizeId(a?.device_id || a?.deviceId) === device) return true;
-      if (fleet && normalizeId(a?.fleet_number || a?.fleetNumber) === fleet) return true;
-      if (reg && normalizeId(a?.vehicle_registration || a?.plate || a?.registration) === reg) return true;
-      return false;
-    });
-  }, [selectedAlert, groupedAlerts, extractVehicleKey, normalizeId]);
   const [selectedNcrForm, setSelectedNcrForm] = useState<'' | 'nrc-camera-covered'>('');
   const [showReportModal, setShowReportModal] = useState(false);
   const [selectedReportForm, setSelectedReportForm] = useState<'' | 'incident-report' | 'accident-report' | 'criminal-report' | 'dispatch-report'>('');
