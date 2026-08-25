@@ -43,7 +43,15 @@ export function CostCentersProvider({ children }: { children: React.ReactNode })
         console.error("Failed to fetch cost centers:", error);
         return;
       }
-      setCostCenters(data || []);
+      // Deduplicate by name (case-insensitive)
+      const seen = new Set<string>();
+      const deduped = (data || []).filter((cc: CostCenter) => {
+        const key = cc.name.trim().toLowerCase();
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+      setCostCenters(deduped);
     } catch (err) {
       console.error("Error fetching cost centers:", err);
     } finally {

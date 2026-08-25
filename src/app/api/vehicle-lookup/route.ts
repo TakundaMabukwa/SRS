@@ -75,6 +75,34 @@ async function fetchAllVehicleLookupRowsFromSupabase() {
     };
   }
 
+  // Fetch cost_centers to resolve cost_center_id from cost_centres text
+  const { data: costCenterRows } = await supabase
+    .from('cost_centers')
+    .select('id, name, code')
+    .eq('is_active', true);
+
+  const costCenterByName = new Map<string, number>();
+  const costCenterByCode = new Map<string, number>();
+  for (const cc of costCenterRows || []) {
+    const name = String(cc.name || '').trim().toLowerCase();
+    const code = String(cc.code || '').trim().toLowerCase();
+    if (name) costCenterByName.set(name, cc.id);
+    if (code) costCenterByCode.set(code, cc.id);
+  }
+
+  const resolveCostCenterId = (textValue: string | null, existingId: number | null): number | null => {
+    if (existingId) return existingId;
+    if (!textValue) return null;
+    const normalized = textValue.trim().toLowerCase();
+    if (costCenterByName.has(normalized)) return costCenterByName.get(normalized)!;
+    if (costCenterByCode.has(normalized)) return costCenterByCode.get(normalized)!;
+    // Try partial match
+    for (const [name, id] of costCenterByName) {
+      if (normalized.includes(name) || name.includes(normalized)) return id;
+    }
+    return null;
+  };
+
   const byDevice = new Map<string, VehicleLookupEntry>();
   const byPlate = new Map<string, VehicleLookupEntry>();
   for (const row of data || []) {
@@ -86,7 +114,7 @@ async function fetchAllVehicleLookupRowsFromSupabase() {
       make: cleanText(row.make),
       model: cleanText(row.model),
       costCenter: cleanText(row.cost_centres),
-      costCenterId: (row as any).cost_center_id ? Number((row as any).cost_center_id) : null,
+      costCenterId: resolveCostCenterId(cleanText(row.cost_centres), (row as any).cost_center_id ? Number((row as any).cost_center_id) : null),
       driverName: driverName || null,
       driverId: cleanText((row as any).driver_id),
     };
