@@ -141,11 +141,6 @@ const FleetMapTab = dynamic(
   () => import("@/components/dashboard/fleet-map-tab").then((m) => ({ default: m.FleetMapTab })),
   { ssr: false, loading: () => <div className="h-40 animate-pulse rounded-lg bg-slate-100" /> }
 );
-const LiveMapView = dynamic(
-  () => import("@/components/map/live-map-view"),
-  { ssr: false, loading: () => <div className="h-40 animate-pulse rounded-lg bg-slate-100" /> }
-);
-
 
 
 
@@ -4496,47 +4491,6 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
     }
   }, [activeTab])
 
-  // Full-page map view with overlay tabs
-  if (activeTab === "live-map") {
-    return (
-      <>
-        <div className="absolute inset-0 -m-6 z-0">
-          <LiveMapView />
-        </div>
-        
-        {/* Overlay Tabs */}
-        <div className="relative z-10 mb-4">
-          <Tabs
-            value={activeTab}
-            onValueChange={(v) => setActiveTab(v)}
-            className="w-full"
-          >
-            <TabsList className="flex w-fit items-center rounded-lg bg-white/90 backdrop-blur-sm p-1 shadow-lg">
-              <TabsTrigger
-                value="video-alerts"
-                className="px-6 py-2 text-sm font-medium rounded-md data-[state=active]:bg-white data-[state=active]:shadow-sm"
-              >
-                Video Alerts
-              </TabsTrigger>
-              <TabsTrigger
-                value="live-map"
-                className="px-6 py-2 text-sm font-medium rounded-md data-[state=active]:bg-white data-[state=active]:shadow-sm"
-              >
-                Live Map
-              </TabsTrigger>
-              <TabsTrigger
-                value="fleet-map"
-                className="px-6 py-2 text-sm font-medium rounded-md data-[state=active]:bg-white data-[state=active]:shadow-sm"
-              >
-                Map
-              </TabsTrigger>
-            </TabsList>
-          </Tabs>
-        </div>
-      </>
-    );
-  }
-
   // Full-page fleet map view
   if (activeTab === "fleet-map") {
     return (
@@ -4554,12 +4508,6 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
                 className="px-5 py-1.5 text-sm font-medium rounded-md data-[state=active]:bg-white data-[state=active]:shadow-sm"
               >
                 Video Alerts
-              </TabsTrigger>
-              <TabsTrigger
-                value="live-map"
-                className="px-5 py-1.5 text-sm font-medium rounded-md data-[state=active]:bg-white data-[state=active]:shadow-sm"
-              >
-                Live Map
               </TabsTrigger>
               <TabsTrigger
                 value="fleet-map"
