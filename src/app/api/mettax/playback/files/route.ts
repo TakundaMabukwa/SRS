@@ -78,23 +78,24 @@ export async function POST(req: NextRequest) {
       deviceIds: deviceId,
       startTime: defaultStart,
       endTime: defaultEnd,
-      status: 1,
+      queryType: 'Device',
     };
 
-    const data = await mettaxPost('/video/history/upload/task', body);
+    const data = await mettaxPost('/gallery/page/file/v2', body);
 
     if (data.code !== 0) {
       return NextResponse.json({ success: false, message: data.msg || 'Failed', data: { files: [] } });
     }
 
     const records = (data.data?.records || [])
+      .filter((r: any) => r.fileType === '02')
       .filter((r: any) => !channelId || r.channelId === Number(channelId))
       .map((r: any) => ({
         deviceName: r.deviceName || '',
         channelId: r.channelId,
         fileSize: r.fileSize || 0,
-        startTime: r.fileStartTime || '',
-        endTime: r.fileEndTime || '',
+        startTime: r.createTime || '',
+        endTime: r.createTime || '',
         fileUrl: r.fileUrl || null,
       }));
 

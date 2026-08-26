@@ -226,37 +226,6 @@ export default function PlaybackDashboardTab({ selectedCostCenterIds = [] }: Pla
     return catalogVehicles;
   }, [supabase]);
 
-      await applyOnlineData(onlineRes);
-
-      // Track offline confirmations
-      if (onlineCount === 0 && catalogVehicles.length > 0) {
-        offlineConfirmRef.current++;
-      } else {
-        offlineConfirmRef.current = 0;
-      }
-
-      // If all offline, retry once
-      if (onlineCount === 0 && catalogVehicles.length > 0) {
-        await new Promise(r => setTimeout(r, 2000));
-        onlineCount = 0;
-        onlineRes = await fetch('/api/mettax/online', {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: "{}",
-          cache: "no-store",
-          signal: AbortSignal.timeout(10000),
-        }).catch(() => null);
-        await applyOnlineData(onlineRes);
-      }
-    } catch {}
-
-    return catalogVehicles.sort((a, b) => {
-      const aLabel = [a.fleetNumber, a.registration].filter(Boolean).join(" - ");
-      const bLabel = [b.fleetNumber, b.registration].filter(Boolean).join(" - ");
-      return aLabel.localeCompare(bLabel);
-    });
-  }, [supabase]);
-
   const refreshAll = useCallback(async () => {
     setRefreshing(true);
     try {
