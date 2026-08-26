@@ -5,7 +5,7 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
-import { Trophy, AlertTriangle, Search, Star, RefreshCw } from 'lucide-react'
+import { Search, RefreshCw, AlertTriangle } from 'lucide-react'
 
 type DriverScore = {
   id: number
@@ -40,9 +40,7 @@ export default function DriverPerformanceDashboard() {
     }
   }, [])
 
-  useEffect(() => {
-    loadScores()
-  }, [loadScores])
+  useEffect(() => { loadScores() }, [loadScores])
 
   const filtered = useMemo(() => {
     const q = searchTerm.trim().toLowerCase()
@@ -54,40 +52,34 @@ export default function DriverPerformanceDashboard() {
     )
   }, [scores, searchTerm])
 
-  const summary = useMemo(() => {
-    if (scores.length === 0) return { total: 0, avgScore: 0, highRisk: 0, lowRisk: 0 }
-    const total = scores.length
-    const avgScore = Math.round(scores.reduce((sum, s) => sum + s.score, 0) / total)
-    const highRisk = scores.filter(s => s.score < 60).length
-    const lowRisk = scores.filter(s => s.score >= 80).length
-    return { total, avgScore, highRisk, lowRisk }
-  }, [scores])
-
-  const getScoreColor = (score: number) => {
-    if (score >= 80) return 'from-green-500 to-emerald-600'
-    if (score >= 60) return 'from-yellow-500 to-amber-600'
-    return 'from-red-500 to-rose-600'
-  }
-
-  const getScoreBorder = (score: number) => {
-    if (score >= 80) return 'border-green-300 bg-green-50'
-    if (score >= 60) return 'border-yellow-300 bg-yellow-50'
-    return 'border-red-300 bg-red-50'
-  }
-
   const getScoreLabel = (score: number) => {
-    if (score >= 80) return { text: 'Good', color: 'bg-green-100 text-green-800' }
-    if (score >= 60) return { text: 'Watch', color: 'bg-yellow-100 text-yellow-800' }
-    return { text: 'At Risk', color: 'bg-red-100 text-red-800' }
+    if (score >= 80) return { text: 'Good', color: 'bg-green-100 text-green-800 border-green-300' }
+    if (score >= 60) return { text: 'Watch', color: 'bg-yellow-100 text-yellow-800 border-yellow-300' }
+    return { text: 'At Risk', color: 'bg-red-100 text-red-800 border-red-300' }
+  }
+
+  const getScoreTextColor = (score: number) => {
+    if (score >= 80) return 'text-green-600'
+    if (score >= 60) return 'text-yellow-600'
+    return 'text-red-600'
+  }
+
+  const getBarColor = (score: number) => {
+    if (score >= 80) return 'bg-green-500'
+    if (score >= 60) return 'bg-yellow-500'
+    return 'bg-red-500'
+  }
+
+  const getAlertCategoryCounts = (alertTypes: Array<{ alert_name: string; count: number }>) => {
+    const speeding = alertTypes.filter(a => /speed|overspeed/i.test(a.alert_name)).reduce((s, a) => s + a.count, 0)
+    const harshBraking = alertTypes.filter(a => /brak/i.test(a.alert_name)).reduce((s, a) => s + a.count, 0)
+    const zoneBreach = alertTypes.filter(a => /zone|fence|breach/i.test(a.alert_name)).reduce((s, a) => s + a.count, 0)
+    const other = alertTypes.filter(a => !/speed|overspeed|brak|zone|fence|breach/i.test(a.alert_name)).reduce((s, a) => s + a.count, 0)
+    return { speeding, harshBraking, zoneBreach, other }
   }
 
   if (isLoading) {
-    return (
-      <div className="flex items-center justify-center py-12">
-        <RefreshCw className="w-6 h-6 animate-spin text-blue-500 mr-2" />
-        <span className="text-gray-500">Loading scores...</span>
-      </div>
-    )
+    return <div className="flex items-center justify-center py-12"><RefreshCw className="w-6 h-6 animate-spin text-blue-500 mr-2" /><span className="text-gray-500">Loading scores...</span></div>
   }
 
   if (error) {
@@ -102,88 +94,76 @@ export default function DriverPerformanceDashboard() {
 
   return (
     <div className="space-y-6">
-      {/* Summary Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <Card className="border-blue-200 bg-blue-50">
-          <CardContent className="p-4">
-            <div className="text-sm text-blue-600 font-medium">Total Vehicles</div>
-            <div className="text-2xl font-bold text-blue-900">{summary.total}</div>
-          </CardContent>
-        </Card>
-        <Card className="border-purple-200 bg-purple-50">
-          <CardContent className="p-4">
-            <div className="text-sm text-purple-600 font-medium">Fleet Average</div>
-            <div className="text-2xl font-bold text-purple-900">{summary.avgScore}</div>
-          </CardContent>
-        </Card>
-        <Card className="border-green-200 bg-green-50">
-          <CardContent className="p-4">
-            <div className="text-sm text-green-600 font-medium">Good (80+)</div>
-            <div className="text-2xl font-bold text-green-900">{summary.lowRisk}</div>
-          </CardContent>
-        </Card>
-        <Card className="border-red-200 bg-red-50">
-          <CardContent className="p-4">
-            <div className="text-sm text-red-600 font-medium">At Risk (&lt;60)</div>
-            <div className="text-2xl font-bold text-red-900">{summary.highRisk}</div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Search */}
       <div className="flex items-center gap-3">
         <div className="relative flex-1 max-w-md">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-          <Input
-            placeholder="Search by fleet, driver, or registration..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="pl-9"
-          />
+          <Input placeholder="Search by fleet, driver, or registration..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="pl-9" />
         </div>
-        <Button size="sm" variant="outline" onClick={loadScores}>
-          <RefreshCw className="w-4 h-4 mr-1" /> Refresh
-        </Button>
+        <Button size="sm" variant="outline" onClick={loadScores}><RefreshCw className="w-4 h-4 mr-1" /> Refresh</Button>
       </div>
 
-      {/* Vehicle Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
         {filtered.map((s) => {
           const label = getScoreLabel(s.score)
+          const cats = getAlertCategoryCounts(s.alert_types || [])
+          const totalAlerts = (cats.speeding + cats.harshBraking + cats.zoneBreach + cats.other)
           return (
-            <Card key={s.fleet_number} className={`border-2 ${getScoreBorder(s.score)} hover:shadow-lg transition-all`}>
-              <CardContent className="p-4">
-                <div className="flex items-start justify-between mb-3">
+            <Card key={s.fleet_number} className="border border-gray-200 hover:shadow-lg transition-all overflow-hidden">
+              <CardContent className="p-0">
+                {/* Header */}
+                <div className="flex items-center justify-between px-4 pt-4 pb-2">
                   <div>
-                    <h3 className="font-bold text-gray-900 text-lg">{s.fleet_number}</h3>
-                    <p className="text-xs text-gray-500">{s.registration_number || 'N/A'}</p>
+                    <h3 className="font-bold text-gray-900 text-base">{s.fleet_number}</h3>
+                    {s.driver && <p className="text-xs text-gray-500 mt-0.5">{s.driver}</p>}
                   </div>
-                  <div className={`w-14 h-14 rounded-full bg-gradient-to-br ${getScoreColor(s.score)} flex items-center justify-center shadow-md`}>
-                    <span className="text-white font-bold text-lg">{s.score}</span>
+                  <Badge className={`text-xs font-semibold px-2.5 py-1 ${label.color}`}>{label.text}</Badge>
+                </div>
+
+                {/* Score */}
+                <div className="px-4 pb-3">
+                  <div className="flex items-baseline gap-2">
+                    <span className="text-3xl font-bold text-gray-900">{s.score}</span>
+                    <span className="text-sm text-gray-400">/ 100</span>
+                  </div>
+                  <p className="text-xs text-gray-500 mt-1">Performance Score</p>
+                </div>
+
+                {/* Metrics */}
+                <div className="border-t px-4 py-3 space-y-2">
+                  <div className="flex justify-between text-xs">
+                    <span className="text-gray-500">Plate</span>
+                    <span className="font-medium text-gray-700">{s.registration_number || 'N/A'}</span>
+                  </div>
+                  <div className="flex justify-between text-xs">
+                    <span className="text-gray-500">Total Alerts</span>
+                    <span className="font-medium text-gray-700">{totalAlerts}</span>
+                  </div>
+                  <div className="flex justify-between text-xs">
+                    <span className="text-gray-500">Speeding</span>
+                    <span className={cats.speeding > 0 ? 'font-medium text-red-600' : 'font-medium text-green-600'}>
+                      {cats.speeding > 0 ? `${cats.speeding} alerts` : 'None'}
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-xs">
+                    <span className="text-gray-500">Harsh Braking</span>
+                    <span className={cats.harshBraking > 0 ? 'font-medium text-red-600' : 'font-medium text-green-600'}>
+                      {cats.harshBraking > 0 ? `${cats.harshBraking} alerts` : 'None'}
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-xs">
+                    <span className="text-gray-500">Zone Breach</span>
+                    <span className={cats.zoneBreach > 0 ? 'font-medium text-red-600' : 'font-medium text-green-600'}>
+                      {cats.zoneBreach > 0 ? `${cats.zoneBreach} alerts` : 'None'}
+                    </span>
                   </div>
                 </div>
 
-                {s.driver && (
-                  <div className="flex items-center gap-2 mb-2">
-                    <span className="text-xs text-gray-500">Driver:</span>
-                    <span className="text-sm font-medium text-gray-800">{s.driver}</span>
+                {/* Score Bar */}
+                <div className="px-4 pb-4 pt-2">
+                  <div className="w-full bg-gray-100 rounded-full h-2">
+                    <div className={`h-2 rounded-full ${getBarColor(s.score)} transition-all`} style={{ width: `${Math.min(s.score, 100)}%` }} />
                   </div>
-                )}
-
-                <div className="flex items-center gap-2 mb-3">
-                  <Badge className={`text-xs ${label.color}`}>{label.text}</Badge>
                 </div>
-
-                {s.alert_types && s.alert_types.length > 0 && (
-                  <div className="border-t pt-2 mt-2 space-y-1">
-                    {s.alert_types.map((a, i) => (
-                      <div key={i} className="flex justify-between text-xs">
-                        <span className="text-gray-600 truncate">{a.alert_name}</span>
-                        <Badge variant="outline" className="text-xs ml-2">{a.count}</Badge>
-                      </div>
-                    ))}
-                  </div>
-                )}
               </CardContent>
             </Card>
           )

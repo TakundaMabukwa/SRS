@@ -71,6 +71,7 @@ export default function NRCCameraCoveredModal({ isOpen, onClose, onSaved, driver
   const [preventiveTargetDate, setPreventiveTargetDate] = useState('')
   const [drivers, setDrivers] = useState<DriverOption[]>([])
   const [selectedDriverId, setSelectedDriverId] = useState('')
+  const [deductionInfo, setDeductionInfo] = useState<{ show: boolean; alertType: string; weighting: number; criteriaId: number } | null>(null)
   const [investigator, setInvestigator] = useState('')
   const [manager, setManager] = useState('')
   const [selectedRootCauses, setSelectedRootCauses] = useState<string[]>([])
@@ -246,8 +247,24 @@ export default function NRCCameraCoveredModal({ isOpen, onClose, onSaved, driver
 
   const handlePrint = () => window.print()
 
-  const handleSave = async () => {
+  const checkDeduction = async () => {
+    const fleetNum = vehicleFleetNumber || driverInfo.fleetNumber
+    const alertType = alertDetails?.type || alertDetails?.alert_type
+    if (!fleetNum || !alertType) return false
+    try {
+      const res = await fetch(`/api/video-server/driver-scoring/lookup?fleet_number=${encodeURIComponent(fleetNum)}&alert_type=${encodeURIComponent(alertType)}`)
+      const data = await res.json()
+      if (data.success && data.eligible) {
+        setDeductionInfo({ show: true, alertType, weighting: data.weighting, criteriaId: data.criteria_id })
+        return true
+      }
+    } catch (e) { console.error('[NCR] Deduction check error:', e) }
+    return false
+  }
+
+  const doSave = async () => {
     setSaving(true)
+    setDeductionInfo(null)
     try {
       const { createClient } = await import('@/lib/supabase/client')
       const supabase = createClient()
@@ -255,7 +272,7 @@ export default function NRCCameraCoveredModal({ isOpen, onClose, onSaved, driver
       if (!element) throw new Error('Form content not found')
 
       const blob = await renderElementToWordBlob(element)
-      const fileName = `ncr-generic-${driverInfo.fleetNumber}-${Date.now()}.doc`
+      const fileName = `ncr-generic-${vehicleFleetNumber || driverInfo.fleetNumber}-${Date.now()}.doc`
 
       const artifact = await saveAlertArtifactBundle({
         supabase,
@@ -276,6 +293,16 @@ export default function NRCCameraCoveredModal({ isOpen, onClose, onSaved, driver
         }
       }
 
+      if (deductionInfo) {
+        try {
+          await fetch('/api/video-server/driver-scoring/deduct', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ fleet_number: vehicleFleetNumber || driverInfo.fleetNumber, criteria_id: deductionInfo.criteriaId })
+          })
+        } catch {}
+      }
+
       if (onSaved) await onSaved(artifact)
       onClose()
     } catch (err) {
@@ -286,10 +313,38 @@ export default function NRCCameraCoveredModal({ isOpen, onClose, onSaved, driver
     }
   }
 
+  const handleSave = async () => {
+    const hasDeduction = await checkDeduction()
+    if (!hasDeduction) {
+      await doSave()
+    }
+  }
+
   if (!isOpen) return null
 
   return (
     <div className="fixed inset-0 z-50 bg-black/50 p-4 flex items-center justify-center">
+      {deductionInfo?.show && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60">
+          <div className="bg-white rounded-lg shadow-2xl p-6 max-w-md w-full">
+            <h3 className="text-lg font-bold text-slate-900 mb-2">Deduction Confirmation</h3>
+            <p className="text-sm text-slate-600 mb-2">
+              This alert qualifies for an NCR deduction. Saving this NCR will deduct:
+            </p>
+            <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4">
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-red-700">Points to deduct:</span>
+                <span className="text-2xl font-bold text-red-600">{deductionInfo.weighting}</span>
+              </div>
+              <div className="text-xs text-red-500 mt-1">Alert: {deductionInfo.alertType}</div>
+            </div>
+            <div className="flex gap-2 justify-end">
+              <Button size="sm" variant="outline" onClick={() => { setDeductionInfo(null); doSave() }}>Save Without Deducting</Button>
+              <Button size="sm" variant="default" className="bg-red-600 hover:bg-red-700" onClick={doSave}>Save & Deduct</Button>
+            </div>
+          </div>
+        </div>
+      )}
       <div className="bg-white rounded-lg shadow-2xl w-[95vw] h-[90vh] flex flex-col">
         <div className="flex items-center justify-between p-4 border-b">
           <h2 className="text-xl font-bold">Generic NCR</h2>
