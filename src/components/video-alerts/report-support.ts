@@ -326,17 +326,23 @@ export async function saveAlertArtifactBundle({
   extraPayload?: Record<string, any>
 }): Promise<SavedAlertArtifact> {
   const originalFileName = sanitizePathSegment(fileName.replace(/\\/g, '/').split('/').pop() || fileName)
-  const baseName = originalFileName.replace(/\.pdf$/i, '')
+  const baseName = originalFileName.replace(/\.(pdf|doc|docx)$/i, '')
   const safeBaseName = sanitizePathSegment(baseName)
   const alertFolder = sanitizePathSegment(alertDetails?.id || driverInfo.fleetNumber || 'unlinked-alert')
   const typeFolder = sanitizePathSegment(String(reportType || 'report').toLowerCase())
   const timestampFolder = new Date().toISOString().replace(/[:.]/g, '-')
   const storagePrefix = `video-alerts/${alertFolder}/${typeFolder}/${timestampFolder}`
-  const storageFileName = `${storagePrefix}/${safeBaseName}.pdf`
+  
+  // Detect file type from original filename or blob
+  const isWord = originalFileName.endsWith('.doc') || originalFileName.endsWith('.docx') || pdfBlob.type === 'application/msword'
+  const fileExt = isWord ? '.doc' : '.pdf'
+  const contentType = isWord ? 'application/msword' : 'application/pdf'
+  
+  const storageFileName = `${storagePrefix}/${safeBaseName}${fileExt}`
 
   const { error: uploadError } = await supabase.storage
     .from(storageBucket)
-    .upload(storageFileName, pdfBlob, { contentType: 'application/pdf', upsert: true })
+    .upload(storageFileName, pdfBlob, { contentType, upsert: true })
   if (uploadError) throw uploadError
 
   const { data: publicData } = supabase.storage.from(storageBucket).getPublicUrl(storageFileName)

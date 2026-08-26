@@ -112,9 +112,11 @@ export function UniversalVideoPlayer({
           return;
         }
         // Proxy external FLV URLs through backend to avoid CORS issues
+        // But skip proxy for skycamx.co.za (has CORS headers) and direct Mettax URLs
         const isExternalUrl = /^https?:\/\//i.test(activeUrl) && !activeUrl.includes(window.location.host);
+        const isSkycamx = /skycamx\.co\.za|mettaxiot\.com/i.test(activeUrl);
         const alreadyProxied = /\/(flv-proxy|stream\/proxy)/i.test(activeUrl);
-        const needsProxy = !alreadyProxied && (isExternalUrl || forcedFlv);
+        const needsProxy = !alreadyProxied && isExternalUrl && !isSkycamx;
         const proxyUrl = needsProxy
           ? `/api/video-server/playback/flv-proxy?url=${encodeURIComponent(activeUrl)}`
           : activeUrl;

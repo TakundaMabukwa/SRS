@@ -336,7 +336,12 @@ export function AlertDetailModal({
   }, [selectedAlert, vehicleLookup, driversByFleetNumber]);
 
   const selectedAlertSpeedDisplay = useMemo(() => {
-    const speedVal = selectedAlert?.speed ?? selectedAlert?.metadata?.speed ?? selectedAlert?.gps?.speed;
+    const speedVal = selectedAlert?.speed 
+      ?? selectedAlert?.metadata?.speed 
+      ?? selectedAlert?.gps?.speed
+      ?? selectedAlert?.speedAlert?.speed
+      ?? selectedAlert?.alarm_speed
+      ?? selectedAlert?.event_speed;
     if (speedVal === null || speedVal === undefined) return "N/A";
     return `${Number(speedVal).toFixed(0)} km/h`;
   }, [selectedAlert]);
