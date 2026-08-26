@@ -102,67 +102,50 @@ export default function DriverPerformanceDashboard() {
         <Button size="sm" variant="outline" onClick={loadScores}><RefreshCw className="w-4 h-4 mr-1" /> Refresh</Button>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
         {filtered.map((s) => {
           const label = getScoreLabel(s.score)
           const cats = getAlertCategoryCounts(s.alert_types || [])
-          const totalAlerts = (cats.speeding + cats.harshBraking + cats.zoneBreach + cats.other)
           return (
-            <Card key={s.fleet_number} className="border border-gray-200 hover:shadow-lg transition-all overflow-hidden">
-              <CardContent className="p-0">
+            <Card key={s.fleet_number} className="border border-gray-200 hover:shadow-md transition-all overflow-hidden">
+              <CardContent className="p-3">
                 {/* Header */}
-                <div className="flex items-center justify-between px-4 pt-4 pb-2">
-                  <div>
-                    <h3 className="font-bold text-gray-900 text-base">{s.fleet_number}</h3>
-                    {s.driver && <p className="text-xs text-gray-500 mt-0.5">{s.driver}</p>}
-                  </div>
-                  <Badge className={`text-xs font-semibold px-2.5 py-1 ${label.color}`}>{label.text}</Badge>
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="font-bold text-gray-900 text-sm truncate">{s.fleet_number}</h3>
+                  <Badge className={`text-[10px] font-semibold px-1.5 py-0.5 ${label.color}`}>{label.text}</Badge>
                 </div>
 
                 {/* Score */}
-                <div className="px-4 pb-3">
-                  <div className="flex items-baseline gap-2">
-                    <span className="text-3xl font-bold text-gray-900">{s.score}</span>
-                    <span className="text-sm text-gray-400">/ 100</span>
-                  </div>
-                  <p className="text-xs text-gray-500 mt-1">Performance Score</p>
+                <div className="flex items-baseline gap-1 mb-1">
+                  <span className="text-2xl font-bold text-gray-900">{s.score}</span>
+                  <span className="text-[10px] text-gray-400">/100</span>
                 </div>
 
+                {s.driver && <p className="text-[10px] text-gray-500 truncate mb-1">{s.driver}</p>}
+
                 {/* Metrics */}
-                <div className="border-t px-4 py-3 space-y-2">
-                  <div className="flex justify-between text-xs">
-                    <span className="text-gray-500">Plate</span>
-                    <span className="font-medium text-gray-700">{s.registration_number || 'N/A'}</span>
+                <div className="space-y-0.5 text-[10px]">
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">Plate</span>
+                    <span className="text-gray-600 truncate ml-1">{s.registration_number || 'N/A'}</span>
                   </div>
-                  <div className="flex justify-between text-xs">
-                    <span className="text-gray-500">Total Alerts</span>
-                    <span className="font-medium text-gray-700">{totalAlerts}</span>
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">Speeding</span>
+                    <span className={cats.speeding > 0 ? 'text-red-500' : 'text-green-500'}>{cats.speeding || '-'}</span>
                   </div>
-                  <div className="flex justify-between text-xs">
-                    <span className="text-gray-500">Speeding</span>
-                    <span className={cats.speeding > 0 ? 'font-medium text-red-600' : 'font-medium text-green-600'}>
-                      {cats.speeding > 0 ? `${cats.speeding} alerts` : 'None'}
-                    </span>
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">Braking</span>
+                    <span className={cats.harshBraking > 0 ? 'text-red-500' : 'text-green-500'}>{cats.harshBraking || '-'}</span>
                   </div>
-                  <div className="flex justify-between text-xs">
-                    <span className="text-gray-500">Harsh Braking</span>
-                    <span className={cats.harshBraking > 0 ? 'font-medium text-red-600' : 'font-medium text-green-600'}>
-                      {cats.harshBraking > 0 ? `${cats.harshBraking} alerts` : 'None'}
-                    </span>
-                  </div>
-                  <div className="flex justify-between text-xs">
-                    <span className="text-gray-500">Zone Breach</span>
-                    <span className={cats.zoneBreach > 0 ? 'font-medium text-red-600' : 'font-medium text-green-600'}>
-                      {cats.zoneBreach > 0 ? `${cats.zoneBreach} alerts` : 'None'}
-                    </span>
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">Zone</span>
+                    <span className={cats.zoneBreach > 0 ? 'text-red-500' : 'text-green-500'}>{cats.zoneBreach || '-'}</span>
                   </div>
                 </div>
 
                 {/* Score Bar */}
-                <div className="px-4 pb-4 pt-2">
-                  <div className="w-full bg-gray-100 rounded-full h-2">
-                    <div className={`h-2 rounded-full ${getBarColor(s.score)} transition-all`} style={{ width: `${Math.min(s.score, 100)}%` }} />
-                  </div>
+                <div className="w-full bg-gray-100 rounded-full h-1.5 mt-2">
+                  <div className={`h-1.5 rounded-full ${getBarColor(s.score)} transition-all`} style={{ width: `${Math.min(s.score, 100)}%` }} />
                 </div>
               </CardContent>
             </Card>

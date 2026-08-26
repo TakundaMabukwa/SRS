@@ -20,6 +20,7 @@ import {
   Save,
   Settings,
   Users,
+  Clock,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -96,6 +97,10 @@ export default function SettingsPage() {
               <Users className="w-4 h-4" />
               Driver Config
             </TabsTrigger>
+            <TabsTrigger value="rtms-config" className="flex items-center gap-2">
+              <Clock className="w-4 h-4" />
+              RTMS
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="alert-config">
@@ -104,6 +109,10 @@ export default function SettingsPage() {
 
           <TabsContent value="driver-config">
             <DriverConfigSection />
+          </TabsContent>
+
+          <TabsContent value="rtms-config">
+            <RTMSConfigSection />
           </TabsContent>
         </Tabs>
       </div>
@@ -753,6 +762,209 @@ function DriverConfigSection() {
               ))}
             </tbody>
           </table>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+const DEFAULT_RTMS_RULES = [
+  { module: 'Driver Hours', rule_name: 'Driver Hours', system_constraint: 'Flag after 4 hrs driving; enforce >= 15-min break; max 12-14 hr shift.', audit_focus: 'Fatigue reduction', max_value: 240, min_value: 15, unit: 'minutes' },
+  { module: 'Mass Control', rule_name: 'Mass Control', system_constraint: 'Block dispatch if GVM exceeds legal limits or lacks weighbridge logs.', audit_focus: 'Prevention of overloading', max_value: 0, min_value: 0, unit: 'kg' },
+  { module: 'Speed & Risk', rule_name: 'Speed & Risk', system_constraint: 'Flag speed > 80 km/h; audit trips running between 22:00 and 04:00.', audit_focus: 'Safe driving habits', max_value: 80, min_value: 0, unit: 'km/h' },
+  { module: 'Fleet Fitness', rule_name: 'Fleet Fitness', system_constraint: 'Require a daily pre-trip checklist before unlocking a vehicle assignment.', audit_focus: 'Roadworthiness', max_value: 1, min_value: 0, unit: 'checklist' },
+  { module: 'Certifications', rule_name: 'Certifications', system_constraint: 'Flag upcoming expirations for PrDPs and Annual Medical Certificates.', audit_focus: 'Driver wellness & legal compliance', max_value: 30, min_value: 0, unit: 'days' },
+];
+
+function RTMSConfigSection() {
+  const [rules, setRules] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editForm, setEditForm] = useState<any>({});
+
+  const fetchRules = useCallback(async () => {
+    try {
+      const res = await fetch('/api/video-server/rtms/rules', { cache: 'no-store' });
+      const data = await res.json();
+      setRules(data?.rules || []);
+    } catch { setRules([]); }
+  }, []);
+
+  useEffect(() => {
+    setLoading(true);
+    fetchRules().finally(() => setLoading(false));
+  }, [fetchRules]);
+
+  const handleSeedDefaults = async () => {
+    try {
+      await fetch('/api/video-server/rtms/rules', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rules: DEFAULT_RTMS_RULES }),
+      });
+      toast.success('Default rules seeded');
+      fetchRules();
+    } catch { toast.error('Failed to seed rules'); }
+  };
+
+  const handleSaveEdit = async () => {
+    if (!editingId) return;
+    try {
+      await fetch(`/api/video-server/rtms/rules/${editingId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(editForm),
+      });
+      toast.success('Rule updated');
+      setEditingId(null);
+      setEditForm({});
+      fetchRules();
+    } catch { toast.error('Failed to update'); }
+  };
+
+  const handleDelete = async (id: number) => {
+    if (!confirm('Delete this rule?')) return;
+    try {
+      await fetch(`/api/video-server/rtms/rules/${id}`, { method: 'DELETE' });
+      toast.success('Deleted');
+      fetchRules();
+    } catch { toast.error('Failed to delete'); }
+  };
+
+  const modules = [...new Set(rules.map(r => r.module))];
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-lg font-semibold">RTMS Configuration</h2>
+          <p className="text-sm text-gray-500">Road Transport Management System rules for driving time monitoring</p>
+        </div>
+        <div className="flex gap-2">
+          {rules.length === 0 && (
+            <Button size="sm" variant="outline" onClick={handleSeedDefaults}>
+              <Plus className="w-4 h-4 mr-1" /> Load Defaults
+            </Button>
+          )}
+          <Button size="sm" variant="outline" onClick={fetchRules}>
+            Refresh
+          </Button>
+        </div>
+      </div>
+
+      <Card>
+        <CardContent className="p-0">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b bg-gray-50 text-left text-gray-500">
+                <th className="py-3 px-4">Module</th>
+                <th>Rule</th>
+                <th>System Constraint</th>
+                <th>Audit Focus</th>
+                <th>Max</th>
+                <th>Unit</th>
+                <th>Enabled</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rules.map(r => (
+                <tr key={r.id} className="border-b hover:bg-gray-50">
+                  <td className="py-2 px-4 font-medium">
+                    {editingId === r.id ? (
+                      <Input value={editForm.module || r.module} onChange={e => setEditForm({ ...editForm, module: e.target.value })} className="h-7 text-xs" />
+                    ) : (
+                      <Badge variant="outline" className="text-xs">{r.module}</Badge>
+                    )}
+                  </td>
+                  <td>
+                    {editingId === r.id ? (
+                      <Input value={editForm.rule_name || r.rule_name} onChange={e => setEditForm({ ...editForm, rule_name: e.target.value })} className="h-7 text-xs" />
+                    ) : (
+                      r.rule_name
+                    )}
+                  </td>
+                  <td className="max-w-[200px]">
+                    {editingId === r.id ? (
+                      <Input value={editForm.system_constraint || r.system_constraint} onChange={e => setEditForm({ ...editForm, system_constraint: e.target.value })} className="h-7 text-xs" />
+                    ) : (
+                      <span className="text-xs text-gray-600 line-clamp-2">{r.system_constraint}</span>
+                    )}
+                  </td>
+                  <td>
+                    {editingId === r.id ? (
+                      <Input value={editForm.audit_focus || r.audit_focus} onChange={e => setEditForm({ ...editForm, audit_focus: e.target.value })} className="h-7 text-xs" />
+                    ) : (
+                      <span className="text-xs">{r.audit_focus}</span>
+                    )}
+                  </td>
+                  <td>
+                    {editingId === r.id ? (
+                      <Input type="number" value={editForm.max_value ?? r.max_value} onChange={e => setEditForm({ ...editForm, max_value: Number(e.target.value) })} className="h-7 w-16 text-xs" />
+                    ) : (
+                      r.max_value
+                    )}
+                  </td>
+                  <td>
+                    {editingId === r.id ? (
+                      <Input value={editForm.unit || r.unit} onChange={e => setEditForm({ ...editForm, unit: e.target.value })} className="h-7 w-16 text-xs" />
+                    ) : (
+                      r.unit
+                    )}
+                  </td>
+                  <td>
+                    {editingId === r.id ? (
+                      <select className="border rounded px-1 py-0.5 h-7 text-xs" value={editForm.enabled ? 'true' : 'false'} onChange={e => setEditForm({ ...editForm, enabled: e.target.value === 'true' })}>
+                        <option value="true">Yes</option>
+                        <option value="false">No</option>
+                      </select>
+                    ) : (
+                      <span className={cn("text-xs font-medium", r.enabled ? "text-green-600" : "text-gray-400")}>
+                        {r.enabled ? "Yes" : "No"}
+                      </span>
+                    )}
+                  </td>
+                  <td>
+                    <div className="flex gap-1">
+                      {editingId === r.id ? (
+                        <>
+                          <Button variant="ghost" size="sm" onClick={handleSaveEdit}><Save className="w-3 h-3" /></Button>
+                          <Button variant="ghost" size="sm" onClick={() => { setEditingId(null); setEditForm({}); }}><X className="w-3 h-3" /></Button>
+                        </>
+                      ) : (
+                        <>
+                          <Button variant="ghost" size="sm" onClick={() => { setEditingId(r.id); setEditForm({ module: r.module, rule_name: r.rule_name, system_constraint: r.system_constraint, audit_focus: r.audit_focus, max_value: r.max_value, unit: r.unit, enabled: r.enabled }); }}>
+                            <Pencil className="w-3 h-3" />
+                          </Button>
+                          <Button variant="ghost" size="sm" onClick={() => handleDelete(r.id)}>
+                            <Trash2 className="w-3 h-3 text-red-500" />
+                          </Button>
+                        </>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+              {rules.length === 0 && !loading && (
+                <tr>
+                  <td colSpan={8} className="text-center py-8 text-gray-500">
+                    No rules configured. Click "Load Defaults" to get started.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </CardContent>
+      </Card>
+
+      <Card className="border-dashed">
+        <CardContent className="p-4">
+          <h3 className="text-sm font-semibold text-gray-700 mb-2">How RTMS Works</h3>
+          <ul className="text-xs text-gray-500 space-y-1">
+            <li><strong>Driver Hours:</strong> Monitors engine on/off via telematics. If engine stays on beyond Max minutes, a websocket alert is sent.</li>
+            <li><strong>Speed & Risk:</strong> Flags vehicles exceeding Max speed (km/h).</li>
+            <li><strong>Certifications:</strong> Flags drivers with licenses/certifications expiring within Max days.</li>
+          </ul>
         </CardContent>
       </Card>
     </div>
