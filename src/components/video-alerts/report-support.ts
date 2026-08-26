@@ -594,25 +594,29 @@ export async function renderElementToPdfBlob(element: HTMLElement): Promise<Blob
 }
 
 export async function renderElementToWordBlob(element: HTMLElement): Promise<Blob> {
-  const clone = element.cloneNode(true) as HTMLElement
-  const styles = Array.from(document.querySelectorAll('style')).map(s => s.innerHTML).join('\n')
-  const styleLink = document.querySelector('link[rel="stylesheet"]')?.outerHTML || ''
-
+  // Use html2canvas to capture the element as an image (looks exactly like UI)
+  const html2canvas = (await import('html2canvas')).default;
+  const canvas = await html2canvas(element, {
+    scale: 2,
+    useCORS: true,
+    allowTaint: true,
+    backgroundColor: '#ffffff',
+    logging: false,
+  });
+  
+  const imgData = canvas.toDataURL('image/png');
+  const imgWidth = canvas.width;
+  const imgHeight = canvas.height;
+  
+  // Create Word document with the image
   const html = `<!DOCTYPE html>
 <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-${styleLink}
-<style>
-${styles}
-body { font-family: Arial, sans-serif; margin: 20px; }
-table { border-collapse: collapse; width: 100%; }
-td, th { border: 1px solid #000; padding: 4px; }
-</style>
 </head>
-<body>
-${clone.innerHTML}
+<body style="margin:0;padding:0;">
+<img src="${imgData}" width="${imgWidth}" height="${imgHeight}" style="max-width:100%;height:auto;" />
 </body>
 </html>`
 

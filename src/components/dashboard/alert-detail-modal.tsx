@@ -336,13 +336,26 @@ export function AlertDetailModal({
   }, [selectedAlert, vehicleLookup, driversByFleetNumber]);
 
   const selectedAlertSpeedDisplay = useMemo(() => {
+    // Try multiple paths where speed might be stored
     const speedVal = selectedAlert?.speed 
       ?? selectedAlert?.metadata?.speed 
       ?? selectedAlert?.gps?.speed
       ?? selectedAlert?.speedAlert?.speed
       ?? selectedAlert?.alarm_speed
-      ?? selectedAlert?.event_speed;
-    if (speedVal === null || speedVal === undefined) return "N/A";
+      ?? selectedAlert?.event_speed
+      ?? selectedAlert?.speed_value
+      ?? selectedAlert?.speedKmh
+      ?? selectedAlert?.speed_kmh
+      ?? selectedAlert?.current_speed
+      ?? selectedAlert?.vehicle_speed;
+    
+    // Also check if speed is embedded in alarm_text or description
+    if (speedVal === null || speedVal === undefined) {
+      const text = String(selectedAlert?.alarm_text || selectedAlert?.description || '');
+      const match = text.match(/(\d+(?:\.\d+)?)\s*(?:km\/h|kmh|kph)/i);
+      if (match) return `${match[1]} km/h`;
+      return "N/A";
+    }
     return `${Number(speedVal).toFixed(0)} km/h`;
   }, [selectedAlert]);
 
