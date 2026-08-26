@@ -435,6 +435,17 @@ export default function Drivers() {
                             <Users className="w-4 h-4" />
                             <span>Driver Management</span>
                         </button>
+                        <button
+                            onClick={() => setActiveTab('drivers-performance')}
+                            className={`flex items-center space-x-2 px-4 py-3 rounded-lg text-sm font-medium transition-all duration-200 ${
+                                activeTab === 'drivers-performance'
+                                    ? "bg-blue-50 text-blue-700 border border-blue-200"
+                                    : "text-gray-600 hover:text-blue-700 hover:bg-blue-50"
+                            }`}
+                        >
+                            <Star className="w-4 h-4" />
+                            <span>Driver Performance</span>
+                        </button>
 
                     </div>
                 </div>
