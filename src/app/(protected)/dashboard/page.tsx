@@ -6320,17 +6320,32 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
               documentType: artifact.documentType,
               formType: "nrc-camera-covered",
             }])
-            // Auto-resolve the alert after NCR is filed
+            // Save NCR document to alert's documents in DB
             if (selectedAlert?.id) {
               try {
-                await closeSelectedAlert("ncr", artifact, selectedAlert);
-                toast.success("NCR filed and alert resolved.")
-              } catch {
-                toast.success("NCR saved. Alert is still open — you can resolve manually.")
+                const alertId = String(selectedAlert.id).trim()
+                await fetch(`${videoProxyBase}/eps/alerts/${encodeURIComponent(alertId)}/documents`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    type: "ncr",
+                    timestamp: new Date().toISOString(),
+                    filled_by: actor,
+                    link: artifact.documentUrl || "",
+                    documentName: artifact.documentName,
+                    documentType: artifact.documentType,
+                    formType: "nrc-camera-covered",
+                    alertType: selectedAlert?.type || selectedAlert?.alert_type || "",
+                    fleetNumber: selectedAlert?.fleet_number || selectedAlert?.fleetNumber || "",
+                    severity: selectedAlert?.severity || "",
+                    notes: `NCR filed for ${selectedAlert?.type || selectedAlert?.alert_type || "alert"}`,
+                  }),
+                })
+              } catch (e) {
+                console.error("[NCR] Failed to save document to alert:", e)
               }
-            } else {
-              toast.success("NCR saved.")
             }
+            toast.success("NCR saved. You can now resolve the alert from the timeline.")
           }}
           driverInfo={selectedAlertDriverInfo}
           alertDetails={selectedAlertReportDetails}
