@@ -40,15 +40,18 @@ function toSAST(date: Date): string {
   return date.toLocaleString("en-ZA", { timeZone: SOUTH_AFRICA_TIME_ZONE, hour12: false });
 }
 
-function formatTime(isoString: string): string {
-  const d = new Date(isoString);
-  if (Number.isNaN(d.getTime())) return "N/A";
+function formatTime(dateStr: string): string {
+  if (!dateStr) return "N/A";
+  // Handle Mettax format: "2026-08-26 20:07:35"
+  const d = new Date(dateStr.replace(" ", "T"));
+  if (Number.isNaN(d.getTime())) return dateStr.slice(11, 19) || "N/A";
   return toSAST(d).slice(11, 19);
 }
 
-function formatDateTime(isoString: string): string {
-  const d = new Date(isoString);
-  if (Number.isNaN(d.getTime())) return "N/A";
+function formatDateTime(dateStr: string): string {
+  if (!dateStr) return "N/A";
+  const d = new Date(dateStr.replace(" ", "T"));
+  if (Number.isNaN(d.getTime())) return dateStr.slice(0, 16) || "N/A";
   return toSAST(d).slice(0, 16);
 }
 
@@ -327,10 +330,15 @@ export default function PlaybackDashboardTab({ selectedCostCenterIds = [] }: Pla
       setFilesSearched(true);
 
       if (fileList.length > 0) {
-        setEarliestFootage(fileList[0].startTime);
-        setLatestFootage(fileList[fileList.length - 1].endTime || fileList[fileList.length - 1].startTime);
-        setStartTime(fileList[0].startTime.split(" ")[1] || "00:00:00");
-        setEndTime(fileList[fileList.length - 1].endTime?.split(" ")[1] || "23:59:59");
+        // Sort by startTime and get earliest/latest
+        const sorted = [...fileList].sort((a, b) => (a.startTime || "").localeCompare(b.startTime || ""));
+        const earliest = sorted[0].startTime || "";
+        const latest = sorted[sorted.length - 1].startTime || "";
+        setEarliestFootage(earliest);
+        setLatestFootage(latest);
+        // Extract time part (after space) from "2026-08-26 20:07:35"
+        setStartTime(earliest.split(" ")[1] || "00:00:00");
+        setEndTime(latest.split(" ")[1] || "23:59:59");
       } else {
         // No files found - set default time range for direct playback
         setEarliestFootage(range.start);
@@ -517,66 +525,57 @@ export default function PlaybackDashboardTab({ selectedCostCenterIds = [] }: Pla
                   {searching ? "Searching..." : "Search"}
                 </Button>
 
-                {filesSearched && (
-                  <div className="space-y-4">
-                    {files.length > 0 && (
-                      <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3">
-                        <p className="text-[11px] font-medium text-emerald-700">{files.length} segment{files.length !== 1 ? "s" : ""} found</p>
-                        <p className="mt-0.5 text-[10px] text-emerald-600">
-                          {formatTime(earliestFootage || "")} — {formatTime(latestFootage || "")} SAST
-                        </p>
-                        <Button size="sm" variant="outline" className="mt-2 h-7 w-full text-[10px] border-emerald-300 text-emerald-700 hover:bg-emerald-100" onClick={() => void playFullRange()}>
-                          <Play className="mr-1 h-3 w-3" /> Play Full Range
-                        </Button>
-                      </div>
-                    )}
-
-                    {files.length === 0 && !searching && (
-                      <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
-                        <p className="text-[11px] text-amber-700">No footage found for this date/channel.</p>
-                      </div>
-                    )}
-
-                    <div>
-                      <label className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-slate-600">Start Time</label>
-                      <input
-                        type="time"
-                        step={1}
-                        value={startTime}
-                        onChange={(e) => setStartTime(e.target.value)}
-                        className="h-9 w-full rounded-lg border border-slate-300 bg-white px-3 text-xs outline-none focus:border-cyan-400 focus:ring-2 focus:ring-cyan-100"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-slate-600">End Time</label>
-                      <input
-                        type="time"
-                        step={1}
-                        value={endTime}
-                        onChange={(e) => setEndTime(e.target.value)}
-                        className="h-9 w-full rounded-lg border border-slate-300 bg-white px-3 text-xs outline-none focus:border-cyan-400 focus:ring-2 focus:ring-cyan-100"
-                      />
-                    </div>
-
-                    <div className="flex gap-2">
-                      <Button
-                        onClick={() => void playVideo()}
-                        disabled={replayLoading}
-                        className="flex-1 bg-blue-600 hover:bg-blue-700 text-white"
-                      >
-                        {replayLoading ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : <Play className="mr-1 h-3.5 w-3.5" />}
-                        Play
-                      </Button>
-                      <Button
-                        variant="outline"
-                        onClick={() => { setReplayUrl(""); setReplayError(""); }}
-                        className="border-slate-300"
-                      >
-                        Close
-                      </Button>
-                    </div>
+                {filesSearched && files.length > 0 && (
+                  <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3">
+                    <p className="text-[11px] font-medium text-emerald-700">{files.length} segment{files.length !== 1 ? "s" : ""} found</p>
+                    <p className="mt-0.5 text-[10px] text-emerald-600">
+                      {formatTime(earliestFootage || "")} — {formatTime(latestFootage || "")} SAST
+                    </p>
+                    <Button size="sm" variant="outline" className="mt-2 h-7 w-full text-[10px] border-emerald-300 text-emerald-700 hover:bg-emerald-100" onClick={() => void playFullRange()}>
+                      <Play className="mr-1 h-3 w-3" /> Play Full Range
+                    </Button>
                   </div>
+                )}
+
+                <div>
+                  <label className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-slate-600">Start Time</label>
+                  <input
+                    type="time"
+                    step={1}
+                    value={startTime}
+                    onChange={(e) => setStartTime(e.target.value)}
+                    className="h-9 w-full rounded-lg border border-slate-300 bg-white px-3 text-xs outline-none focus:border-cyan-400 focus:ring-2 focus:ring-cyan-100"
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-slate-600">End Time</label>
+                  <input
+                    type="time"
+                    step={1}
+                    value={endTime}
+                    onChange={(e) => setEndTime(e.target.value)}
+                    className="h-9 w-full rounded-lg border border-slate-300 bg-white px-3 text-xs outline-none focus:border-cyan-400 focus:ring-2 focus:ring-cyan-100"
+                  />
+                </div>
+
+                <div className="flex gap-2">
+                  <Button
+                    onClick={() => void playVideo()}
+                    disabled={replayLoading}
+                    className="flex-1 bg-blue-600 hover:bg-blue-700 text-white"
+                  >
+                    {replayLoading ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : <Play className="mr-1 h-3.5 w-3.5" />}
+                    Play
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => { setReplayUrl(""); setReplayError(""); }}
+                    className="border-slate-300"
+                  >
+                    Close
+                  </Button>
+                </div>
                 )}
               </div>
 
