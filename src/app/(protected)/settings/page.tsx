@@ -797,12 +797,19 @@ function RTMSConfigSection() {
 
   const handleSeedDefaults = async () => {
     try {
+      // Filter out rules that already exist
+      const existingNames = new Set(rules.map(r => r.rule_name));
+      const newRules = DEFAULT_RTMS_RULES.filter(r => !existingNames.has(r.rule_name));
+      if (newRules.length === 0) {
+        toast.info('All default rules already exist');
+        return;
+      }
       await fetch('/api/video-server/rtms/rules', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ rules: DEFAULT_RTMS_RULES }),
+        body: JSON.stringify({ rules: newRules }),
       });
-      toast.success('Default rules seeded');
+      toast.success(`${newRules.length} rule(s) added`);
       fetchRules();
     } catch { toast.error('Failed to seed rules'); }
   };
