@@ -39,13 +39,9 @@ type VehicleCard = {
   capturing?: boolean;
 };
 
-const EPS_API = "/api/video-server";
-const RETRY_INTERVAL_MS = 30000;
-const SCREENSHOT_WINDOW_MS = 10 * 60 * 1000;
 const AUTO_REFRESH_MS = 2 * 60 * 1000; // 2 minutes
-const CAPTURE_RETRY_MS = 15000; // 15s retry for capturing vehicles
-const GALLERY_BATCH_SIZE = 30; // devices per batch
-const GALLERY_PER_DEVICE = 2; // last 2 files per device (CH1 + CH2)
+const GALLERY_BATCH_SIZE = 10; // devices per parallel batch
+const CAPTURE_BATCH_SIZE = 20; // captures per batch
 
 function normalizeCostCenter(value: unknown): string {
   return String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
@@ -62,13 +58,6 @@ function parseDate(value?: string | null): number {
   if (!value) return 0;
   const parsed = Date.parse(value);
   return Number.isNaN(parsed) ? 0 : parsed;
-}
-
-function resolveScreenshotUrl(rawUrl: string): string {
-  if (!rawUrl) return "";
-  if (rawUrl.startsWith("https://www.skycamx.co.za/")) return rawUrl;
-  if (rawUrl.startsWith("https://skycamx.co.za/")) return rawUrl;
-  return `${EPS_API}/eps/stream/stream/proxy?url=${encodeURIComponent(rawUrl)}`;
 }
 
 function withCacheBuster(url: string): string {
@@ -139,15 +128,14 @@ export default function ScreenshotsDashboardTab({
       const dbVehicles = await fetchDbOnce();
       if (!activeRef.current) return;
 
+      // 1. Get online devices from Mettax
       let onlineRes = await fetch('/api/mettax/online', {
         method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
         cache: "no-store", signal: AbortSignal.timeout(15000),
       }).catch(() => null);
-      if (!activeRef.current) return;
 
       let onlineData = onlineRes ? await onlineRes.json().catch(() => null) : null;
 
-      // Retry once after 2s if first response had issues
       if (!onlineData || !onlineData.success || !onlineData.data?.devices?.length) {
         await new Promise(r => setTimeout(r, 2000));
         onlineRes = await fetch('/api/mettax/online', {
@@ -157,7 +145,7 @@ export default function ScreenshotsDashboardTab({
         onlineData = onlineRes ? await onlineRes.json().catch(() => null) : null;
       }
 
-      // Build regMap: fleet OR reg -> {deviceId, online, cameras}
+      // 2. Build regMap: fleet OR reg -> {deviceId, online, cameras}
       const regMap = new Map<string, { deviceId: string; online: boolean; cameras: number }>();
       let onlineCount = 0;
       if (onlineData?.success && onlineData.data?.devices) {
@@ -169,42 +157,21 @@ export default function ScreenshotsDashboardTab({
           const parts = plate.split(" - ");
           const fleetNum = (parts[0] || "").trim();
           const regNum = (parts[1] || "").trim();
-          if (fleetNum) regMap.set(fleetNum.toUpperCase(), { deviceId: d.deviceId, online: isOnline, cameras: d.cameras || 1 });
-          if (regNum) regMap.set(regNum.toUpperCase(), { deviceId: d.deviceId, online: isOnline, cameras: d.cameras || 1 });
+          if (fleetNum) regMap.set(fleetNum.toUpperCase(), { deviceId: d.deviceId, online: isOnline, cameras: d.cameras || 2 });
+          if (regNum) regMap.set(regNum.toUpperCase(), { deviceId: d.deviceId, online: isOnline, cameras: d.cameras || 2 });
         }
       }
 
-      // Build deviceIdMap only for camera_sim_id -> Mettax deviceId mapping (NOT for online status)
-      const deviceIdMap = new Map<string, string>();
-      if (onlineData?.success && onlineData.data?.devices) {
-        for (const d of onlineData.data.devices) {
-          if (d.deviceId) deviceIdMap.set(d.deviceId, d.deviceId);
-        }
-      }
-
+      // 3. Build cards from DB vehicles
       const matchedDeviceIds: string[] = [];
       const prevCards = prevCardsRef.current;
 
       const built: VehicleCard[] = dbVehicles.map((v) => {
         const fleetKey = (v.fleet_number || "").toUpperCase().trim();
         const regKey = (v.registration_number || "").toUpperCase().trim();
-        const camKey = (v.camera_sim_id || "").trim();
+        const match = (fleetKey ? regMap.get(fleetKey) : undefined) || (regKey ? regMap.get(regKey) : undefined);
 
-        // Primary match: fleet OR reg key in regMap (strict - has online status)
-        let fleetMatch = fleetKey ? regMap.get(fleetKey) : undefined;
-        let regMatch = regKey ? regMap.get(regKey) : undefined;
-        const match = fleetMatch || regMatch;
-
-        // Only use camMatch if fleet/reg didn't match AND camera_sim_id exactly equals a Mettax deviceId
-        // AND the matched device's fleet/reg also matches (to prevent cross-matching)
-        let deviceId: string | null = null;
-        if (match) {
-          deviceId = match.deviceId;
-        } else if (camKey && deviceIdMap.has(camKey)) {
-          // camMatch only for deviceId lookup, NOT online status
-          deviceId = camKey;
-        }
-
+        const deviceId = match?.deviceId || null;
         if (deviceId) matchedDeviceIds.push(deviceId);
 
         const prevCard = prevCards.find((c) =>
@@ -213,16 +180,13 @@ export default function ScreenshotsDashboardTab({
           (deviceId && c.deviceId === deviceId)
         );
 
-        // Only use Mettax online status if we got a fleet/reg match. camMatch vehicles show offline unless confirmed.
-        const online = match ? match.online : false;
-
         return {
           registration: v.registration_number,
           fleetNumber: v.fleet_number,
           costCenter: v.cost_centres,
-          deviceId: deviceId || prevCard?.deviceId || null,
-          online,
-          cameras: match ? match.cameras : (prevCard?.cameras || 0),
+          deviceId,
+          online: match?.online || false,
+          cameras: match?.cameras || prevCard?.cameras || 2,
           ch1Url: prevCard?.ch1Url || null,
           ch2Url: prevCard?.ch2Url || null,
           ch1Time: prevCard?.ch1Time || null,
@@ -230,139 +194,98 @@ export default function ScreenshotsDashboardTab({
         };
       });
 
-      console.log("[screenshots] Mettax devices:", onlineData?.data?.devices?.length || 0, "regMap online:", onlineCount, "dbVehicles:", dbVehicles.length);
-      console.log("[screenshots] fleet/reg matched:", built.filter(c => c.online).length, "offline:", built.filter(c => !c.online).length);
-      console.log("[screenshots] regMap keys sample:", Array.from(regMap.keys()).slice(0, 5));
-      console.log("[screenshots] dbVehicles sample:", dbVehicles.slice(0, 3).map(v => ({ fleet: v.fleet_number, reg: v.registration_number })));
-
-      // PHASE A — Show cached images IMMEDIATELY, then fire capture for vehicles without screenshots
       prevCardsRef.current = built;
-      setCards(built); // instant paint with cached URLs
+      setCards(built);
 
-      // Fire capture for vehicles without screenshots — using current cycle's deviceId matches
-      const needCaptureInitial = built.filter((c) => c.online && c.deviceId && !c.ch1Url && !c.ch2Url);
-      if (needCaptureInitial.length > 0) {
-        const captures = needCaptureInitial.flatMap((c) =>
-          Array.from({ length: c.cameras || 1 }, (_, i) => ({ deviceId: c.deviceId!, channelId: i + 1 }))
+      // 4. Trigger captures for online devices without screenshots
+      const needCapture = built.filter((c) => c.online && c.deviceId && !c.ch1Url && !c.ch2Url);
+      if (needCapture.length > 0) {
+        for (const c of needCapture) { if (c.deviceId) capturingRef.current.add(c.deviceId); }
+        const captures = needCapture.flatMap((c) =>
+          Array.from({ length: c.cameras || 2 }, (_, i) => ({ deviceId: c.deviceId!, channelId: i + 1 }))
         );
-        for (const c of needCaptureInitial) { if (c.deviceId) capturingRef.current.add(c.deviceId); }
-        setTimeout(() => {
-          fetch(`${EPS_API}/eps/gallery/capture`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ captures }),
-          }).catch(() => {});
-        }, 0);
+        for (let i = 0; i < captures.length; i += CAPTURE_BATCH_SIZE) {
+          const batch = captures.slice(i, i + CAPTURE_BATCH_SIZE);
+          for (const cap of batch) {
+            fetch('/api/mettax/capture', {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(cap),
+              signal: AbortSignal.timeout(8000),
+            }).catch(() => {});
+          }
+        }
       }
 
-      // PHASE B — Fetch gallery screenshots progressively per batch, updating only changed cards
+      // 5. Wait for captures to upload
+      await new Promise(r => setTimeout(r, 4000));
+      if (!activeRef.current) return;
+
+      // 6. Fetch gallery screenshots per device (parallel batches)
       let galFailed = false;
       if (matchedDeviceIds.length > 0) {
-        const now = new Date();
-        const end = now.toISOString().replace("T", " ").slice(0, 19);
-        const start = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString().replace("T", " ").slice(0, 19);
-
         for (let i = 0; i < matchedDeviceIds.length; i += GALLERY_BATCH_SIZE) {
           if (!activeRef.current) return;
           const batch = matchedDeviceIds.slice(i, i + GALLERY_BATCH_SIZE);
 
           const results = await Promise.allSettled(
             batch.map(deviceId =>
-              fetch(`${EPS_API}/eps/gallery/files/page`, {
+              fetch('/api/mettax/gallery', {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ pageSize: GALLERY_PER_DEVICE, pageIndex: 1, deviceIds: deviceId, startTime: start, endTime: end, queryType: "Device" }),
+                body: JSON.stringify({ deviceId, pageSize: 2 }),
                 cache: "no-store",
-                signal: AbortSignal.timeout(12000),
-              }).then(r => r.json()).then(d => ({ deviceId, files: d.data?.files || [] }))
+                signal: AbortSignal.timeout(10000),
+              }).then(r => r.json()).then(d => ({ deviceId, files: d.files || [] }))
             )
           );
 
-          // Build per-device lookup for this batch
-          const batchResult: Record<string, Record<number, GalleryFile>> = {};
-          for (const r of results) {
-            if (r.status === "fulfilled") {
-              const { deviceId, files } = r.value;
-              for (const f of files) {
-                const ch = f.channelId || 1;
-                if (!batchResult[deviceId]) batchResult[deviceId] = {};
-                const existing = batchResult[deviceId][ch];
-                if (!existing || (f.createTime || "") > (existing.createTime || "")) {
-                  batchResult[deviceId][ch] = f;
-                }
-              }
-            } else {
-              galFailed = true;
-            }
-          }
-
-          // Update only cards that got new URLs from this batch — in-place mutation
+          // Update cards with new screenshots
           let cardsUpdated = false;
-          for (const card of built) {
-            if (!card.deviceId) continue;
-            const dev = batchResult[card.deviceId];
-            if (!dev) continue;
-            const newCh1 = dev[1] ? resolveScreenshotUrl(dev[1].fileUrl) : null;
-            const newCh2 = dev[2] ? resolveScreenshotUrl(dev[2].fileUrl) : null;
-            const newCh1Time = dev[1]?.createTime || null;
-            const newCh2Time = dev[2]?.createTime || null;
-            if (
-              (newCh1 && newCh1 !== card.ch1Url) ||
-              (newCh2 && newCh2 !== card.ch2Url) ||
-              (newCh1Time && newCh1Time !== card.ch1Time) ||
-              (newCh2Time && newCh2Time !== card.ch2Time)
-            ) {
-              if (newCh1) { card.ch1Url = newCh1; card.ch1Time = newCh1Time; }
-              if (newCh2 && newCh2 !== card.ch1Url) { card.ch2Url = newCh2; card.ch2Time = newCh2Time; }
-              if (card.deviceId) capturingRef.current.delete(card.deviceId);
-              cardsUpdated = true;
-            }
+          for (const r of results) {
+            if (r.status !== "fulfilled") { galFailed = true; continue; }
+            const { deviceId, files } = r.value;
+            const card = built.find(c => c.deviceId === deviceId);
+            if (!card) continue;
+
+            const ch1 = files.find((f: any) => f.channelId === 1);
+            const ch2 = files.find((f: any) => f.channelId === 2);
+
+            if (ch1 && ch1.fileUrl !== card.ch1Url) { card.ch1Url = ch1.fileUrl; card.ch1Time = ch1.createTime; cardsUpdated = true; }
+            if (ch2 && ch2.fileUrl !== card.ch2Url) { card.ch2Url = ch2.fileUrl; card.ch2Time = ch2.createTime; cardsUpdated = true; }
+            if (card.deviceId) capturingRef.current.delete(card.deviceId);
           }
 
-          if (cardsUpdated) setCards(built); // same array ref — React only re-renders changed cards
-        }
-      }
-
-      // PHASE C — Final state after all gallery batches complete
-      for (const card of built) {
-        if (card.deviceId && capturingRef.current.has(card.deviceId) && !card.ch1Url && !card.ch2Url) {
-          card.capturing = true;
+          if (cardsUpdated) setCards([...built]);
         }
       }
 
       if (!activeRef.current) return;
 
-      if (!galFailed) setFailedImages(new Set());
-
-      // Fire capture again for any vehicles still without screenshots after gallery
-      const needCaptureFinal = built.filter((c) => c.online && c.deviceId && !c.ch1Url && !c.ch2Url);
-      if (needCaptureFinal.length > 0) {
-        const captures = needCaptureFinal.flatMap((c) =>
-          Array.from({ length: c.cameras || 1 }, (_, i) => ({ deviceId: c.deviceId!, channelId: i + 1 }))
+      // 7. Retry capture for devices still without screenshots
+      const needCaptureRetry = built.filter((c) => c.online && c.deviceId && !c.ch1Url && !c.ch2Url);
+      if (needCaptureRetry.length > 0) {
+        for (const c of needCaptureRetry) { if (c.deviceId) capturingRef.current.add(c.deviceId); }
+        const captures = needCaptureRetry.flatMap((c) =>
+          Array.from({ length: c.cameras || 2 }, (_, i) => ({ deviceId: c.deviceId!, channelId: i + 1 }))
         );
-        for (const c of needCaptureFinal) { if (c.deviceId) capturingRef.current.add(c.deviceId); }
-        fetch(`${EPS_API}/eps/gallery/capture`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ captures }),
-        }).catch(() => {});
+        for (let i = 0; i < captures.length; i += CAPTURE_BATCH_SIZE) {
+          const batch = captures.slice(i, i + CAPTURE_BATCH_SIZE);
+          for (const cap of batch) {
+            fetch('/api/mettax/capture', {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(cap),
+              signal: AbortSignal.timeout(8000),
+            }).catch(() => {});
+          }
+        }
       }
 
-      prevCardsRef.current = built;
-      if (built.some((c) => c.ch1Url || c.ch2Url)) setLastScreenshotAt(new Date());
+      setLastScreenshotAt(new Date());
       setError(null);
-      setLoading(false);
-
-      if (galFailed) scheduleRetry();
-      if (capturingRef.current.size > 0) {
-        if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
-        retryTimerRef.current = setTimeout(() => { if (activeRef.current) fetchData(); }, CAPTURE_RETRY_MS);
-      }
     } catch (e: any) {
-      if (e.name === "AbortError") return;
-      if (!activeRef.current) return;
-      setError(e.message || "Failed to load");
-      setLoading(false);
+      setError(e.message);
     } finally {
       fetchInProgressRef.current = false;
     }
@@ -372,7 +295,7 @@ export default function ScreenshotsDashboardTab({
     if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
     retryTimerRef.current = setTimeout(() => {
       if (activeRef.current) fetchData();
-    }, RETRY_INTERVAL_MS);
+    }, AUTO_REFRESH_MS);
   }, [fetchData]);
 
   const refreshAll = useCallback(async () => {
@@ -446,7 +369,7 @@ export default function ScreenshotsDashboardTab({
     return scopedCards.filter((c) => {
       const t1 = parseDate(c.ch1Time);
       const t2 = parseDate(c.ch2Time);
-      return (t1 > 0 && now - t1 <= SCREENSHOT_WINDOW_MS) || (t2 > 0 && now - t2 <= SCREENSHOT_WINDOW_MS);
+      return (t1 > 0 && now - t1 <= 10 * 60 * 1000) || (t2 > 0 && now - t2 <= 10 * 60 * 1000);
     }).length;
   }, [scopedCards]);
 
