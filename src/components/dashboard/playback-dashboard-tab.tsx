@@ -33,6 +33,7 @@ type HistoryFile = {
   startTime: string;
   endTime: string;
   fileUrl: string | null;
+  fileType?: string;
 };
 
 function toSAST(date: Date): string {
@@ -320,6 +321,7 @@ export default function PlaybackDashboardTab({ selectedCostCenterIds = [] }: Pla
       });
       const json = await res.json().catch(() => ({}));
       const fileList: HistoryFile[] = (json?.data?.files || []).map((f: HistoryFile) => ({ ...f, channelId: selectedChannel }));
+      console.log("[playback] files found:", fileList.length, "types:", fileList.map(f => f.fileType));
       setFiles(fileList);
       setFilesSearched(true);
 

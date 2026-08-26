@@ -83,12 +83,22 @@ export async function POST(req: NextRequest) {
 
     const data = await mettaxPost('/gallery/page/file/v2', body);
 
+    console.log('[PLAYBACK FILES] deviceId:', deviceId, 'code:', data.code, 'total:', data.data?.total, 'records:', data.data?.records?.length);
+
     if (data.code !== 0) {
       return NextResponse.json({ success: false, message: data.msg || 'Failed', data: { files: [] } });
     }
 
-    const records = (data.data?.records || [])
-      .filter((r: any) => r.fileType === '02')
+    const allRecords = data.data?.records || [];
+    const videoRecords = allRecords.filter((r: any) => r.fileType === '02');
+    const imageRecords = allRecords.filter((r: any) => r.fileType === '00');
+
+    console.log('[PLAYBACK FILES] all:', allRecords.length, 'video(02):', videoRecords.length, 'image(00):', imageRecords.length);
+    if (allRecords.length > 0) {
+      console.log('[PLAYBACK FILES] sample types:', allRecords.slice(0, 5).map((r: any) => r.fileType));
+    }
+
+    const records = allRecords
       .filter((r: any) => !channelId || r.channelId === Number(channelId))
       .map((r: any) => ({
         deviceName: r.deviceName || '',
@@ -97,6 +107,7 @@ export async function POST(req: NextRequest) {
         startTime: r.createTime || '',
         endTime: r.createTime || '',
         fileUrl: r.fileUrl || null,
+        fileType: r.fileType || '',
       }));
 
     return NextResponse.json({ success: true, data: { files: records } });
