@@ -576,7 +576,6 @@ export default function PlaybackDashboardTab({ selectedCostCenterIds = [] }: Pla
                     Close
                   </Button>
                 </div>
-                )}
               </div>
 
               <div className="flex flex-1 flex-col bg-slate-950 p-4">
