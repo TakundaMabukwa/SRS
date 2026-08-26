@@ -29,8 +29,12 @@ function mettaxPostRaw(endpoint: string, body: Record<string, unknown>, token?: 
       let data = '';
       res.on('data', (chunk) => { data += chunk; });
       res.on('end', () => {
+        if (!data || !data.trim()) {
+          resolve({ code: -1, msg: 'Empty response' });
+          return;
+        }
         try { resolve(JSON.parse(data)); }
-        catch { reject(new Error('Invalid JSON from Mettax')); }
+        catch { resolve({ code: -1, msg: 'Invalid JSON' }); }
       });
     });
     req.on('error', reject);
@@ -102,7 +106,6 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ success: true, files: records, total: data.data?.total || records.length });
   } catch (err: any) {
-    console.error('[METTAX GALLERY] Error:', err.message);
-    return NextResponse.json({ success: false, message: err.message, files: [] }, { status: 500 });
+    return NextResponse.json({ success: false, message: err.message, files: [] }, { status: 200 });
   }
 }

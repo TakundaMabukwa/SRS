@@ -197,7 +197,52 @@ export default function ScreenshotsDashboardTab({
       prevCardsRef.current = built;
       setCards(built);
 
-      // 4. Trigger captures for online devices without screenshots
+      // 4. First pass: Fetch existing gallery for ALL devices (no capture yet - instant display)
+      const onlineDeviceIds = matchedDeviceIds.filter((id) => {
+        const card = built.find(c => c.deviceId === id);
+        return card?.online;
+      });
+
+      let galFailed = false;
+      if (onlineDeviceIds.length > 0) {
+        for (let i = 0; i < onlineDeviceIds.length; i += GALLERY_BATCH_SIZE) {
+          if (!activeRef.current) return;
+          const batch = onlineDeviceIds.slice(i, i + GALLERY_BATCH_SIZE);
+
+          const results = await Promise.allSettled(
+            batch.map(deviceId =>
+              fetch('/api/mettax/gallery', {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ deviceId, pageSize: 2 }),
+                cache: "no-store",
+                signal: AbortSignal.timeout(8000),
+              }).then(r => r.json()).then(d => ({ deviceId, files: d.files || [] })).catch(() => ({ deviceId, files: [] }))
+            )
+          );
+
+          let cardsUpdated = false;
+          for (const r of results) {
+            if (r.status !== "fulfilled") { galFailed = true; continue; }
+            const { deviceId, files } = r.value;
+            const card = built.find(c => c.deviceId === deviceId);
+            if (!card) continue;
+
+            const ch1 = files.find((f: any) => f.channelId === 1);
+            const ch2 = files.find((f: any) => f.channelId === 2);
+
+            if (ch1 && ch1.fileUrl) { card.ch1Url = ch1.fileUrl; card.ch1Time = ch1.createTime; cardsUpdated = true; }
+            if (ch2 && ch2.fileUrl) { card.ch2Url = ch2.fileUrl; card.ch2Time = ch2.createTime; cardsUpdated = true; }
+            if (card.deviceId) capturingRef.current.delete(card.deviceId);
+          }
+
+          if (cardsUpdated) setCards([...built]);
+        }
+      }
+
+      if (!activeRef.current) return;
+
+      // 5. Trigger captures only for devices that returned empty
       const needCapture = built.filter((c) => c.online && c.deviceId && !c.ch1Url && !c.ch2Url);
       if (needCapture.length > 0) {
         for (const c of needCapture) { if (c.deviceId) capturingRef.current.add(c.deviceId); }
@@ -217,16 +262,16 @@ export default function ScreenshotsDashboardTab({
         }
       }
 
-      // 5. Wait for captures to upload
-      await new Promise(r => setTimeout(r, 4000));
+      // 6. Short wait for captures to upload
+      await new Promise(r => setTimeout(r, 3000));
       if (!activeRef.current) return;
 
-      // 6. Fetch gallery screenshots per device (parallel batches)
-      let galFailed = false;
-      if (matchedDeviceIds.length > 0) {
-        for (let i = 0; i < matchedDeviceIds.length; i += GALLERY_BATCH_SIZE) {
+      // 7. Second pass: Fetch gallery only for devices that were triggered
+      if (needCapture.length > 0) {
+        const retryDeviceIds = needCapture.map(c => c.deviceId!).filter(Boolean);
+        for (let i = 0; i < retryDeviceIds.length; i += GALLERY_BATCH_SIZE) {
           if (!activeRef.current) return;
-          const batch = matchedDeviceIds.slice(i, i + GALLERY_BATCH_SIZE);
+          const batch = retryDeviceIds.slice(i, i + GALLERY_BATCH_SIZE);
 
           const results = await Promise.allSettled(
             batch.map(deviceId =>
@@ -235,15 +280,14 @@ export default function ScreenshotsDashboardTab({
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ deviceId, pageSize: 2 }),
                 cache: "no-store",
-                signal: AbortSignal.timeout(10000),
-              }).then(r => r.json()).then(d => ({ deviceId, files: d.files || [] }))
+                signal: AbortSignal.timeout(8000),
+              }).then(r => r.json()).then(d => ({ deviceId, files: d.files || [] })).catch(() => ({ deviceId, files: [] }))
             )
           );
 
-          // Update cards with new screenshots
           let cardsUpdated = false;
           for (const r of results) {
-            if (r.status !== "fulfilled") { galFailed = true; continue; }
+            if (r.status !== "fulfilled") continue;
             const { deviceId, files } = r.value;
             const card = built.find(c => c.deviceId === deviceId);
             if (!card) continue;
@@ -251,34 +295,12 @@ export default function ScreenshotsDashboardTab({
             const ch1 = files.find((f: any) => f.channelId === 1);
             const ch2 = files.find((f: any) => f.channelId === 2);
 
-            if (ch1 && ch1.fileUrl !== card.ch1Url) { card.ch1Url = ch1.fileUrl; card.ch1Time = ch1.createTime; cardsUpdated = true; }
-            if (ch2 && ch2.fileUrl !== card.ch2Url) { card.ch2Url = ch2.fileUrl; card.ch2Time = ch2.createTime; cardsUpdated = true; }
+            if (ch1 && ch1.fileUrl && ch1.fileUrl !== card.ch1Url) { card.ch1Url = ch1.fileUrl; card.ch1Time = ch1.createTime; cardsUpdated = true; }
+            if (ch2 && ch2.fileUrl && ch2.fileUrl !== card.ch2Url) { card.ch2Url = ch2.fileUrl; card.ch2Time = ch2.createTime; cardsUpdated = true; }
             if (card.deviceId) capturingRef.current.delete(card.deviceId);
           }
 
           if (cardsUpdated) setCards([...built]);
-        }
-      }
-
-      if (!activeRef.current) return;
-
-      // 7. Retry capture for devices still without screenshots
-      const needCaptureRetry = built.filter((c) => c.online && c.deviceId && !c.ch1Url && !c.ch2Url);
-      if (needCaptureRetry.length > 0) {
-        for (const c of needCaptureRetry) { if (c.deviceId) capturingRef.current.add(c.deviceId); }
-        const captures = needCaptureRetry.flatMap((c) =>
-          Array.from({ length: c.cameras || 2 }, (_, i) => ({ deviceId: c.deviceId!, channelId: i + 1 }))
-        );
-        for (let i = 0; i < captures.length; i += CAPTURE_BATCH_SIZE) {
-          const batch = captures.slice(i, i + CAPTURE_BATCH_SIZE);
-          for (const cap of batch) {
-            fetch('/api/mettax/capture', {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(cap),
-              signal: AbortSignal.timeout(8000),
-            }).catch(() => {});
-          }
         }
       }
 
