@@ -4,6 +4,8 @@ import { useEffect, useMemo, useState } from 'react'
 import Image from 'next/image'
 import { Button } from '@/components/ui/button'
 import { Loader2, Printer, X } from 'lucide-react'
+import { DriverDropdown } from '@/components/ui/driver-dropdown'
+import { createClient } from '@/lib/supabase/client'
 import EvidenceAnnexure from '@/components/video-alerts/evidence-annexure'
 import {
   buildAlertEventSummary,
@@ -13,12 +15,21 @@ import {
   ReportAlertDetails as AlertDetails,
   normalizeReportScreenshots,
   normalizeReportVideos,
-  renderElementToPdfBlob,
+  renderElementToWordBlob,
   resolveAlertEventTimestamp,
   resolveReportLocationText,
   SavedAlertArtifact,
   saveAlertArtifactBundle,
 } from '@/components/video-alerts/report-support'
+
+type DriverOption = {
+  id: string
+  first_name: string
+  surname: string
+  fleet_number: string | null
+  cell_number: string | null
+  assigned_vehicle: { registration_number: string | null } | null
+}
 
 interface CameraCoveredModalProps {
   isOpen: boolean
@@ -58,6 +69,8 @@ export default function NRCCameraCoveredModal({ isOpen, onClose, onSaved, driver
   const [preventiveAction, setPreventiveAction] = useState('Review procedures, reinforce compliance expectations, and schedule follow-up monitoring.')
   const [preventiveResponsibility, setPreventiveResponsibility] = useState('Operations Control')
   const [preventiveTargetDate, setPreventiveTargetDate] = useState('')
+  const [drivers, setDrivers] = useState<DriverOption[]>([])
+  const [selectedDriverId, setSelectedDriverId] = useState('')
   const [investigator, setInvestigator] = useState('')
   const [manager, setManager] = useState('')
   const [selectedRootCauses, setSelectedRootCauses] = useState<string[]>([])
@@ -151,6 +164,59 @@ export default function NRCCameraCoveredModal({ isOpen, onClose, onSaved, driver
       localStorage.setItem(rootCauseStorageKey, JSON.stringify(selectedRootCauses))
     } catch {}
   }, [isOpen, rootCauseStorageKey, selectedRootCauses])
+
+  useEffect(() => {
+    if (!isOpen) return
+    fetch('/api/drivers?all=true')
+      .then(res => res.json())
+      .then(data => {
+        if (!data.success || !data.drivers) { console.error('Error fetching drivers:', data.error || data.message); return }
+        const mapped: DriverOption[] = (data.drivers || []).map((d: any) => ({
+          id: String(d.id),
+          first_name: d.first_name || '',
+          surname: d.surname || '',
+          fleet_number: d.fleet_number || null,
+          cell_number: d.cell_number || null,
+          assigned_vehicle: d.assigned_vehicle || null,
+        }))
+        setDrivers(mapped)
+      })
+      .catch(err => { console.error('Error fetching drivers:', err); })
+  }, [isOpen])
+
+  const handleDriverChange = (driverId: string) => {
+    setSelectedDriverId(driverId)
+    const driver = drivers.find(d => d.id === driverId)
+    if (driver) {
+      setDriverName(`${driver.first_name} ${driver.surname}`.trim())
+      if (driver.fleet_number) setVehicleFleetNumber(driver.fleet_number)
+      if (driver.assigned_vehicle?.registration_number) setVehicleRegistration(driver.assigned_vehicle.registration_number)
+    }
+  }
+
+  useEffect(() => {
+    if (!selectedDriverId && drivers.length > 0) {
+      const fleetNum = vehicleFleetNumber?.toUpperCase().trim()
+      if (fleetNum) {
+        const matched = drivers.find(d => d.fleet_number?.toUpperCase() === fleetNum)
+        if (matched) {
+          setSelectedDriverId(matched.id)
+          setDriverName(`${matched.first_name} ${matched.surname}`.trim())
+          return
+        }
+      }
+      if (driverInfo.name) {
+        const fullName = driverInfo.name.toLowerCase().trim()
+        const parts = fullName.split(' ')
+        const matched = drivers.find(d => {
+          const dFull = `${d.first_name} ${d.surname}`.toLowerCase()
+          return dFull === fullName || (parts.length >= 2 && d.first_name.toLowerCase() === parts[0] && d.surname.toLowerCase() === parts[parts.length - 1])
+        })
+        if (matched) setSelectedDriverId(matched.id)
+      }
+    }
+  }, [drivers, selectedDriverId, driverInfo.name, vehicleFleetNumber])
+
   const toggleRootCause = (key: string) => {
     setSelectedRootCauses((prev) =>
       prev.includes(key) ? prev.filter((item) => item !== key) : [...prev, key]
@@ -188,8 +254,8 @@ export default function NRCCameraCoveredModal({ isOpen, onClose, onSaved, driver
       const element = document.getElementById('nrc-camera-covered-content')
       if (!element) throw new Error('Form content not found')
 
-      const blob = await renderElementToPdfBlob(element)
-      const fileName = `ncr-generic-${driverInfo.fleetNumber}-${Date.now()}.pdf`
+      const blob = await renderElementToWordBlob(element)
+      const fileName = `ncr-generic-${driverInfo.fleetNumber}-${Date.now()}.doc`
 
       const artifact = await saveAlertArtifactBundle({
         supabase,
@@ -199,6 +265,16 @@ export default function NRCCameraCoveredModal({ isOpen, onClose, onSaved, driver
         driverInfo,
         alertDetails,
       })
+
+      if (selectedDriverId && vehicleFleetNumber) {
+        const driver = drivers.find(d => d.id === selectedDriverId)
+        if (driver && driver.fleet_number !== vehicleFleetNumber) {
+          await supabase
+            .from('drivers')
+            .update({ fleet_number: vehicleFleetNumber })
+            .eq('id', selectedDriverId)
+        }
+      }
 
       if (onSaved) await onSaved(artifact)
       onClose()
@@ -253,7 +329,7 @@ export default function NRCCameraCoveredModal({ isOpen, onClose, onSaved, driver
                 <div className="border-b border-black p-2 font-bold bg-slate-100">Implicated Entity Information</div>
                 <div className="grid grid-cols-8 border-b border-black text-sm">
                   <div className="col-span-1 border-r border-black p-2 bg-slate-100">Name</div>
-                  <div className="col-span-3 border-r border-black p-0"><input className="w-full h-full border border-black px-1 py-2" value={driverName} onChange={(e) => setDriverName(e.target.value)} /></div>
+                  <div className="col-span-3 border-r border-black p-0"><DriverDropdown value={selectedDriverId} onChange={handleDriverChange} drivers={drivers} placeholder="Select driver" /></div>
                   <div className="col-span-1 border-r border-black p-2 bg-slate-100">Department</div>
                   <div className="col-span-3 p-0"><input className="w-full h-full border border-black px-1 py-2" value={department} onChange={(e) => setDepartment(e.target.value)} /></div>
                 </div>

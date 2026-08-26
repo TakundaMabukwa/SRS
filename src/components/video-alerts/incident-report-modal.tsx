@@ -4,6 +4,8 @@ import { useEffect, useMemo, useState } from 'react'
 import Image from 'next/image'
 import { Button } from '@/components/ui/button'
 import { Loader2, Printer, X } from 'lucide-react'
+import { DriverDropdown } from '@/components/ui/driver-dropdown'
+import { createClient } from '@/lib/supabase/client'
 import EvidenceAnnexure from '@/components/video-alerts/evidence-annexure'
 import {
   ReportAlertDetails,
@@ -20,6 +22,15 @@ import {
   resolveReportLocationText,
   saveAlertArtifactBundle,
 } from '@/components/video-alerts/report-support'
+
+type DriverOption = {
+  id: string
+  first_name: string
+  surname: string
+  fleet_number: string | null
+  cell_number: string | null
+  assigned_vehicle: { registration_number: string | null } | null
+}
 
 interface IncidentReportModalProps {
   isOpen: boolean
@@ -49,6 +60,8 @@ export default function IncidentReportModal({ isOpen, onClose, onSaved, driverIn
   const [findingsRootCause, setFindingsRootCause] = useState('')
   const [reportCompiledBy, setReportCompiledBy] = useState('')
   const [designation, setDesignation] = useState('')
+  const [drivers, setDrivers] = useState<DriverOption[]>([])
+  const [selectedDriverId, setSelectedDriverId] = useState('')
 
   const timestamp = resolveAlertEventTimestamp(alertDetails, driverInfo.timestamp)
   const lastOccurrenceText = formatReportDateTime(alertDetails?.lastOccurrenceTimestamp || timestamp)
@@ -77,6 +90,57 @@ export default function IncidentReportModal({ isOpen, onClose, onSaved, driverIn
     }
     fetchCurrentUser()
   }, [alertDetails?.type, driverInfo.name, eventSummary, isOpen])
+
+  useEffect(() => {
+    if (!isOpen) return
+    fetch('/api/drivers?all=true')
+      .then(res => res.json())
+      .then(data => {
+        if (!data.success || !data.drivers) { console.error('Error fetching drivers:', data.error || data.message); return }
+        const mapped: DriverOption[] = (data.drivers || []).map((d: any) => ({
+          id: String(d.id),
+          first_name: d.first_name || '',
+          surname: d.surname || '',
+          fleet_number: d.fleet_number || null,
+          cell_number: d.cell_number || null,
+          assigned_vehicle: d.assigned_vehicle || null,
+        }))
+        setDrivers(mapped)
+      })
+      .catch(err => { console.error('Error fetching drivers:', err); })
+  }, [isOpen])
+
+  const handleDriverChange = (driverId: string) => {
+    setSelectedDriverId(driverId)
+    const driver = drivers.find(d => d.id === driverId)
+    if (driver) {
+      setPersonsInvolved(`${driver.first_name} ${driver.surname}`.trim())
+    }
+  }
+
+  useEffect(() => {
+    if (!selectedDriverId && drivers.length > 0) {
+      const fleetNum = driverInfo.fleetNumber?.toUpperCase().trim()
+      if (fleetNum) {
+        const matched = drivers.find(d => d.fleet_number?.toUpperCase() === fleetNum)
+        if (matched) {
+          setSelectedDriverId(matched.id)
+          setPersonsInvolved(`${matched.first_name} ${matched.surname}`.trim())
+          return
+        }
+      }
+      if (driverInfo.name) {
+        const fullName = driverInfo.name.toLowerCase().trim()
+        const parts = fullName.split(' ')
+        const matched = drivers.find(d => {
+          const dFull = `${d.first_name} ${d.surname}`.toLowerCase()
+          return dFull === fullName || (parts.length >= 2 && d.first_name.toLowerCase() === parts[0] && d.surname.toLowerCase() === parts[parts.length - 1])
+        })
+        if (matched) setSelectedDriverId(matched.id)
+      }
+    }
+  }, [drivers, selectedDriverId, driverInfo.name, driverInfo.fleetNumber])
+
   const annexureScreenshots = useMemo(() => normalizeReportScreenshots(alertDetails?.screenshots), [alertDetails?.screenshots])
   const annexureVideos = useMemo(() => normalizeReportVideos(alertDetails?.videos), [alertDetails?.videos])
 
@@ -102,6 +166,16 @@ export default function IncidentReportModal({ isOpen, onClose, onSaved, driverIn
         driverInfo,
         alertDetails,
       })
+
+      if (selectedDriverId && driverInfo.fleetNumber) {
+        const driver = drivers.find(d => d.id === selectedDriverId)
+        if (driver && driver.fleet_number !== driverInfo.fleetNumber) {
+          await supabase
+            .from('drivers')
+            .update({ fleet_number: driverInfo.fleetNumber })
+            .eq('id', selectedDriverId)
+        }
+      }
 
       if (onSaved) await onSaved(artifact)
       onClose()
@@ -207,7 +281,7 @@ export default function IncidentReportModal({ isOpen, onClose, onSaved, driverIn
             </div>
             <div className="grid grid-cols-12 border border-slate-500">
               <div className="col-span-7 border-r border-slate-500 p-2 font-semibold text-slate-700 underline">Persons Involved:</div>
-              <div className="col-span-5 p-1"><input className="h-10 w-full border border-slate-500 px-3" value={personsInvolved} onChange={(e) => setPersonsInvolved(e.target.value)} /></div>
+              <div className="col-span-5 p-1"><DriverDropdown value={selectedDriverId} onChange={handleDriverChange} drivers={drivers} placeholder="Select driver" /></div>
             </div>
 
             <div className="space-y-2">

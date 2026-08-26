@@ -13,7 +13,7 @@ import {
   ReportAlertDetails as AlertDetails,
   normalizeReportScreenshots,
   normalizeReportVideos,
-  renderElementToPdfBlob,
+  renderElementToWordBlob,
   resolveReportLocationText,
   SavedAlertArtifact,
   saveAlertArtifactBundle,
@@ -124,8 +124,8 @@ export default function NCRSpeedingModal({ isOpen, onClose, onSaved, driverInfo,
       const element = document.getElementById('ncr-speeding-content')
       if (!element) throw new Error('Form content not found')
 
-      const blob = await renderElementToPdfBlob(element)
-      const fileName = `ncr-speeding-${driverInfo.fleetNumber}-${Date.now()}.pdf`
+      const blob = await renderElementToWordBlob(element)
+      const fileName = `ncr-speeding-${driverInfo.fleetNumber}-${Date.now()}.doc`
 
       const artifact = await saveAlertArtifactBundle({
         supabase,

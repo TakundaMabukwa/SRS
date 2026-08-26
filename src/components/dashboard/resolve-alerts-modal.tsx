@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useMemo, useCallback } from "react";
+import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
@@ -33,6 +33,7 @@ export function ResolveAlertsModal({
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [resolving, setResolving] = useState(false);
   const [resolvingIds, setResolvingIds] = useState<Set<string>>(new Set());
+  const fetchActiveRef = useRef(0);
 
   const alertTypeName = (type: string) => {
     const map: Record<string, string> = {
@@ -92,6 +93,7 @@ export function ResolveAlertsModal({
 
   const fetchAlerts = useCallback(async () => {
     if (!deviceId && !fleetNumber && !registration) return;
+    const fetchId = ++fetchActiveRef.current;
     setLoading(true);
     try {
       const fetchTelematics = async () => {
@@ -110,9 +112,9 @@ export function ResolveAlertsModal({
 
       const fetchVideo = async () => {
         try {
-          const res = await fetch(`${baseUrl}/eps/alerts/active?limit=1000`, {
+          const res = await fetch(`${baseUrl}/eps/alerts/active?limit=2000`, {
             cache: "no-store",
-            signal: AbortSignal.timeout(15000),
+            signal: AbortSignal.timeout(20000),
           });
           let json: any;
           const contentType = res.headers.get("content-type") || "";
@@ -150,6 +152,7 @@ export function ResolveAlertsModal({
       };
 
       const [tel, vid] = await Promise.all([fetchTelematics(), fetchVideo()]);
+      if (fetchId !== fetchActiveRef.current) return;
       setTelematicsAlerts(tel);
       setVideoAlerts(vid);
 
@@ -159,10 +162,11 @@ export function ResolveAlertsModal({
       ];
       setSelectedIds(new Set(allKeys));
     } catch {
+      if (fetchId !== fetchActiveRef.current) return;
       setTelematicsAlerts([]);
       setVideoAlerts([]);
     } finally {
-      setLoading(false);
+      if (fetchId === fetchActiveRef.current) setLoading(false);
     }
   }, [deviceId, fleetNumber, registration, baseUrl]);
 

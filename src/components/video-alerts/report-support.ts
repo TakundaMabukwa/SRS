@@ -586,3 +586,29 @@ export async function renderElementToPdfBlob(element: HTMLElement): Promise<Blob
 
   return pdf.output('blob')
 }
+
+export async function renderElementToWordBlob(element: HTMLElement): Promise<Blob> {
+  const clone = element.cloneNode(true) as HTMLElement
+  const styles = Array.from(document.querySelectorAll('style')).map(s => s.innerHTML).join('\n')
+  const styleLink = document.querySelector('link[rel="stylesheet"]')?.outerHTML || ''
+
+  const html = `<!DOCTYPE html>
+<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+${styleLink}
+<style>
+${styles}
+body { font-family: Arial, sans-serif; margin: 20px; }
+table { border-collapse: collapse; width: 100%; }
+td, th { border: 1px solid #000; padding: 4px; }
+</style>
+</head>
+<body>
+${clone.innerHTML}
+</body>
+</html>`
+
+  return new Blob([html], { type: 'application/msword' })
+}

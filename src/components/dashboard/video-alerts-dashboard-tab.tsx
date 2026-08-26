@@ -2884,9 +2884,9 @@ export default function VideoAlertsDashboardTab({
             {/* Zone Breach Flash Cards */}
             {zoneBreaches.length > 0 && (
               <div className="space-y-2">
-                {zoneBreaches.map((breach) => (
+                {zoneBreaches.map((breach, idx) => (
                   <div
-                    key={breach.id}
+                    key={`${breach.id}-${idx}`}
                     className={cn(
                       "flex items-center justify-between gap-3 rounded-lg border-l-4 px-4 py-2.5 shadow-md cursor-pointer transition-all hover:shadow-lg",
                       breach.riskLevel === "CRITICAL"

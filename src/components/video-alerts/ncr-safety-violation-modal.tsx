@@ -13,7 +13,7 @@ import {
   ReportAlertDetails as AlertDetails,
   normalizeReportScreenshots,
   normalizeReportVideos,
-  renderElementToPdfBlob,
+  renderElementToWordBlob,
   resolveReportLocationText,
   SavedAlertArtifact,
   saveAlertArtifactBundle,
@@ -117,8 +117,8 @@ export default function NCRSafetyViolationModal({ isOpen, onClose, onSaved, driv
       const element = document.getElementById('ncr-safety-violation-content')
       if (!element) throw new Error('Form content not found')
 
-      const blob = await renderElementToPdfBlob(element)
-      const fileName = `ncr-safety-violation-${driverInfo.fleetNumber}-${Date.now()}.pdf`
+      const blob = await renderElementToWordBlob(element)
+      const fileName = `ncr-safety-violation-${driverInfo.fleetNumber}-${Date.now()}.doc`
 
       const artifact = await saveAlertArtifactBundle({
         supabase,

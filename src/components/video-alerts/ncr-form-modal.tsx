@@ -4,7 +4,18 @@ import { useEffect, useMemo, useState } from 'react'
 import Image from 'next/image'
 import { Button } from '@/components/ui/button'
 import { Loader2, Printer, X } from 'lucide-react'
-import { normalizeReportScreenshots, renderElementToPdfBlob, resolveReportLocationText, SavedAlertArtifact, saveAlertArtifactBundle } from '@/components/video-alerts/report-support'
+import { DriverDropdown } from '@/components/ui/driver-dropdown'
+import { createClient } from '@/lib/supabase/client'
+import { normalizeReportScreenshots, renderElementToWordBlob, resolveReportLocationText, SavedAlertArtifact, saveAlertArtifactBundle } from '@/components/video-alerts/report-support'
+
+type DriverOption = {
+  id: string
+  first_name: string
+  surname: string
+  fleet_number: string | null
+  cell_number: string | null
+  assigned_vehicle: { registration_number: string | null } | null
+}
 
 interface AlertDetails {
   id?: string
@@ -85,7 +96,41 @@ export default function NCRFormModal({ isOpen, onClose, onSaved, driverInfo, ale
   const [otherClassification, setOtherClassification] = useState('')
   const [riskRating, setRiskRating] = useState<'high' | 'medium' | 'low'>('high')
   const [saving, setSaving] = useState(false)
+  const [drivers, setDrivers] = useState<DriverOption[]>([])
+  const [selectedDriverId, setSelectedDriverId] = useState<string>('')
   const normalizedScreenshots = useMemo(() => normalizeReportScreenshots(alertDetails?.screenshots), [alertDetails?.screenshots])
+
+  useEffect(() => {
+    if (!isOpen) return
+    fetch('/api/drivers?all=true')
+      .then(res => res.json())
+      .then(data => {
+        if (!data.success || !data.drivers) { console.error('Error fetching drivers:', data.error || data.message); return }
+        const mapped: DriverOption[] = (data.drivers || []).map((d: any) => ({
+          id: String(d.id),
+          first_name: d.first_name || '',
+          surname: d.surname || '',
+          fleet_number: d.fleet_number || null,
+          cell_number: d.cell_number || null,
+          assigned_vehicle: d.assigned_vehicle || null,
+        }))
+        setDrivers(mapped)
+      })
+      .catch(err => { console.error('Error fetching drivers:', err); })
+  }, [isOpen])
+
+  const handleDriverChange = (driverId: string) => {
+    setSelectedDriverId(driverId)
+    const driver = drivers.find(d => d.id === driverId)
+    if (driver) {
+      setFormData(prev => ({
+        ...prev,
+        name: `${driver.first_name} ${driver.surname}`.trim() || prev.name,
+        vehicleFleetNumber: driver.fleet_number || prev.vehicleFleetNumber,
+        vehicleRegistration: driver.assigned_vehicle?.registration_number || prev.vehicleRegistration || driver.fleet_number || '',
+      }))
+    }
+  }
 
   useEffect(() => {
     if (!isOpen) return
@@ -140,6 +185,29 @@ export default function NCRFormModal({ isOpen, onClose, onSaved, driverInfo, ale
     else setRiskRating('high')
   }, [isOpen, alertDetails?.id, alertDetails?.type, driverInfo.name, driverInfo.fleetNumber, driverInfo.registration, driverInfo.department, driverInfo.timestamp, locationText])
 
+  useEffect(() => {
+    if (!selectedDriverId && drivers.length > 0) {
+      const fleetNum = formData.vehicleFleetNumber?.toUpperCase().trim()
+      if (fleetNum) {
+        const matched = drivers.find(d => d.fleet_number?.toUpperCase() === fleetNum)
+        if (matched) {
+          setSelectedDriverId(matched.id)
+          setFormData(prev => ({ ...prev, driverName: `${matched.first_name} ${matched.surname}`.trim() }))
+          return
+        }
+      }
+      if (driverInfo.name) {
+        const fullName = driverInfo.name.toLowerCase().trim()
+        const parts = fullName.split(' ')
+        const matched = drivers.find(d => {
+          const dFull = `${d.first_name} ${d.surname}`.toLowerCase()
+          return dFull === fullName || (parts.length >= 2 && d.first_name.toLowerCase() === parts[0] && d.surname.toLowerCase() === parts[parts.length - 1])
+        })
+        if (matched) setSelectedDriverId(matched.id)
+      }
+    }
+  }, [drivers, selectedDriverId, driverInfo.name, formData.vehicleFleetNumber])
+
   const toggleClassification = (value: string) => {
     setSelectedClassifications((prev) =>
       prev.includes(value) ? prev.filter((v) => v !== value) : [...prev, value]
@@ -159,8 +227,8 @@ export default function NCRFormModal({ isOpen, onClose, onSaved, driverInfo, ale
       const supabase = createClient()
       const element = document.getElementById('ncr-form-content')
       if (!element) throw new Error('Form content not found')
-      const pdfBlob = await renderElementToPdfBlob(element)
-      const fileName = `NCR-${formData.vehicleFleetNumber || 'unknown'}-${Date.now()}.pdf`
+      const pdfBlob = await renderElementToWordBlob(element)
+      const fileName = `NCR-${formData.vehicleFleetNumber || 'unknown'}-${Date.now()}.doc`
       const artifact = await saveAlertArtifactBundle({
         supabase, fileName, pdfBlob, reportType: 'NCR', driverInfo,
         alertDetails: alertDetails ? { ...alertDetails, videos: [] } : undefined,
@@ -171,6 +239,17 @@ export default function NCRFormModal({ isOpen, onClose, onSaved, driverInfo, ale
           otherClassification, riskRating,
         }
       })
+
+      if (selectedDriverId && formData.vehicleFleetNumber) {
+        const driver = drivers.find(d => d.id === selectedDriverId)
+        if (driver && driver.fleet_number !== formData.vehicleFleetNumber) {
+          await supabase
+            .from('drivers')
+            .update({ fleet_number: formData.vehicleFleetNumber })
+            .eq('id', selectedDriverId)
+        }
+      }
+
       if (onSaved) await onSaved(artifact)
       alert('NCR Report saved successfully!')
       onClose()
@@ -282,7 +361,14 @@ export default function NCRFormModal({ isOpen, onClose, onSaved, driverInfo, ale
                 <tbody>
                   <tr className="border-b border-black">
                     <td className="w-[15%] p-1 border-r border-black font-semibold" style={{ backgroundColor: '#f1f5f9' }}>Name</td>
-                    <td className="w-[35%] p-0 border-r border-black" style={{ backgroundColor: '#f9fafb' }}><CellInput value={formData.name} field="name" /></td>
+                    <td className="w-[35%] p-0 border-r border-black" style={{ backgroundColor: '#f9fafb' }}>
+                      <DriverDropdown
+                        value={selectedDriverId}
+                        onChange={handleDriverChange}
+                        drivers={drivers}
+                        placeholder="Select driver"
+                      />
+                    </td>
                     <td className="w-[15%] p-1 border-r border-black font-semibold" style={{ backgroundColor: '#f1f5f9' }}>Department</td>
                     <td className="w-[35%] p-0" style={{ backgroundColor: '#f9fafb' }}><CellInput value={formData.department} field="department" /></td>
                   </tr>

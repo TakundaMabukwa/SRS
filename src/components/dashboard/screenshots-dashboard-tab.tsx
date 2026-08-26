@@ -132,113 +132,90 @@ export default function ScreenshotsDashboardTab({
   }, [supabase]);
 
   const fetchData = useCallback(async () => {
-    // Prevent concurrent fetches
     if (fetchInProgressRef.current) return;
     fetchInProgressRef.current = true;
-    
+
     try {
       const dbVehicles = await fetchDbOnce();
       if (!activeRef.current) return;
 
-      // Fetch online status (returns ALL devices with plateName + deviceId + online)
       let onlineRes = await fetch('/api/mettax/online', {
         method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
         cache: "no-store", signal: AbortSignal.timeout(15000),
       }).catch(() => null);
       if (!activeRef.current) return;
 
-      // Build fleet/reg -> {deviceId, online, cameras} map from EPS plateNames
-      // plateName format: "FLEET - REG" e.g. "FM02 - LDG095MP"
-      const regMap = new Map<string, { deviceId: string; online: boolean; cameras: number }>();
-      let onlineCount = 0;
-      if (onlineRes && onlineRes.ok) {
-        const onlineData = await onlineRes.json();
-        if (onlineData.success && onlineData.data?.devices) {
-          for (const d of onlineData.data.devices) {
-            if (!d.deviceId) continue;
-            if (d.online) onlineCount++;
-            const plate = (d.plateName || "").trim();
-            const parts = plate.split(" - ");
-            const fleetNum = (parts[0] || "").trim();
-            const regNum = (parts[1] || "").trim();
-            if (fleetNum) {
-              regMap.set(fleetNum.toUpperCase(), { deviceId: d.deviceId, online: d.online === true, cameras: d.cameras || 1 });
-            }
-            if (regNum) {
-              regMap.set(regNum.toUpperCase(), { deviceId: d.deviceId, online: d.online === true, cameras: d.cameras || 1 });
-            }
-          }
-        }
-      }
+      let onlineData = onlineRes ? await onlineRes.json().catch(() => null) : null;
 
-      // If all offline, retry once
-      if (onlineCount === 0 && regMap.size > 0) {
+      // Retry once after 2s if first response had issues
+      if (!onlineData || !onlineData.success || !onlineData.data?.devices?.length) {
         await new Promise(r => setTimeout(r, 2000));
         onlineRes = await fetch('/api/mettax/online', {
           method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
           cache: "no-store", signal: AbortSignal.timeout(15000),
         }).catch(() => null);
-        if (onlineRes && onlineRes.ok) {
-          const onlineData = await onlineRes.json();
-          if (onlineData.success && onlineData.data?.devices) {
-            regMap.clear();
-            onlineCount = 0;
-            for (const d of onlineData.data.devices) {
-              if (!d.deviceId) continue;
-              if (d.online) onlineCount++;
-              const plate = (d.plateName || "").trim();
-              const parts = plate.split(" - ");
-              const fleetNum = (parts[0] || "").trim();
-              const regNum = (parts[1] || "").trim();
-              if (fleetNum) {
-                regMap.set(fleetNum.toUpperCase(), { deviceId: d.deviceId, online: d.online === true, cameras: d.cameras || 1 });
-              }
-              if (regNum) {
-                regMap.set(regNum.toUpperCase(), { deviceId: d.deviceId, online: d.online === true, cameras: d.cameras || 1 });
-              }
-            }
-          }
+        onlineData = onlineRes ? await onlineRes.json().catch(() => null) : null;
+      }
+
+      // Build regMap: fleet OR reg -> {deviceId, online, cameras}
+      const regMap = new Map<string, { deviceId: string; online: boolean; cameras: number }>();
+      let onlineCount = 0;
+      if (onlineData?.success && onlineData.data?.devices) {
+        for (const d of onlineData.data.devices) {
+          if (!d.deviceId) continue;
+          const isOnline = d.online === true || d.online === "true";
+          if (isOnline) onlineCount++;
+          const plate = (d.plateName || "").trim();
+          const parts = plate.split(" - ");
+          const fleetNum = (parts[0] || "").trim();
+          const regNum = (parts[1] || "").trim();
+          if (fleetNum) regMap.set(fleetNum.toUpperCase(), { deviceId: d.deviceId, online: isOnline, cameras: d.cameras || 1 });
+          if (regNum) regMap.set(regNum.toUpperCase(), { deviceId: d.deviceId, online: isOnline, cameras: d.cameras || 1 });
         }
       }
 
-      // Build device lookup by Mettax deviceId (for camera_sim_id fallback)
-      const deviceIdMap = new Map<string, { deviceId: string; online: boolean; cameras: number }>();
-      for (const [key, val] of regMap) {
-        deviceIdMap.set(val.deviceId, val);
+      // Build deviceIdMap only for camera_sim_id -> Mettax deviceId mapping (NOT for online status)
+      const deviceIdMap = new Map<string, string>();
+      if (onlineData?.success && onlineData.data?.devices) {
+        for (const d of onlineData.data.devices) {
+          if (d.deviceId) deviceIdMap.set(d.deviceId, d.deviceId);
+        }
       }
 
-      // Build vehicle cards from DB, matching fleet_number or registration_number -> plateName
       const matchedDeviceIds: string[] = [];
       const prevCards = prevCardsRef.current;
-      
-      // Track offline confirmations — don't mark offline unless confirmed multiple times
-      if (onlineCount === 0 && regMap.size > 0) {
-        offlineConfirmRef.current++;
-      } else {
-        offlineConfirmRef.current = 0;
-      }
-      const trustOnlineData = onlineCount > 0 || offlineConfirmRef.current >= 2;
-      
+
       const built: VehicleCard[] = dbVehicles.map((v) => {
-        const fleetMatch = regMap.get((v.fleet_number || "").toUpperCase());
-        const regMatch = regMap.get((v.registration_number || "").toUpperCase());
-        // Fallback: match camera_sim_id directly to Mettax deviceId
-        const camMatch = (v.camera_sim_id || "").trim() ? deviceIdMap.get((v.camera_sim_id || "").trim()) : undefined;
-        const match = fleetMatch || regMatch || camMatch;
-        const deviceId = match ? match.deviceId : null;
-        if (deviceId) {
-          matchedDeviceIds.push(deviceId);
+        const fleetKey = (v.fleet_number || "").toUpperCase().trim();
+        const regKey = (v.registration_number || "").toUpperCase().trim();
+        const camKey = (v.camera_sim_id || "").trim();
+
+        // Primary match: fleet OR reg key in regMap (strict - has online status)
+        let fleetMatch = fleetKey ? regMap.get(fleetKey) : undefined;
+        let regMatch = regKey ? regMap.get(regKey) : undefined;
+        const match = fleetMatch || regMatch;
+
+        // Only use camMatch if fleet/reg didn't match AND camera_sim_id exactly equals a Mettax deviceId
+        // AND the matched device's fleet/reg also matches (to prevent cross-matching)
+        let deviceId: string | null = null;
+        if (match) {
+          deviceId = match.deviceId;
+        } else if (camKey && deviceIdMap.has(camKey)) {
+          // camMatch only for deviceId lookup, NOT online status
+          deviceId = camKey;
         }
-        
-        // Preserve previous online status and images
-        const prevCard = prevCards.find((c) => 
+
+        if (deviceId) matchedDeviceIds.push(deviceId);
+
+        const prevCard = prevCards.find((c) =>
           c.registration === v.registration_number ||
           c.fleetNumber === v.fleet_number ||
-          c.deviceId === deviceId
+          (deviceId && c.deviceId === deviceId)
         );
-        // Only trust online data if we got actual online devices, or confirmed offline multiple times
-        const online = match && trustOnlineData ? match.online : (prevCard?.online ?? true);
-        
+
+        // Only use Mettax online status if we got a fleet/reg match. camMatch vehicles show offline unless confirmed.
+        const online = match ? match.online : false;
+
         return {
           registration: v.registration_number,
           fleetNumber: v.fleet_number,
@@ -252,6 +229,11 @@ export default function ScreenshotsDashboardTab({
           ch2Time: prevCard?.ch2Time || null,
         };
       });
+
+      console.log("[screenshots] Mettax devices:", onlineData?.data?.devices?.length || 0, "regMap online:", onlineCount, "dbVehicles:", dbVehicles.length);
+      console.log("[screenshots] fleet/reg matched:", built.filter(c => c.online).length, "offline:", built.filter(c => !c.online).length);
+      console.log("[screenshots] regMap keys sample:", Array.from(regMap.keys()).slice(0, 5));
+      console.log("[screenshots] dbVehicles sample:", dbVehicles.slice(0, 3).map(v => ({ fleet: v.fleet_number, reg: v.registration_number })));
 
       // PHASE A — Show cached images IMMEDIATELY, then fire capture for vehicles without screenshots
       prevCardsRef.current = built;

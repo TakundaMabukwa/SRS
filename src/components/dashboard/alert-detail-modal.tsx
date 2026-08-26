@@ -79,9 +79,12 @@ function useReverseGeocode(selectedAlert: any, isOpen: boolean) {
       { lat: alert?.location?.latitude, lng: alert?.location?.longitude },
       { lat: alert?.metadata?.latitude, lng: alert?.metadata?.longitude },
       { lat: alert?.metadata?.locationFix?.latitude, lng: alert?.metadata?.locationFix?.longitude },
+      { lat: alert?.metadata?.gps?.latitude, lng: alert?.metadata?.gps?.longitude },
+      { lat: alert?.metadata?.location?.latitude, lng: alert?.metadata?.location?.longitude },
       { lat: alert?.latitude, lng: alert?.longitude },
       { lat: alert?.lat, lng: alert?.lon || alert?.lng },
       { lat: alert?.gps?.latitude, lng: alert?.gps?.longitude },
+      { lat: alert?.speedAlert?.latitude, lng: alert?.speedAlert?.longitude },
     ];
     for (const pair of pairs) {
       const lat = toFiniteNumber(pair.lat);
@@ -558,9 +561,11 @@ export function AlertDetailModal({
     setDerivedAlertScreenshots([]);
     setSelectedAlertPlaybackVideos([]);
 
-    // Auto-open Map tab for telematics alerts (no video, focus on location/speed)
+    // Auto-open Map tab for telematics alerts and speed alerts (focus on location/speed)
     const sourceType = String(selectedAlert?.source_type || "").trim().toLowerCase();
-    if (sourceType === "telematics") {
+    const alertType = String(selectedAlert?.type || selectedAlert?.alert_type || "").toLowerCase();
+    const isSpeedAlert = /speed/i.test(alertType) || (selectedAlert?.speed != null && selectedAlert?.speed > 0);
+    if (sourceType === "telematics" || isSpeedAlert) {
       setActiveTab("map");
     } else {
       setActiveTab("screenshots");
@@ -1167,30 +1172,38 @@ export function AlertDetailModal({
                     <h3 className="text-lg font-semibold text-slate-900 mb-4">
                       Alert Location & Geotab Zones
                     </h3>
-                    {/* Telematics alert: show speed prominently */}
-                    {String(selectedAlert?.source_type || "").trim().toLowerCase() === "telematics" && (
-                      <div className="mb-4 flex items-center gap-4 rounded-lg border border-violet-200 bg-violet-50 p-3">
-                        <div className="flex items-center gap-2 text-sm">
-                          <Gauge className="w-4 h-4 text-violet-600" />
-                          <span className="font-semibold text-violet-900">Speed:</span>
-                          <span className="text-violet-800">{selectedAlertSpeedDisplay}</span>
-                        </div>
-                        {selectedAlert?.distance != null && (
-                          <div className="flex items-center gap-2 text-sm">
-                            <Navigation className="w-4 h-4 text-violet-600" />
-                            <span className="font-semibold text-violet-900">Distance:</span>
-                            <span className="text-violet-800">{Number(selectedAlert.distance).toFixed(0)}m</span>
+                    {/* Speed alert: show speed prominently */}
+                    {(() => {
+                      const alertType = String(selectedAlert?.type || selectedAlert?.alert_type || "").toLowerCase();
+                      const isSpeedAlert = /speed/i.test(alertType) || (selectedAlert?.speed != null && selectedAlert?.speed > 0);
+                      const isTelematics = String(selectedAlert?.source_type || "").trim().toLowerCase() === "telematics";
+                      return (isSpeedAlert || isTelematics) && (
+                        <>
+                          <div className="mb-4 flex items-center gap-4 rounded-lg border border-violet-200 bg-violet-50 p-3">
+                            <div className="flex items-center gap-2 text-sm">
+                              <Gauge className="w-4 h-4 text-violet-600" />
+                              <span className="font-semibold text-violet-900">Speed:</span>
+                              <span className="text-violet-800">{selectedAlertSpeedDisplay}</span>
+                            </div>
+                            {selectedAlert?.distance != null && (
+                              <div className="flex items-center gap-2 text-sm">
+                                <Navigation className="w-4 h-4 text-violet-600" />
+                                <span className="font-semibold text-violet-900">Distance:</span>
+                                <span className="text-violet-800">{Number(selectedAlert.distance).toFixed(0)}m</span>
+                              </div>
+                            )}
+                            {selectedAlert?.duration_seconds != null && (
+                              <div className="flex items-center gap-2 text-sm">
+                                <Clock className="w-4 h-4 text-violet-600" />
+                                <span className="font-semibold text-violet-900">Duration:</span>
+                                <span className="text-violet-800">{Math.round(selectedAlert.duration_seconds)}s</span>
+                              </div>
+                            )}
                           </div>
-                        )}
-                        {selectedAlert?.duration_seconds != null && (
-                          <div className="flex items-center gap-2 text-sm">
-                            <Clock className="w-4 h-4 text-violet-600" />
-                            <span className="font-semibold text-violet-900">Duration:</span>
-                            <span className="text-violet-800">{Math.round(selectedAlert.duration_seconds)}s</span>
-                          </div>
-                        )}
-                      </div>
-                    )}
+                          <p className="text-xs text-slate-500 mb-4">Showing vehicle path and events ±15 minutes around alert time. Speed events are shown as red markers.</p>
+                        </>
+                      );
+                    })()}
                     {selectedAlertCoordinates ? (
                       <div className="space-y-3">
                         <div className="flex items-center gap-2 text-sm text-slate-600">
