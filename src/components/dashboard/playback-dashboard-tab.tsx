@@ -9,14 +9,12 @@ import { createClient } from "@/lib/supabase/client";
 import { UniversalVideoPlayer } from "./universal-video-player";
 import { useCostCenters } from "@/context/cost-centers-context";
 
-const EPS_API = "/api/video-server";
 const SOUTH_AFRICA_TIME_ZONE = "Africa/Johannesburg";
 
 type DbVehicle = {
   registration_number: string;
   fleet_number: string;
   cost_centres: string;
-  camera_sim_id: string;
 };
 
 type PlaybackVehicle = {
@@ -150,7 +148,7 @@ export default function PlaybackDashboardTab({ selectedCostCenterIds = [] }: Pla
   const fetchVehicles = useCallback(async (): Promise<PlaybackVehicle[]> => {
     const { data: vehicleRows, error: vehiclesError } = await supabase
       .from("vehiclesc")
-      .select("registration_number, fleet_number, cost_centres, camera_sim_id");
+      .select("registration_number, fleet_number, cost_centres");
 
     if (vehiclesError) throw new Error(vehiclesError.message || "Failed to load vehicles");
 
@@ -158,15 +156,15 @@ export default function PlaybackDashboardTab({ selectedCostCenterIds = [] }: Pla
     const seen = new Set<string>();
 
     for (const row of vehicleRows || []) {
-      const simId = String((row as DbVehicle).camera_sim_id || "").trim();
-      if (!simId || seen.has(simId)) continue;
-      seen.add(simId);
+      const reg = String((row as any).registration_number || "").trim().toUpperCase();
+      if (!reg || seen.has(reg)) continue;
+      seen.add(reg);
       catalogVehicles.push({
-        vehicleId: simId,
-        registration: String((row as DbVehicle).registration_number || "").trim(),
-        fleetNumber: String((row as DbVehicle).fleet_number || "").trim(),
-        costCenter: String((row as DbVehicle).cost_centres || "").trim(),
-        deviceId: simId,
+        vehicleId: reg,
+        registration: reg,
+        fleetNumber: String((row as any).fleet_number || "").trim(),
+        costCenter: String((row as any).cost_centres || "").trim(),
+        deviceId: "",
         online: false,
       });
     }
@@ -185,24 +183,48 @@ export default function PlaybackDashboardTab({ selectedCostCenterIds = [] }: Pla
         if (res && res.ok) {
           return res.json().then((data: any) => {
             if (data.success && data.data?.devices) {
-              const deviceMap = new Map<string, boolean>();
+              const regMap = new Map<string, { deviceId: string; online: boolean }>();
               for (const d of data.data.devices) {
-                if (d.deviceId) {
-                  deviceMap.set(d.deviceId, d.online === true);
-                  if (d.online) onlineCount++;
+                if (!d.deviceId) continue;
+                const plate = (d.plateName || "").trim();
+                const parts = plate.split(" - ");
+                const fleetNum = (parts[0] || "").trim().toUpperCase();
+                const regNum = (parts[1] || "").trim().toUpperCase();
+                if (fleetNum) regMap.set(fleetNum, { deviceId: d.deviceId, online: d.online === true });
+                if (regNum) regMap.set(regNum, { deviceId: d.deviceId, online: d.online === true });
+                if (d.online) onlineCount++;
+              }
+              for (const v of catalogVehicles) {
+                const match = regMap.get(v.fleetNumber.toUpperCase()) || regMap.get(v.registration);
+                if (match) {
+                  v.deviceId = match.deviceId;
+                  v.online = match.online;
                 }
               }
-              // Only apply if we got actual online devices, or confirmed offline multiple times
-              const trustData = onlineCount > 0 || offlineConfirmRef.current >= 2;
-              if (trustData) {
-                for (const v of catalogVehicles) {
-                  if (deviceMap.has(v.deviceId)) v.online = deviceMap.get(v.deviceId) || false;
-                }
-              }
+              return true;
             }
-          }).catch(() => {});
+            return false;
+          });
         }
+        return Promise.resolve(false);
       };
+
+      const ok = await applyOnlineData(onlineRes);
+      if (!ok) {
+        await new Promise((r) => setTimeout(r, 1500));
+        onlineRes = await fetch('/api/mettax/online', {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: "{}",
+          cache: "no-store",
+          signal: AbortSignal.timeout(10000),
+        }).catch(() => null);
+        await applyOnlineData(onlineRes);
+      }
+    } catch {}
+
+    return catalogVehicles;
+  }, [supabase]);
 
       await applyOnlineData(onlineRes);
 
@@ -315,7 +337,7 @@ export default function PlaybackDashboardTab({ selectedCostCenterIds = [] }: Pla
     const range = sastDateToRange(selectedDate);
 
     try {
-      const res = await fetch(`${EPS_API}/playback/history-list`, {
+      const res = await fetch('/api/mettax/playback/files', {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -356,7 +378,7 @@ export default function PlaybackDashboardTab({ selectedCostCenterIds = [] }: Pla
     const endCombined = `${selectedDate} ${endTime}`;
 
     try {
-      const res = await fetch(`${EPS_API}/playback/history-replay`, {
+      const res = await fetch('/api/mettax/playback/replay', {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
