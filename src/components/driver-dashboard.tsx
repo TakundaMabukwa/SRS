@@ -217,7 +217,76 @@ export default function DriverDashboard() {
 
   const handleInputChange = (field: string, value: string) => {
     setFormData((prev) => ({ ...prev, [field]: value }))
+}
+
+function DriverPerformanceTab() {
+  const [scores, setScores] = useState<any[]>([])
+  const [loading, setLoading] = useState(true)
+
+  const fetchScores = async () => {
+    try {
+      const res = await fetch('/api/video-server/driver-scoring')
+      const data = await res.json()
+      setScores(data?.scores || [])
+    } catch { setScores([]) }
   }
+
+  useState(() => { fetchScores().finally(() => setLoading(false)) })
+
+  const getScoreColor = (score: number) => {
+    if (score >= 80) return 'from-green-500 to-emerald-600'
+    if (score >= 60) return 'from-yellow-500 to-amber-600'
+    return 'from-red-500 to-rose-600'
+  }
+
+  const getScoreBg = (score: number) => {
+    if (score >= 80) return 'bg-green-50 border-green-200'
+    if (score >= 60) return 'bg-yellow-50 border-yellow-200'
+    return 'bg-red-50 border-red-200'
+  }
+
+  if (loading) return <div className="p-6 text-center text-gray-500">Loading scores...</div>
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <h3 className="text-lg font-semibold text-gray-900">Driver Performance</h3>
+        <Button size="sm" variant="outline" onClick={() => fetchScores()}>Refresh</Button>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+        {scores.map((s) => (
+          <div key={s.fleet_number} className={`rounded-lg border-2 p-4 ${getScoreBg(s.score)} transition-all hover:shadow-md`}>
+            <div className="flex items-center justify-between mb-3">
+              <div>
+                <h4 className="font-bold text-gray-900 text-lg">{s.fleet_number}</h4>
+                <p className="text-xs text-gray-500">{s.registration_number || 'N/A'}</p>
+              </div>
+              <div className={`w-14 h-14 rounded-full bg-gradient-to-br ${getScoreColor(s.score)} flex items-center justify-center shadow-lg`}>
+                <span className="text-white font-bold text-lg">{s.score}</span>
+              </div>
+            </div>
+            {s.driver && <p className="text-sm text-gray-700 mb-2">Driver: {s.driver}</p>}
+            {s.alert_types && s.alert_types.length > 0 && (
+              <div className="mt-2 space-y-1">
+                {s.alert_types.map((a: any, i: number) => (
+                  <div key={i} className="flex justify-between text-xs">
+                    <span className="text-gray-600 truncate">{a.alert_name}</span>
+                    <span className="text-gray-400 ml-2">{a.count}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        ))}
+        {scores.length === 0 && (
+          <div className="col-span-full text-center py-12 text-gray-500">
+            No vehicle scores found. Run initialization from the backend.
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
 
   const tabs = [
     { id: "view-drivers", label: "View Drivers", icon: Eye },
@@ -558,15 +627,7 @@ export default function DriverDashboard() {
         )}
 
         {activeTab === "driver-score" && (
-          <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-            <div className="text-center py-12">
-              <div className="w-16 h-16 bg-gradient-to-br from-cyan-500 to-blue-600 rounded-full flex items-center justify-center mx-auto mb-4">
-                <Star className="w-8 h-8 text-white" />
-              </div>
-              <h3 className="text-lg font-semibold text-gray-900 mb-2">Driver Score</h3>
-              <p className="text-gray-600">Driver scoring functionality will be implemented here.</p>
-            </div>
-          </div>
+          <DriverPerformanceTab />
         )}
 
         {activeTab === "driver-monitoring-config" && (

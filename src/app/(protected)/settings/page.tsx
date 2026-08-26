@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -71,6 +71,8 @@ type DriverConfigCriterion = {
   is_active: boolean;
   created_at: string;
   updated_at: string;
+  nrc_deduction: boolean;
+  incidents_threshold: number;
 };
 
 export default function SettingsPage() {
@@ -447,13 +449,81 @@ function AlertConfigSection() {
   );
 }
 
+function AlertSearchDropdown({ selected, onAdd, onRemove, alertDefinitions }: { selected: string[]; onAdd: (name: string) => void; onRemove: (name: string) => void; alertDefinitions: AlertDefinition[] }) {
+  const [search, setSearch] = useState("");
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  const filtered = alertDefinitions
+    .filter(ad => !selected.includes(ad.name))
+    .filter(ad => {
+      if (!search) return true;
+      const q = search.toLowerCase();
+      return ad.name.toLowerCase().includes(q) || ad.category.toLowerCase().includes(q);
+    })
+    .sort((a, b) => {
+      const q = search.toLowerCase();
+      const aStarts = a.name.toLowerCase().startsWith(q) ? 0 : 1;
+      const bStarts = b.name.toLowerCase().startsWith(q) ? 0 : 1;
+      return aStarts - bStarts || a.name.localeCompare(b.name);
+    });
+
+  return (
+    <div ref={ref} className="relative">
+      <div className="border rounded px-2 py-1 min-h-[38px] flex flex-wrap gap-1 cursor-text" onClick={() => setOpen(true)}>
+        {selected.map(s => (
+          <Badge key={s} variant="secondary" className="text-xs gap-1">
+            {s}
+            <button type="button" className="ml-0.5 text-red-500 hover:text-red-700 font-bold" onClick={(e) => { e.stopPropagation(); onRemove(s); }}>×</button>
+          </Badge>
+        ))}
+        <input
+          className="flex-1 min-w-[80px] outline-none text-sm border-none bg-transparent"
+          placeholder={selected.length ? "" : "Search alerts..."}
+          value={search}
+          onChange={(e) => { setSearch(e.target.value); setOpen(true); }}
+          onFocus={() => setOpen(true)}
+        />
+      </div>
+      {open && filtered.length > 0 && (
+        <div className="absolute z-50 mt-1 w-full max-h-[200px] overflow-y-auto bg-white border rounded shadow-lg">
+          {filtered.map(ad => (
+            <div
+              key={ad.id}
+              className="px-3 py-2 hover:bg-blue-50 cursor-pointer text-sm flex justify-between"
+              onClick={() => { onAdd(ad.name); setSearch(""); setOpen(false); }}
+            >
+              <span>{ad.name}</span>
+              <span className="text-xs text-gray-400">{ad.category}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function DriverConfigSection() {
   const [criteria, setCriteria] = useState<DriverConfigCriterion[]>([]);
+  const [alertDefinitions, setAlertDefinitions] = useState<AlertDefinition[]>([]);
   const [loading, setLoading] = useState(true);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editForm, setEditForm] = useState<Partial<DriverConfigCriterion>>({});
   const [showAddForm, setShowAddForm] = useState(false);
-  const [addForm, setAddForm] = useState({ name: "", selected_weighting: 10, risk_tiers: 4, statuses: "" as string });
+  const [addForm, setAddForm] = useState({ 
+    name: "", 
+    selected_weighting: 10, 
+    risk_tiers: 4, 
+    statuses: [] as string[],
+    nrc_deduction: false,
+    incidents_threshold: 1,
+  });
 
   const fetchCriteria = useCallback(async () => {
     try {
@@ -465,10 +535,20 @@ function DriverConfigSection() {
     }
   }, []);
 
+  const fetchAlertDefinitions = useCallback(async () => {
+    try {
+      const res = await fetch(`${ALERT_CONFIG_API}/definitions`, { cache: "no-store" });
+      const data = await res.json();
+      setAlertDefinitions(data?.data || []);
+    } catch {
+      setAlertDefinitions([]);
+    }
+  }, []);
+
   useEffect(() => {
     setLoading(true);
-    fetchCriteria().finally(() => setLoading(false));
-  }, [fetchCriteria]);
+    Promise.all([fetchCriteria(), fetchAlertDefinitions()]).finally(() => setLoading(false));
+  }, [fetchCriteria, fetchAlertDefinitions]);
 
   const handleSaveEdit = async () => {
     if (!editingId) return;
@@ -496,12 +576,14 @@ function DriverConfigSection() {
           name: addForm.name,
           selected_weighting: addForm.selected_weighting,
           risk_tiers: addForm.risk_tiers,
-          statuses: addForm.statuses.split(",").map((s) => s.trim()).filter(Boolean),
+          statuses: addForm.statuses,
+          nrc_deduction: addForm.nrc_deduction,
+          incidents_threshold: addForm.incidents_threshold,
         }),
       });
       toast.success("Criterion added");
       setShowAddForm(false);
-      setAddForm({ name: "", selected_weighting: 10, risk_tiers: 4, statuses: "" });
+      setAddForm({ name: "", selected_weighting: 10, risk_tiers: 4, statuses: [], nrc_deduction: false, incidents_threshold: 1 });
       fetchCriteria();
     } catch {
       toast.error("Failed to add");
@@ -534,26 +616,42 @@ function DriverConfigSection() {
       {showAddForm && (
         <Card>
           <CardContent className="p-4 space-y-3">
-            <div className="grid grid-cols-4 gap-3">
+            <div className="grid grid-cols-5 gap-3">
               <div>
                 <label className="text-sm font-medium">Name</label>
                 <Input value={addForm.name} onChange={(e) => setAddForm({ ...addForm, name: e.target.value })} placeholder="e.g. Speeding" />
               </div>
               <div>
-                <label className="text-sm font-medium">Weighting (%)</label>
+                <label className="text-sm font-medium">Weighting</label>
                 <Input type="number" value={addForm.selected_weighting} onChange={(e) => setAddForm({ ...addForm, selected_weighting: Number(e.target.value) })} />
               </div>
               <div>
-                <label className="text-sm font-medium">Risk Tiers</label>
-                <Input type="number" value={addForm.risk_tiers} onChange={(e) => setAddForm({ ...addForm, risk_tiers: Number(e.target.value) })} />
+                <label className="text-sm font-medium">Incidents</label>
+                <Input type="number" value={addForm.incidents_threshold} min={1} onChange={(e) => setAddForm({ ...addForm, incidents_threshold: Number(e.target.value) })} />
               </div>
-              <div>
-                <label className="text-sm font-medium">Statuses (comma-separated)</label>
-                <Input value={addForm.statuses} onChange={(e) => setAddForm({ ...addForm, statuses: e.target.value })} placeholder="e.g. Speed Exception 1, Speed Exception 2" />
+              <div className="flex flex-col">
+                <label className="text-sm font-medium mb-1">NCR</label>
+                <select 
+                  className="border rounded px-2 py-1.5 h-[38px]"
+                  value={addForm.nrc_deduction ? "yes" : "no"}
+                  onChange={(e) => setAddForm({ ...addForm, nrc_deduction: e.target.value === "yes" })}
+                >
+                  <option value="no">No</option>
+                  <option value="yes">Yes</option>
+                </select>
+              </div>
+              <div className="col-span-2">
+                <label className="text-sm font-medium">Statuses</label>
+                <AlertSearchDropdown
+                  selected={addForm.statuses}
+                  alertDefinitions={alertDefinitions}
+                  onAdd={(name) => setAddForm({ ...addForm, statuses: [...addForm.statuses, name] })}
+                  onRemove={(name) => setAddForm({ ...addForm, statuses: addForm.statuses.filter(x => x !== name) })}
+                />
               </div>
             </div>
             <div className="flex gap-2">
-              <Button size="sm" onClick={handleAdd}><Save className="w-4 h-4 mr-1" /> Add</Button>
+              <Button size="sm" onClick={handleAdd} disabled={!addForm.name}><Save className="w-4 h-4 mr-1" /> Add</Button>
               <Button size="sm" variant="outline" onClick={() => setShowAddForm(false)}>Cancel</Button>
             </div>
           </CardContent>
@@ -567,7 +665,7 @@ function DriverConfigSection() {
               <tr className="border-b bg-gray-50 text-left text-gray-500">
                 <th className="py-3 px-4">Criterion</th>
                 <th>Weighting</th>
-                <th>Risk Tiers</th>
+                <th>NCR</th>
                 <th>Incidents</th>
                 <th>Statuses</th>
                 <th>Actions</th>
@@ -592,23 +690,35 @@ function DriverConfigSection() {
                   </td>
                   <td>
                     {editingId === c.id ? (
-                      <Input type="number" value={editForm.risk_tiers ?? c.risk_tiers} onChange={(e) => setEditForm({ ...editForm, risk_tiers: Number(e.target.value) })} className="h-8 w-20" />
+                      <select 
+                        className="border rounded px-1 py-0.5 h-8"
+                        value={editForm.nrc_deduction ? "yes" : "no"}
+                        onChange={(e) => setEditForm({ ...editForm, nrc_deduction: e.target.value === "yes" })}
+                      >
+                        <option value="no">No</option>
+                        <option value="yes">Yes</option>
+                      </select>
                     ) : (
-                      c.risk_tiers
-                    )}
-                  </td>
-                  <td>
-                    {editingId === c.id ? (
-                      <Input type="number" value={editForm.no_incidents ?? c.no_incidents} onChange={(e) => setEditForm({ ...editForm, no_incidents: Number(e.target.value) })} className="h-8 w-20" />
-                    ) : (
-                      <span className={cn("px-2 py-1 rounded text-xs font-medium", c.no_incidents > 10 ? "bg-red-100 text-red-700" : c.no_incidents > 5 ? "bg-yellow-100 text-yellow-700" : "bg-green-100 text-green-700")}>
-                        {c.no_incidents}
+                      <span className={cn("px-2 py-1 rounded text-xs font-medium", c.nrc_deduction ? "bg-purple-100 text-purple-700" : "bg-gray-100 text-gray-700")}>
+                        {c.nrc_deduction ? "Yes" : "No"}
                       </span>
                     )}
                   </td>
                   <td>
                     {editingId === c.id ? (
-                      <Input value={(editForm.statuses || []).join(", ")} onChange={(e) => setEditForm({ ...editForm, statuses: e.target.value.split(",").map((s: string) => s.trim()) })} className="h-8" placeholder="Status 1, Status 2" />
+                      <Input type="number" value={editForm.incidents_threshold ?? c.incidents_threshold ?? 1} min={1} onChange={(e) => setEditForm({ ...editForm, incidents_threshold: Number(e.target.value) })} className="h-8 w-20" />
+                    ) : (
+                      c.incidents_threshold ?? 1
+                    )}
+                  </td>
+                  <td>
+                    {editingId === c.id ? (
+                      <AlertSearchDropdown
+                        selected={editForm.statuses || c.statuses}
+                        alertDefinitions={alertDefinitions}
+                        onAdd={(name) => setEditForm({ ...editForm, statuses: [...(editForm.statuses || c.statuses), name] })}
+                        onRemove={(name) => setEditForm({ ...editForm, statuses: (editForm.statuses || c.statuses).filter((x: string) => x !== name) })}
+                      />
                     ) : (
                       <div className="flex flex-wrap gap-1">
                         {(c.statuses || []).slice(0, 2).map((s, i) => (
@@ -629,7 +739,7 @@ function DriverConfigSection() {
                         </>
                       ) : (
                         <>
-                          <Button variant="ghost" size="sm" onClick={() => { setEditingId(c.id); setEditForm({ name: c.name, selected_weighting: c.selected_weighting, risk_tiers: c.risk_tiers, no_incidents: c.no_incidents, statuses: c.statuses }); }}>
+                          <Button variant="ghost" size="sm" onClick={() => { setEditingId(c.id); setEditForm({ name: c.name, selected_weighting: c.selected_weighting, statuses: c.statuses, nrc_deduction: c.nrc_deduction, incidents_threshold: c.incidents_threshold }); }}>
                             <Pencil className="w-3 h-3" />
                           </Button>
                           <Button variant="ghost" size="sm" onClick={() => handleDelete(c.id)}>
