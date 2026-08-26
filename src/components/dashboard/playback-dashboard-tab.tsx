@@ -307,6 +307,7 @@ export default function PlaybackDashboardTab({ selectedCostCenterIds = [] }: Pla
     const range = sastDateToRange(selectedDate);
 
     try {
+      // First try gallery for video files
       const res = await fetch('/api/mettax/playback/files', {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -330,6 +331,12 @@ export default function PlaybackDashboardTab({ selectedCostCenterIds = [] }: Pla
         setLatestFootage(fileList[fileList.length - 1].endTime || fileList[fileList.length - 1].startTime);
         setStartTime(fileList[0].startTime.split(" ")[1] || "00:00:00");
         setEndTime(fileList[fileList.length - 1].endTime?.split(" ")[1] || "23:59:59");
+      } else {
+        // No files found - set default time range for direct playback
+        setEarliestFootage(range.start);
+        setLatestFootage(range.end);
+        setStartTime("00:00:00");
+        setEndTime("23:59:59");
       }
     } catch (e: any) {
       setFilesSearched(true);
