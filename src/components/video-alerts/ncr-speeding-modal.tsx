@@ -183,8 +183,8 @@ export default function NCRSpeedingModal({ isOpen, onClose, onSaved, driverInfo,
             </div>
 
             <div className="grid grid-cols-12 border-b border-black">
-              <div className="col-span-1 border-r border-black p-2 [writing-mode:vertical-rl] rotate-180 text-center font-bold">A: INCIDENT / NON-CONFORMANCE REPORT</div>
-              <div className="col-span-11">
+              <div className="col-span-2 border-r border-black p-2 bg-slate-50 text-center font-bold text-xs" style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}>A: INCIDENT / NON-CONFORMANCE REPORT</div>
+              <div className="col-span-10">
                 <div className="border-b border-black p-2 font-bold bg-slate-100">Implicated Entity Information</div>
                 <div className="grid grid-cols-8 border-b border-black text-sm">
                   <div className="col-span-1 border-r border-black p-2 bg-slate-100">Name</div>
@@ -249,8 +249,8 @@ export default function NCRSpeedingModal({ isOpen, onClose, onSaved, driverInfo,
             </div>
 
             <div className="grid grid-cols-12 border-b border-black">
-              <div className="col-span-1 border-r border-black p-2 [writing-mode:vertical-rl] rotate-180 text-center font-bold">B: INVESTIGATION</div>
-              <div className="col-span-11">
+              <div className="col-span-2 border-r border-black p-2 bg-slate-50 text-center font-bold text-xs" style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}>B: INVESTIGATION</div>
+              <div className="col-span-10">
                 <div className="border-b border-black p-2 font-bold bg-slate-100">Root Cause Analysis</div>
                 <div className="grid grid-cols-5 border-b border-black text-sm">
                   <div className={getRootCauseCellClass('operating_without_authority')} onClick={() => toggleRootCause('operating_without_authority')}>Operating without authority</div>

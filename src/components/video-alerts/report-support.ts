@@ -575,35 +575,50 @@ export async function renderElementToPdfBlob(element: HTMLElement): Promise<Blob
     const displayText = value || placeholder || ''
     const textDiv = document.createElement('div')
     textDiv.textContent = displayText
-    textDiv.style.cssText = 'border: 1px solid #ccc; padding: 4px 6px; background: white; min-height: 20px; font-size: 11px; line-height: 1.4;'
+    textDiv.style.cssText = 'border: 1px solid #999; padding: 6px 8px; background: white; min-height: 24px; font-size: 12px; line-height: 1.5; color: #000; word-wrap: break-word;'
     parent.insertBefore(textDiv, next)
     replacements.push({ el: input as HTMLElement, parent, next, html: textDiv.outerHTML })
     parent.removeChild(input)
   })
 
   try {
-    // Set explicit width for consistent rendering
+    // Save original styles
     const originalWidth = element.style.width
-    element.style.width = '794px' // A4 width at 96dpi
+    const originalMaxWidth = element.style.maxWidth
+    const originalMargin = element.style.margin
+    
+    // Set wider width to prevent overlapping
+    element.style.width = '850px'
+    element.style.maxWidth = '850px'
+    element.style.margin = '0 auto'
+    element.style.padding = '20px'
+    element.style.boxSizing = 'border-box'
     
     const canvas = await html2canvas(element, {
       ...getSafeHtml2CanvasOptions(element),
-      width: 794,
-      windowWidth: 794,
+      width: 850,
+      windowWidth: 850,
+      scale: 2,
+      useCORS: true,
+      allowTaint: true,
+      backgroundColor: '#ffffff',
     })
     
+    // Restore original styles
     element.style.width = originalWidth
+    element.style.maxWidth = originalMaxWidth
+    element.style.margin = originalMargin
 
     const imgData = canvas.toDataURL('image/png')
     const pdf = new jsPDF('p', 'mm', 'a4')
     const pageWidth = pdf.internal.pageSize.getWidth()
     const pageHeight = pdf.internal.pageSize.getHeight()
     
-    // Add margins
-    const marginTop = 10
-    const marginBottom = 10
-    const marginLeft = 10
-    const marginRight = 10
+    // Margins
+    const marginTop = 15
+    const marginBottom = 15
+    const marginLeft = 15
+    const marginRight = 15
     const contentWidth = pageWidth - marginLeft - marginRight
     const contentHeight = pageHeight - marginTop - marginBottom
     
@@ -624,6 +639,19 @@ export async function renderElementToPdfBlob(element: HTMLElement): Promise<Blob
       pdf.addImage(imgData, 'PNG', marginLeft, position, imgWidth, imgHeight)
       heightLeft -= contentHeight
     }
+
+    return pdf.output('blob')
+  } finally {
+    // Restore original form elements
+    replacements.forEach(({ el, parent, next }) => {
+      if (next && parent.contains(next)) {
+        parent.insertBefore(el, next)
+      } else if (parent) {
+        parent.appendChild(el)
+      }
+    })
+  }
+}
 
     return pdf.output('blob')
   } finally {

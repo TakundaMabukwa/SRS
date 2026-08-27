@@ -379,8 +379,8 @@ export default function NRCCameraCoveredModal({ isOpen, onClose, onSaved, driver
             </div>
 
             <div className="grid grid-cols-12 border-b border-black">
-              <div className="col-span-1 border-r border-black p-2 [writing-mode:vertical-rl] rotate-180 text-center font-bold">A: INCIDENT / NON-CONFORMANCE REPORT</div>
-              <div className="col-span-11">
+              <div className="col-span-2 border-r border-black p-2 bg-slate-50 text-center font-bold text-xs" style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}>A: INCIDENT / NON-CONFORMANCE REPORT</div>
+              <div className="col-span-10">
                 <div className="border-b border-black p-2 font-bold bg-slate-100">Implicated Entity Information</div>
                 <div className="grid grid-cols-8 border-b border-black text-sm">
                   <div className="col-span-1 border-r border-black p-2 bg-slate-100">Name</div>
@@ -442,8 +442,8 @@ export default function NRCCameraCoveredModal({ isOpen, onClose, onSaved, driver
             </div>
 
             <div className="grid grid-cols-12 border-b border-black">
-              <div className="col-span-1 border-r border-black p-2 [writing-mode:vertical-rl] rotate-180 text-center font-bold">B: INVESTIGATION</div>
-              <div className="col-span-11">
+              <div className="col-span-2 border-r border-black p-2 bg-slate-50 text-center font-bold text-xs" style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}>B: INVESTIGATION</div>
+              <div className="col-span-10">
                 <div className="border-b border-black p-2 font-bold bg-slate-100">Root Cause Analysis (Unsafe Acts / Conditions / Personal Factors)</div>
                 <div className="grid grid-cols-5 border-b border-black text-sm">
                   <div className={getRootCauseCellClass('unsafe_acts')} onClick={() => toggleRootCause('unsafe_acts')}>Unsafe Acts</div>
