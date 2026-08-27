@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createMiddlewareClient } from '@/lib/supabase/server'
 
+// Cache user sessions to reduce auth calls (30 second TTL)
+const userCache = new Map<string, { user: any; role: string; expiresAt: number }>();
+const CACHE_TTL_MS = 30 * 1000;
+
 const roles = [
   {
     name: 'admin',
@@ -73,6 +77,21 @@ export async function middleware(req: NextRequest) {
 
   if (isAuthenticated) {
     try {
+      // Check cache first
+      const cached = userCache.get(accessToken);
+      if (cached && Date.now() < cached.expiresAt) {
+        const role = cached.role;
+        const allowedPaths = getAllowedPaths(role);
+        const isAllowed = allowedPaths.includes('*') || allowedPaths.some(p => path.startsWith(p));
+        if (!isAllowed) {
+          if (isApiRoute) {
+            return NextResponse.json({ success: false, message: 'Forbidden' }, { status: 403 })
+          }
+          return NextResponse.redirect(new URL('/login', req.url))
+        }
+        return NextResponse.next();
+      }
+
       const supabase = createMiddlewareClient(req)
       const { data: { user }, error } = await supabase.auth.getUser()
 
@@ -91,6 +110,8 @@ export async function middleware(req: NextRequest) {
 
       if (user) {
         const role = decodeURIComponent(userRecord?.role || '')
+        // Cache the user session
+        userCache.set(accessToken, { user, role, expiresAt: Date.now() + CACHE_TTL_MS });
         if (role) {
           const allowedPaths = getAllowedPaths(role)
           const isAllowed = allowedPaths.includes('*') || allowedPaths.some(p => path.startsWith(p))
