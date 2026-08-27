@@ -563,28 +563,57 @@ export async function renderElementToPdfBlob(element: HTMLElement): Promise<Blob
   const html2canvas = (await import('html2canvas')).default
   const jsPDF = (await import('jspdf')).default
 
-  const canvas = await html2canvas(element, getSafeHtml2CanvasOptions(element))
-  const imgData = canvas.toDataURL('image/png')
-  const pdf = new jsPDF('p', 'mm', 'a4')
-  const pageWidth = pdf.internal.pageSize.getWidth()
-  const pageHeight = pdf.internal.pageSize.getHeight()
-  const imgWidth = pageWidth
-  const imgHeight = (canvas.height * imgWidth) / canvas.width
+  // Temporarily replace form elements with text divs for proper rendering
+  const replacements: Array<{ el: HTMLElement; parent: Node; next: Node | null; html: string }> = []
+  const inputs = element.querySelectorAll('input, textarea, select')
+  inputs.forEach((input) => {
+    const parent = input.parentNode
+    if (!parent) return
+    const next = input.nextSibling
+    const value = (input as HTMLInputElement).value || (input as HTMLTextAreaElement).value || ''
+    const placeholder = (input as HTMLInputElement).placeholder || ''
+    const displayText = value || placeholder || ''
+    const textDiv = document.createElement('div')
+    textDiv.textContent = displayText
+    textDiv.style.cssText = 'border: 1px solid #ccc; padding: 4px; background: white; min-height: 20px; font-size: 12px;'
+    parent.insertBefore(textDiv, next)
+    replacements.push({ el: input as HTMLElement, parent, next, html: textDiv.outerHTML })
+    parent.removeChild(input)
+  })
 
-  let heightLeft = imgHeight
-  let position = 0
+  try {
+    const canvas = await html2canvas(element, getSafeHtml2CanvasOptions(element))
+    const imgData = canvas.toDataURL('image/png')
+    const pdf = new jsPDF('p', 'mm', 'a4')
+    const pageWidth = pdf.internal.pageSize.getWidth()
+    const pageHeight = pdf.internal.pageSize.getHeight()
+    const imgWidth = pageWidth
+    const imgHeight = (canvas.height * imgWidth) / canvas.width
 
-  pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight)
-  heightLeft -= pageHeight
+    let heightLeft = imgHeight
+    let position = 0
 
-  while (heightLeft > 0) {
-    position = heightLeft - imgHeight
-    pdf.addPage()
     pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight)
     heightLeft -= pageHeight
-  }
 
-  return pdf.output('blob')
+    while (heightLeft > 0) {
+      position = heightLeft - imgHeight
+      pdf.addPage()
+      pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight)
+      heightLeft -= pageHeight
+    }
+
+    return pdf.output('blob')
+  } finally {
+    // Restore original form elements
+    replacements.forEach(({ el, parent, next }) => {
+      if (next && parent.contains(next)) {
+        parent.insertBefore(el, next)
+      } else if (parent) {
+        parent.appendChild(el)
+      }
+    })
+  }
 }
 
 export async function renderElementToWordBlob(element: HTMLElement): Promise<Blob> {
