@@ -435,7 +435,7 @@ export default function NRCCameraCoveredModal({ isOpen, onClose, onSaved, driver
                 </div>
                 <div className="p-2 text-sm">
                   <div className="font-bold underline mb-1">Description of non-conformance</div>
-                  <textarea className="w-full min-h-[120px] border border-black p-2" value={description} onChange={(e) => setDescription(e.target.value)} />
+                  <textarea className="w-full min-h-[150px] border border-black p-2" value={description} onChange={(e) => setDescription(e.target.value)} />
                   <div className="mt-2 text-xs">Alert: {alertDetails?.id || 'N/A'} | Type: {alertDetails?.type || 'N/A'} | Severity: {alertDetails?.severity || 'N/A'} | Location: {locationText}</div>
                 </div>
               </div>
@@ -475,29 +475,29 @@ export default function NRCCameraCoveredModal({ isOpen, onClose, onSaved, driver
                 <div className="grid grid-cols-12 text-sm">
                   <div className="col-span-8 border-r border-black p-2">
                     <div className="font-bold underline">Corrective Action</div>
-                    <textarea className="w-full min-h-[100px] border border-black p-2 mt-1" value={correctiveAction} onChange={(e) => setCorrectiveAction(e.target.value)} />
+                    <textarea className="w-full min-h-[120px] border border-black p-2 mt-1" value={correctiveAction} onChange={(e) => setCorrectiveAction(e.target.value)} />
                     <div className="font-bold underline mt-2">Preventive Action</div>
-                    <textarea className="w-full min-h-[100px] border border-black p-2 mt-1" value={preventiveAction} onChange={(e) => setPreventiveAction(e.target.value)} />
+                    <textarea className="w-full min-h-[120px] border border-black p-2 mt-1" value={preventiveAction} onChange={(e) => setPreventiveAction(e.target.value)} />
                   </div>
                   <div className="col-span-4">
                     <div className="border-b border-black p-2">
                       <div className="font-semibold">Responsibility</div>
-                      <input className="w-full border border-black p-1 mt-1" value={correctiveResponsibility} onChange={(e) => setCorrectiveResponsibility(e.target.value)} />
+                      <input className="w-full border border-black p-2 mt-1" value={correctiveResponsibility} onChange={(e) => setCorrectiveResponsibility(e.target.value)} />
                       <div className="font-semibold mt-2">Target Date</div>
-                      <input className="w-full border border-black p-1 mt-1" value={correctiveTargetDate} onChange={(e) => setCorrectiveTargetDate(e.target.value)} />
+                      <input className="w-full border border-black p-2 mt-1" value={correctiveTargetDate} onChange={(e) => setCorrectiveTargetDate(e.target.value)} />
                     </div>
                     <div className="p-2">
                       <div className="font-semibold">Responsibility</div>
-                      <input className="w-full border border-black p-1 mt-1" value={preventiveResponsibility} onChange={(e) => setPreventiveResponsibility(e.target.value)} />
+                      <input className="w-full border border-black p-2 mt-1" value={preventiveResponsibility} onChange={(e) => setPreventiveResponsibility(e.target.value)} />
                       <div className="font-semibold mt-2">Target Date</div>
-                      <input className="w-full border border-black p-1 mt-1" value={preventiveTargetDate} onChange={(e) => setPreventiveTargetDate(e.target.value)} />
+                      <input className="w-full border border-black p-2 mt-1" value={preventiveTargetDate} onChange={(e) => setPreventiveTargetDate(e.target.value)} />
                     </div>
                   </div>
                 </div>
               </div>
             </div>
 
-            <div className="p-3 text-sm border-b border-black">
+            <div className="p-3 text-sm border-b border-black" style={{ pageBreakBefore: 'always', breakBefore: 'page' }}>
               <div className="font-bold text-lg text-center mb-2">Risk Analysis And Priority Rating Table</div>
               <div className="grid grid-cols-3 gap-3">
                 <div className="border border-black">
