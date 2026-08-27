@@ -5,7 +5,7 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Video, RefreshCw, Search, Wifi, WifiOff, Play, Loader2, X, ChevronLeft, Clock, Calendar, Download } from "lucide-react";
-import { useSupabase } from "@/context/supabase-context";
+import { useSupabaseAuth } from "@/context/supabase-auth-context";
 import { UniversalVideoPlayer } from "./universal-video-player";
 import { useCostCenters } from "@/context/cost-centers-context";
 
@@ -127,7 +127,7 @@ type PlaybackDashboardTabProps = {
 
 export default function PlaybackDashboardTab({ selectedCostCenterIds = [] }: PlaybackDashboardTabProps) {
   const { costCenterMap } = useCostCenters();
-  const supabase = useSupabase();
+  const { supabase } = useSupabaseAuth();
   const [vehicles, setVehicles] = useState<PlaybackVehicle[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);

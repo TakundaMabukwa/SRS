@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { RefreshCw, Shield, ExternalLink, X } from "lucide-react";
-import { useSupabase } from "@/context/supabase-context";
+import { useSupabaseAuth } from "@/context/supabase-auth-context";
 import { useCostCenters } from "@/context/cost-centers-context";
 
 type DbVehicle = {
@@ -77,7 +77,7 @@ export default function ScreenshotsDashboardTab({
   selectedCostCenterIds = [],
 }: ScreenshotsDashboardTabProps) {
   const { costCenterMap } = useCostCenters();
-  const supabase = useSupabase();
+  const { supabase } = useSupabaseAuth();
   const dbVehiclesRef = useRef<DbVehicle[] | null>(null);
   const [cards, setCards] = useState<VehicleCard[]>([]);
   const [loading, setLoading] = useState(true);
