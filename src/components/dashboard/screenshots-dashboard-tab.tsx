@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { RefreshCw, Shield, ExternalLink, X } from "lucide-react";
-import { createClient } from "@/lib/supabase/client";
+import { useSupabase } from "@/context/supabase-context";
 import { useCostCenters } from "@/context/cost-centers-context";
 
 type DbVehicle = {
@@ -40,8 +40,9 @@ type VehicleCard = {
 };
 
 const AUTO_REFRESH_MS = 2 * 60 * 1000; // 2 minutes
-const GALLERY_BATCH_SIZE = 10; // devices per parallel batch
-const CAPTURE_BATCH_SIZE = 20; // captures per batch
+const GALLERY_BATCH_SIZE = 5; // devices per parallel batch (reduced to avoid rate limits)
+const CAPTURE_BATCH_SIZE = 10; // captures per batch (reduced to avoid rate limits)
+const BATCH_DELAY_MS = 500; // delay between batches to avoid rate limits
 
 function normalizeCostCenter(value: unknown): string {
   return String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
@@ -76,7 +77,7 @@ export default function ScreenshotsDashboardTab({
   selectedCostCenterIds = [],
 }: ScreenshotsDashboardTabProps) {
   const { costCenterMap } = useCostCenters();
-  const supabase = createClient();
+  const supabase = useSupabase();
   const dbVehiclesRef = useRef<DbVehicle[] | null>(null);
   const [cards, setCards] = useState<VehicleCard[]>([]);
   const [loading, setLoading] = useState(true);
@@ -96,6 +97,21 @@ export default function ScreenshotsDashboardTab({
   const capturingRef = useRef<Set<string>>(new Set());
 
   const fetchDbOnce = useCallback(async () => {
+    // Check localStorage cache first (10 min TTL)
+    const cacheKey = 'vehiclesc_cache';
+    const cacheTTL = 10 * 60 * 1000;
+    try {
+      const cached = localStorage.getItem(cacheKey);
+      if (cached) {
+        const { data, timestamp } = JSON.parse(cached);
+        if (data && Date.now() - timestamp < cacheTTL && data.length > 0) {
+          dbVehiclesRef.current = data;
+          return data;
+        }
+      }
+    } catch {}
+
+    // Fetch from Supabase
     if (dbVehiclesRef.current && dbVehiclesRef.current.length > 0) return dbVehiclesRef.current;
     try {
       const { data } = await supabase
@@ -113,6 +129,8 @@ export default function ScreenshotsDashboardTab({
       const result = Array.from(unique.values());
       if (result.length > 0) {
         dbVehiclesRef.current = result;
+        // Cache in localStorage
+        try { localStorage.setItem(cacheKey, JSON.stringify({ data: result, timestamp: Date.now() })); } catch {}
       }
       return result;
     } catch {

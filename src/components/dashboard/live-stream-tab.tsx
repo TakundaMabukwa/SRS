@@ -25,7 +25,7 @@ import {
   Play,
   StopCircle,
 } from "lucide-react";
-import { createClient } from "@/lib/supabase/client";
+import { useSupabase } from "@/context/supabase-context";
 import { createPortal } from "react-dom";
 import { useCostCenters } from "@/context/cost-centers-context";
 
@@ -79,7 +79,7 @@ function matchesCostCenterFilter(costCenter: string, selectedCostCenters: Set<st
 
 export default function LiveStreamTab({ selectedCostCenterIds = [] }: LiveStreamTabProps) {
   const { costCenterMap } = useCostCenters();
-  const supabase = createClient();
+  const supabase = useSupabase();
   const [vehicles, setVehicles] = useState<{ registration: string; fleetNumber: string; costCenter: string; deviceId: string | null; online: boolean }[]>([]);
   const [selectedDevices, setSelectedDevices] = useState<Set<string>>(new Set());
   const [activeStreams, setActiveStreams] = useState<Map<string, ActiveVehicleStreams>>(new Map());
