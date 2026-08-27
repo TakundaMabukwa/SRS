@@ -653,19 +653,6 @@ export async function renderElementToPdfBlob(element: HTMLElement): Promise<Blob
   }
 }
 
-    return pdf.output('blob')
-  } finally {
-    // Restore original form elements
-    replacements.forEach(({ el, parent, next }) => {
-      if (next && parent.contains(next)) {
-        parent.insertBefore(el, next)
-      } else if (parent) {
-        parent.appendChild(el)
-      }
-    })
-  }
-}
-
 export async function renderElementToWordBlob(element: HTMLElement): Promise<Blob> {
   // Just render to PDF - simple and reliable
   return renderElementToPdfBlob(element);

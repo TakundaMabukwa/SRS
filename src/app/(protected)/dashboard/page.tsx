@@ -4604,12 +4604,6 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
                 Playback
               </TabsTrigger>
               <TabsTrigger
-                value="alert-config"
-                className="px-6 py-2 text-sm font-medium rounded-md data-[state=active]:bg-white data-[state=active]:shadow-sm"
-              >
-                Alert Config
-              </TabsTrigger>
-              <TabsTrigger
                 value="fleet-map"
                 className="px-6 py-2 text-sm font-medium rounded-md data-[state=active]:bg-white data-[state=active]:shadow-sm"
               >
