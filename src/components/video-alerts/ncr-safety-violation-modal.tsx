@@ -118,7 +118,7 @@ export default function NCRSafetyViolationModal({ isOpen, onClose, onSaved, driv
       if (!element) throw new Error('Form content not found')
 
       const blob = await renderElementToWordBlob(element)
-      const fileName = `ncr-safety-violation-${driverInfo.fleetNumber}-${Date.now()}.doc`
+      const fileName = `ncr-safety-violation-${driverInfo.fleetNumber}-${Date.now()}.pdf`
 
       const artifact = await saveAlertArtifactBundle({
         supabase,

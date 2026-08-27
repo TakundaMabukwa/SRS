@@ -272,7 +272,7 @@ export default function NRCCameraCoveredModal({ isOpen, onClose, onSaved, driver
       if (!element) throw new Error('Form content not found')
 
       const blob = await renderElementToWordBlob(element)
-      const fileName = `ncr-generic-${vehicleFleetNumber || driverInfo.fleetNumber}-${Date.now()}.doc`
+      const fileName = `ncr-generic-${vehicleFleetNumber || driverInfo.fleetNumber}-${Date.now()}.pdf`
 
       const artifact = await saveAlertArtifactBundle({
         supabase,

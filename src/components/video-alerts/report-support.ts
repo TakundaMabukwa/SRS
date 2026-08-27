@@ -326,23 +326,17 @@ export async function saveAlertArtifactBundle({
   extraPayload?: Record<string, any>
 }): Promise<SavedAlertArtifact> {
   const originalFileName = sanitizePathSegment(fileName.replace(/\\/g, '/').split('/').pop() || fileName)
-  const baseName = originalFileName.replace(/\.(pdf|doc|docx)$/i, '')
+  const baseName = originalFileName.replace(/\.pdf$/i, '')
   const safeBaseName = sanitizePathSegment(baseName)
   const alertFolder = sanitizePathSegment(alertDetails?.id || driverInfo.fleetNumber || 'unlinked-alert')
   const typeFolder = sanitizePathSegment(String(reportType || 'report').toLowerCase())
   const timestampFolder = new Date().toISOString().replace(/[:.]/g, '-')
   const storagePrefix = `video-alerts/${alertFolder}/${typeFolder}/${timestampFolder}`
-  
-  // Detect file type from original filename or blob
-  const isWord = originalFileName.endsWith('.doc') || originalFileName.endsWith('.docx') || pdfBlob.type === 'application/msword'
-  const fileExt = isWord ? '.doc' : '.pdf'
-  const contentType = isWord ? 'application/msword' : 'application/pdf'
-  
-  const storageFileName = `${storagePrefix}/${safeBaseName}${fileExt}`
+  const storageFileName = `${storagePrefix}/${safeBaseName}.pdf`
 
   const { error: uploadError } = await supabase.storage
     .from(storageBucket)
-    .upload(storageFileName, pdfBlob, { contentType, upsert: true })
+    .upload(storageFileName, pdfBlob, { contentType: 'application/pdf', upsert: true })
   if (uploadError) throw uploadError
 
   const { data: publicData } = supabase.storage.from(storageBucket).getPublicUrl(storageFileName)
@@ -594,31 +588,6 @@ export async function renderElementToPdfBlob(element: HTMLElement): Promise<Blob
 }
 
 export async function renderElementToWordBlob(element: HTMLElement): Promise<Blob> {
-  // Use html2canvas to capture the element as an image (looks exactly like UI)
-  const html2canvas = (await import('html2canvas')).default;
-  const canvas = await html2canvas(element, {
-    scale: 2,
-    useCORS: true,
-    allowTaint: true,
-    backgroundColor: '#ffffff',
-    logging: false,
-  });
-  
-  const imgData = canvas.toDataURL('image/png');
-  const imgWidth = canvas.width;
-  const imgHeight = canvas.height;
-  
-  // Create Word document with the image
-  const html = `<!DOCTYPE html>
-<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-</head>
-<body style="margin:0;padding:0;">
-<img src="${imgData}" width="${imgWidth}" height="${imgHeight}" style="max-width:100%;height:auto;" />
-</body>
-</html>`
-
-  return new Blob([html], { type: 'application/msword' })
+  // Just render to PDF - simple and reliable
+  return renderElementToPdfBlob(element);
 }

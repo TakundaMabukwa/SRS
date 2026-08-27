@@ -247,7 +247,7 @@ export default function NCRFormModal({ isOpen, onClose, onSaved, driverInfo, ale
       const element = document.getElementById('ncr-form-content')
       if (!element) throw new Error('Form content not found')
       const pdfBlob = await renderElementToWordBlob(element)
-      const fileName = `NCR-${formData.vehicleFleetNumber || 'unknown'}-${Date.now()}.doc`
+      const fileName = `NCR-${formData.vehicleFleetNumber || 'unknown'}-${Date.now()}.pdf`
       const artifact = await saveAlertArtifactBundle({
         supabase, fileName, pdfBlob, reportType: 'NCR', driverInfo,
         alertDetails: alertDetails ? { ...alertDetails, videos: [] } : undefined,
