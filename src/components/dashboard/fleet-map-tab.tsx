@@ -185,22 +185,26 @@ export function FleetMapTab() {
   useEffect(() => {
     const fetchData = async () => {
       setLoading(true);
-      const [vehicleRes, priorityZoneRes] = await Promise.allSettled([
-        fetch(`${EPS}/telematics/vehicle-status-all-enriched`, { cache: 'no-store', signal: AbortSignal.timeout(15000) }),
-        fetch(`${EPS}/telematics/zones-priority`, { cache: 'no-store', signal: AbortSignal.timeout(10000) }),
-      ]);
+      try {
+        const [vehicleRes, priorityZoneRes] = await Promise.allSettled([
+          fetch(`${EPS}/telematics/vehicle-status-all-enriched`, { cache: 'no-store', signal: AbortSignal.timeout(15000) }),
+          fetch(`${EPS}/telematics/zones-priority`, { cache: 'no-store', signal: AbortSignal.timeout(10000) }),
+        ]);
 
-      if (vehicleRes.status === 'fulfilled') {
-        const data = await vehicleRes.value.json();
-        if (data?.data) setVehicleStatuses(data.data);
+        if (vehicleRes.status === 'fulfilled') {
+          const data = await vehicleRes.value.json().catch(() => null);
+          if (data?.data) setVehicleStatuses(data.data);
+        }
+
+        if (priorityZoneRes.status === 'fulfilled') {
+          const data = await priorityZoneRes.value.json().catch(() => null);
+          if (data?.priority) setPriorityZones(data.priority);
+        }
+      } catch (e) {
+        console.warn('[FleetMap] Data fetch error:', e);
+      } finally {
+        setLoading(false);
       }
-
-      if (priorityZoneRes.status === 'fulfilled') {
-        const data = await priorityZoneRes.value.json();
-        if (data?.priority) setPriorityZones(data.priority);
-      }
-
-      setLoading(false);
 
       fetch(`${EPS}/telematics/zones-lite`, { cache: 'no-store', signal: AbortSignal.timeout(30000) })
         .then(r => r.json())
