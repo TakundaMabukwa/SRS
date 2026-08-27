@@ -575,32 +575,54 @@ export async function renderElementToPdfBlob(element: HTMLElement): Promise<Blob
     const displayText = value || placeholder || ''
     const textDiv = document.createElement('div')
     textDiv.textContent = displayText
-    textDiv.style.cssText = 'border: 1px solid #ccc; padding: 4px; background: white; min-height: 20px; font-size: 12px;'
+    textDiv.style.cssText = 'border: 1px solid #ccc; padding: 4px 6px; background: white; min-height: 20px; font-size: 11px; line-height: 1.4;'
     parent.insertBefore(textDiv, next)
     replacements.push({ el: input as HTMLElement, parent, next, html: textDiv.outerHTML })
     parent.removeChild(input)
   })
 
   try {
-    const canvas = await html2canvas(element, getSafeHtml2CanvasOptions(element))
+    // Set explicit width for consistent rendering
+    const originalWidth = element.style.width
+    element.style.width = '794px' // A4 width at 96dpi
+    
+    const canvas = await html2canvas(element, {
+      ...getSafeHtml2CanvasOptions(element),
+      width: 794,
+      windowWidth: 794,
+    })
+    
+    element.style.width = originalWidth
+
     const imgData = canvas.toDataURL('image/png')
     const pdf = new jsPDF('p', 'mm', 'a4')
     const pageWidth = pdf.internal.pageSize.getWidth()
     const pageHeight = pdf.internal.pageSize.getHeight()
-    const imgWidth = pageWidth
+    
+    // Add margins
+    const marginTop = 10
+    const marginBottom = 10
+    const marginLeft = 10
+    const marginRight = 10
+    const contentWidth = pageWidth - marginLeft - marginRight
+    const contentHeight = pageHeight - marginTop - marginBottom
+    
+    const imgWidth = contentWidth
     const imgHeight = (canvas.height * imgWidth) / canvas.width
 
     let heightLeft = imgHeight
-    let position = 0
+    let position = marginTop
 
-    pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight)
-    heightLeft -= pageHeight
+    // First page
+    pdf.addImage(imgData, 'PNG', marginLeft, position, imgWidth, imgHeight)
+    heightLeft -= contentHeight
 
+    // Additional pages
     while (heightLeft > 0) {
-      position = heightLeft - imgHeight
       pdf.addPage()
-      pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight)
-      heightLeft -= pageHeight
+      position = -(imgHeight - heightLeft) - marginTop
+      pdf.addImage(imgData, 'PNG', marginLeft, position, imgWidth, imgHeight)
+      heightLeft -= contentHeight
     }
 
     return pdf.output('blob')
