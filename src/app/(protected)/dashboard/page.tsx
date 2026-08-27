@@ -6340,6 +6340,15 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
               }
             }
             toast.success("NCR saved. You can now resolve the alert from the timeline.")
+            // Auto-resolve the alert after NCR is filed
+            if (selectedAlert?.id) {
+              try {
+                await closeSelectedAlert("ncr", artifact, selectedAlert);
+                toast.success("NCR filed and alert resolved.")
+              } catch {
+                toast.success("NCR saved. Alert is still open - you can resolve manually.")
+              }
+            }
           }}
           driverInfo={selectedAlertDriverInfo}
           alertDetails={selectedAlertReportDetails}
