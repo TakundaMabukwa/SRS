@@ -16,27 +16,45 @@ const SupabaseAuthContext = createContext<SupabaseAuthContextType | null>(null);
 // Global user cache - persists across re-renders
 let globalUser: User | null = null;
 let globalUserExpiry = 0;
-const USER_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+let lastTokenRefresh = 0;
+const USER_CACHE_TTL = 55 * 60 * 1000; // 55 minutes (JWT lasts 1 hour)
+const TOKEN_REFRESH_THRESHOLD = 50 * 60 * 1000; // Refresh at 50 minutes
 
 export function SupabaseAuthProvider({ children }: { children: React.ReactNode }) {
   const [client] = useState(() => createClient());
   const [user, setUser] = useState<User | null>(globalUser);
   const [loading, setLoading] = useState(!globalUser);
-  const refreshTimerRef = useRef<NodeJS.Timeout | null>(null);
 
-  const refreshUser = useCallback(async () => {
+  const refreshUser = useCallback(async (force = false) => {
     try {
-      // Check global cache first
-      if (globalUser && Date.now() < globalUserExpiry) {
+      // Check if user is still valid (not expired)
+      if (!force && globalUser && Date.now() < globalUserExpiry) {
         setUser(globalUser);
         setLoading(false);
         return;
       }
 
-      const { data: { user: authUser } } = await client.auth.getUser();
-      globalUser = authUser;
-      globalUserExpiry = Date.now() + USER_CACHE_TTL;
-      setUser(authUser);
+      // Only refresh token if it's been more than 50 minutes since last refresh
+      const now = Date.now();
+      if (!force && now - lastTokenRefresh < TOKEN_REFRESH_THRESHOLD) {
+        setUser(globalUser);
+        setLoading(false);
+        return;
+      }
+
+      // Get session without triggering automatic refresh
+      const { data: { session } } = await client.auth.getSession();
+      
+      if (session?.user) {
+        globalUser = session.user;
+        globalUserExpiry = now + USER_CACHE_TTL;
+        lastTokenRefresh = now;
+        setUser(globalUser);
+      } else {
+        globalUser = null;
+        globalUserExpiry = 0;
+        setUser(null);
+      }
     } catch (err) {
       console.error("[SupabaseAuth] Error refreshing user:", err);
     } finally {
@@ -48,24 +66,26 @@ export function SupabaseAuthProvider({ children }: { children: React.ReactNode }
     // Initial load
     refreshUser();
 
-    // Listen for auth state changes
+    // Listen for auth state changes - only update on actual events
     const { data: { subscription } } = client.auth.onAuthStateChange(
       async (event, session) => {
         if (event === "SIGNED_IN" || event === "TOKEN_REFRESHED") {
           globalUser = session?.user || null;
           globalUserExpiry = Date.now() + USER_CACHE_TTL;
+          lastTokenRefresh = Date.now();
           setUser(globalUser);
         } else if (event === "SIGNED_OUT") {
           globalUser = null;
           globalUserExpiry = 0;
+          lastTokenRefresh = 0;
           setUser(null);
         }
+        // Ignore other events to reduce unnecessary calls
       }
     );
 
     return () => {
       subscription.unsubscribe();
-      if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
     };
   }, [client, refreshUser]);
 
