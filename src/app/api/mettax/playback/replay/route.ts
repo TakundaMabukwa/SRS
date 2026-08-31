@@ -7,6 +7,9 @@ const API_SECRET = process.env.VIDEO_API_SECRET || 'jM6UdTKpTBeltqYPqlPP';
 
 let cachedToken: string | null = null;
 let tokenExpiry = 0;
+let cachedUploadTasks: any[] = [];
+let uploadTasksExpiry = 0;
+const UPLOAD_CACHE_TTL = 2 * 60 * 1000;
 
 const agent = new https.Agent({ rejectUnauthorized: false });
 
@@ -61,6 +64,18 @@ async function mettaxPost(endpoint: string, body: Record<string, unknown>) {
   return data;
 }
 
+async function getUploadTasks(): Promise<any[]> {
+  if (cachedUploadTasks.length > 0 && Date.now() < uploadTasksExpiry) {
+    return cachedUploadTasks;
+  }
+  const taskData = await mettaxPost('/video/history/upload/task', { pageSize: 200, pageIndex: 1 });
+  if (taskData.code === 0 && Array.isArray(taskData.data?.records)) {
+    cachedUploadTasks = taskData.data.records;
+    uploadTasksExpiry = Date.now() + UPLOAD_CACHE_TTL;
+  }
+  return cachedUploadTasks;
+}
+
 export async function POST(req: NextRequest) {
   try {
     const { deviceId, channelId, startTime, endTime } = await req.json();
@@ -85,38 +100,33 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: true, data: { replayUrl: data.data } });
     }
 
-    // ── Step 2: Device offline — fall back to uploaded MP4 ──
-    console.log('[PLAYBACK REPLAY] live replay failed, checking upload tasks');
-    const taskData = await mettaxPost('/video/history/upload/task', {
-      pageSize: 200,
-      pageIndex: 1,
-    });
+    // ── Step 2: Device offline — fall back to cached uploaded MP4 ──
+    console.log('[PLAYBACK REPLAY] live replay failed, checking cached upload tasks');
+    const allTasks = await getUploadTasks();
 
-    if (taskData.code === 0 && Array.isArray(taskData.data?.records)) {
-      // Best match: same device, channel, within time range
-      let match = taskData.data.records.find((t: any) =>
+    // Best match: same device, channel, within time range
+    let match = allTasks.find((t: any) =>
+      t.deviceId === deviceId &&
+      t.status === 1 &&
+      t.fileUrl &&
+      t.channelId === Number(channelId || 1) &&
+      t.fileStartTime <= endTime &&
+      t.fileEndTime >= startTime
+    );
+
+    // Fallback: any completed file for this device+channel
+    if (!match) {
+      match = allTasks.find((t: any) =>
         t.deviceId === deviceId &&
         t.status === 1 &&
         t.fileUrl &&
-        t.channelId === Number(channelId || 1) &&
-        t.fileStartTime <= endTime &&
-        t.fileEndTime >= startTime
+        t.channelId === Number(channelId || 1)
       );
+    }
 
-      // Fallback: any completed file for this device+channel
-      if (!match) {
-        match = taskData.data.records.find((t: any) =>
-          t.deviceId === deviceId &&
-          t.status === 1 &&
-          t.fileUrl &&
-          t.channelId === Number(channelId || 1)
-        );
-      }
-
-      if (match) {
-        console.log('[PLAYBACK REPLAY] using uploaded MP4:', match.fileUrl);
-        return NextResponse.json({ success: true, data: { replayUrl: match.fileUrl } });
-      }
+    if (match) {
+      console.log('[PLAYBACK REPLAY] using uploaded MP4:', match.fileUrl);
+      return NextResponse.json({ success: true, data: { replayUrl: match.fileUrl } });
     }
 
     return NextResponse.json({ success: false, message: data.msg || 'No replay available. Device may be offline.' });

@@ -321,7 +321,7 @@ export default function PlaybackDashboardTab({ selectedCostCenterIds = [] }: Pla
           endTime: range.end,
         }),
         cache: "no-store",
-        signal: AbortSignal.timeout(15000),
+        signal: AbortSignal.timeout(30000),
       });
       const json = await res.json().catch(() => ({}));
       const fileList: HistoryFile[] = (json?.data?.files || []).map((f: HistoryFile) => ({ ...f, channelId: selectedChannel }));

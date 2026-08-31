@@ -7,6 +7,9 @@ const API_SECRET = process.env.VIDEO_API_SECRET || 'jM6UdTKpTBeltqYPqlPP';
 
 let cachedToken: string | null = null;
 let tokenExpiry = 0;
+let cachedUploadTasks: any[] = [];
+let uploadTasksExpiry = 0;
+const UPLOAD_CACHE_TTL = 2 * 60 * 1000; // 2 minutes
 
 const agent = new https.Agent({ rejectUnauthorized: false });
 
@@ -59,6 +62,18 @@ async function mettaxPost(endpoint: string, body: Record<string, unknown>) {
     data = await mettaxPostRaw(endpoint, body, newToken);
   }
   return data;
+}
+
+async function getUploadTasks(): Promise<any[]> {
+  if (cachedUploadTasks.length > 0 && Date.now() < uploadTasksExpiry) {
+    return cachedUploadTasks;
+  }
+  const taskData = await mettaxPost('/video/history/upload/task', { pageSize: 200, pageIndex: 1 });
+  if (taskData.code === 0 && Array.isArray(taskData.data?.records)) {
+    cachedUploadTasks = taskData.data.records;
+    uploadTasksExpiry = Date.now() + UPLOAD_CACHE_TTL;
+  }
+  return cachedUploadTasks;
 }
 
 export async function POST(req: NextRequest) {
@@ -118,18 +133,11 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: true, data: { files: records } });
     }
 
-    // ── Step 2: Device offline or no files — fall back to upload tasks ──
-    console.log('[PLAYBACK FILES] device offline or empty, checking upload tasks');
-    const taskData = await mettaxPost('/video/history/upload/task', {
-      pageSize: 200,
-      pageIndex: 1,
-    });
+    // ── Step 2: Device offline or no files — fall back to cached upload tasks ──
+    console.log('[PLAYBACK FILES] device offline or empty, checking cached upload tasks');
+    const allTasks = await getUploadTasks();
 
-    if (taskData.code !== 0 || !Array.isArray(taskData.data?.records)) {
-      return NextResponse.json({ success: true, data: { files: [] } });
-    }
-
-    const deviceTasks = taskData.data.records.filter((t: any) =>
+    const deviceTasks = allTasks.filter((t: any) =>
       t.deviceId === deviceId &&
       t.status === 1 &&
       t.fileUrl &&
