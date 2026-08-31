@@ -72,35 +72,61 @@ export async function POST(req: NextRequest) {
     const defaultEnd = (endTime || now.toISOString()).replace('T', ' ').slice(0, 19);
     const defaultStart = startTime || new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString().replace('T', ' ').slice(0, 19);
 
-    const body: Record<string, unknown> = {
+    // Try history/list first
+    const data = await mettaxPost('/video/history/list', {
       deviceId,
       channelId: Number(channelId || 1),
       startTime: defaultStart,
       endTime: defaultEnd,
-    };
+    });
 
-    const data = await mettaxPost('/video/history/list', body);
+    console.log('[PLAYBACK FILES] deviceId:', deviceId, 'history/list code:', data.code);
 
-    console.log('[PLAYBACK FILES] deviceId:', deviceId, 'code:', data.code, 'records:', data.data?.length);
-
-    if (data.code !== 0) {
-      return NextResponse.json({ success: false, message: data.msg || 'Failed', data: { files: [] } });
+    if (data.code === 0 && Array.isArray(data.data) && data.data.length > 0) {
+      const records = data.data
+        .filter((r: any) => !channelId || r.channelId === Number(channelId))
+        .map((r: any) => ({
+          deviceName: r.deviceName || '',
+          channelId: r.channelId,
+          fileSize: r.fileSize || 0,
+          startTime: r.startTime || '',
+          endTime: r.endTime || '',
+          fileUrl: r.fileUrl || null,
+          fileType: r.fileType || '',
+        }));
+      return NextResponse.json({ success: true, data: { files: records } });
     }
 
-    const allRecords = Array.isArray(data.data) ? data.data : [];
+    // Fallback: use upload tasks (works even when device is offline)
+    console.log('[PLAYBACK FILES] history/list empty or offline, trying upload tasks for', deviceId);
+    const taskData = await mettaxPost('/video/history/upload/task', {
+      pageSize: 200,
+      pageIndex: 1,
+    });
 
-    const records = allRecords
-      .filter((r: any) => !channelId || r.channelId === Number(channelId))
-      .map((r: any) => ({
-        deviceName: r.deviceName || '',
-        channelId: r.channelId,
-        fileSize: r.fileSize || 0,
-        startTime: r.startTime || '',
-        endTime: r.endTime || '',
-        fileUrl: r.fileUrl || null,
-        fileType: r.fileType || '',
-      }));
+    if (taskData.code !== 0 || !Array.isArray(taskData.data?.records)) {
+      return NextResponse.json({ success: true, data: { files: [] } });
+    }
 
+    // Filter tasks for this device, with completed uploads (status=1) and valid fileUrl
+    const deviceTasks = taskData.data.records.filter((t: any) =>
+      t.deviceId === deviceId &&
+      t.status === 1 &&
+      t.fileUrl &&
+      (!channelId || t.channelId === Number(channelId))
+    );
+
+    const records = deviceTasks.map((t: any) => ({
+      deviceName: t.deviceName || '',
+      channelId: t.channelId,
+      fileSize: t.fileSize || 0,
+      startTime: t.fileStartTime || '',
+      endTime: t.fileEndTime || '',
+      fileUrl: t.fileUrl || null,
+      fileType: 'mp4',
+    }));
+
+    console.log('[PLAYBACK FILES] upload tasks found:', records.length, 'for device', deviceId);
     return NextResponse.json({ success: true, data: { files: records } });
   } catch (err: any) {
     return NextResponse.json({ success: false, message: err.message, data: { files: [] } });
