@@ -223,9 +223,10 @@ export function FleetMapTab() {
 
   const supabaseVehicles = useMemo(() => {
     return vehicleStatuses.filter((v) => {
-      const identity = findIdentity(v, vehicleIdentities);
-      if (!identity) return false;
-      if (costCenterFilter !== 'all' && identity.costCenter !== costCenterFilter) return false;
+      if (costCenterFilter !== 'all') {
+        const identity = findIdentity(v, vehicleIdentities);
+        if (!identity || identity.costCenter !== costCenterFilter) return false;
+      }
       return true;
     });
   }, [vehicleStatuses, vehicleIdentities, costCenterFilter]);
@@ -593,6 +594,7 @@ export function FleetMapTab() {
 
         let color = moving ? '#2563eb' : '#64748b';
         let size = PIN_SIZE;
+        if (!identity) { color = '#d97706'; size = PIN_SIZE; }
         if (flashing || hasAlert) { color = '#ef4444'; size = PIN_SIZE_ALERT; }
         if (selected) { color = '#7c3aed'; size = PIN_SIZE_ALERT; }
 
@@ -666,6 +668,7 @@ export function FleetMapTab() {
         <div className="absolute top-3 left-3 z-10 flex items-center gap-3 rounded-lg bg-white/90 px-3 py-1.5 text-[10px] font-medium text-slate-600 shadow-md backdrop-blur-sm">
           <span className="flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-full bg-blue-600" /> Moving</span>
           <span className="flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-full bg-slate-400" /> Stationary</span>
+          <span className="flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-full bg-amber-500" /> Unmatched</span>
           <span className="flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-full bg-red-500" /> Alert</span>
           <span className="text-slate-300">|</span>
           <span className="flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-sm bg-blue-500/30 border border-blue-500" /> Zone</span>
@@ -691,7 +694,14 @@ export function FleetMapTab() {
                   {viewMode === 'events' ? `Events - ${eventsDeviceId || ''}` : 'All Vehicles'}
                 </h3>
                 <p className="text-[11px] text-slate-500">
-                  {viewMode === 'events' ? `${filteredEvents.length} events today` : `${filteredVehicles.length} tracked`}
+                  {viewMode === 'events' ? `${filteredEvents.length} events today` : (
+                    <>
+                      {filteredVehicles.length} tracked
+                      {filteredVehicles.some(({ v }) => !findIdentity(v, vehicleIdentities)) && (
+                        <span className="text-amber-500"> · {filteredVehicles.filter(({ v }) => !findIdentity(v, vehicleIdentities)).length} unmatched</span>
+                      )}
+                    </>
+                  )}
                 </p>
               </div>
             </div>
@@ -806,6 +816,7 @@ export function FleetMapTab() {
               const flashing = flashingVehicles.has(v.device_id);
               const isSelected = selectedVehicle === v.device_id;
               const hasAlert = (v.alert_count ?? 0) > 0;
+              const noMatch = !identity;
 
               return (
                 <div key={v.device_id}
@@ -817,14 +828,19 @@ export function FleetMapTab() {
                     }
                   }}
                   className={`cursor-pointer rounded-xl border bg-white p-3.5 shadow-sm transition-all hover:shadow-md ${
-                    flashing ? 'border-red-300 bg-red-50 ring-2 ring-red-200 animate-pulse'
+                    noMatch ? 'border-dashed border-amber-300 bg-amber-50/30'
+                    : flashing ? 'border-red-300 bg-red-50 ring-2 ring-red-200 animate-pulse'
                     : isSelected ? 'border-blue-300 bg-blue-50 ring-2 ring-blue-200'
                     : hasAlert ? 'border-red-200 bg-red-50/30'
                     : 'border-slate-200 hover:border-slate-300'
                   }`}>
                   <div className="flex items-center justify-between">
-                    <span className="text-sm font-bold text-slate-900">{label}</span>
-                    {flashing || hasAlert ? (
+                    <span className={`text-sm font-bold ${noMatch ? 'text-amber-700' : 'text-slate-900'}`}>{label}</span>
+                    {noMatch ? (
+                      <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-600">
+                        No Match
+                      </span>
+                    ) : flashing || hasAlert ? (
                       <span className="flex items-center gap-0.5 rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-bold text-red-600 animate-pulse">
                         <AlertTriangle className="h-2.5 w-2.5" /> ALERT{v.alert_count ? ` x${v.alert_count}` : ''}
                       </span>
@@ -835,11 +851,15 @@ export function FleetMapTab() {
                     )}
                   </div>
 
-                  {identity?.make && (
+                  {identity?.make ? (
                     <p className="mt-1 text-[11px] text-slate-500">
                       {identity.make}{identity.model ? ` ${identity.model}` : ''}{identity.costCenter ? ` \u00b7 ${identity.costCenter}` : ''}
                     </p>
-                  )}
+                  ) : noMatch ? (
+                    <p className="mt-1 text-[11px] text-amber-500">
+                      Device: {v.device_id}{v.plate ? ` \u00b7 ${v.plate}` : ''}
+                    </p>
+                  ) : null}
 
                   <div className="mt-2.5 flex items-center gap-4 text-[11px] text-slate-600">
                     <span className="flex items-center gap-1"><Gauge className="h-3 w-3 text-slate-400" />{v.speed != null ? `${Math.round(v.speed)} km/h` : '\u2014'}</span>
