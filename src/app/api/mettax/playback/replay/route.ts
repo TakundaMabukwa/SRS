@@ -68,7 +68,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, message: 'deviceId, startTime, endTime required' });
     }
 
-    // Try live replay first
+    // ── Step 1: Try live replay (requires device online) ──
     const data = await mettaxPost('/video/history/replay', {
       deviceId,
       channelId: Number(channelId || 1),
@@ -78,44 +78,44 @@ export async function POST(req: NextRequest) {
       endTime,
     });
 
+    console.log('[PLAYBACK REPLAY] deviceId:', deviceId, 'code:', data.code, 'msg:', data.msg);
+
     if (data.code === 0 && data.data) {
-      console.log('[PLAYBACK REPLAY] live replay URL:', data.data);
+      console.log('[PLAYBACK REPLAY] live FLV stream:', data.data);
       return NextResponse.json({ success: true, data: { replayUrl: data.data } });
     }
 
-    // Fallback: find an uploaded MP4 file for this device/channel within the time range
-    console.log('[PLAYBACK REPLAY] live replay failed (code:', data.code, '), trying upload tasks for', deviceId);
+    // ── Step 2: Device offline — fall back to uploaded MP4 ──
+    console.log('[PLAYBACK REPLAY] live replay failed, checking upload tasks');
     const taskData = await mettaxPost('/video/history/upload/task', {
       pageSize: 200,
       pageIndex: 1,
     });
 
     if (taskData.code === 0 && Array.isArray(taskData.data?.records)) {
-      const match = taskData.data.records.find((t: any) =>
+      // Best match: same device, channel, within time range
+      let match = taskData.data.records.find((t: any) =>
         t.deviceId === deviceId &&
         t.status === 1 &&
         t.fileUrl &&
         t.channelId === Number(channelId || 1) &&
-        t.fileStartTime >= startTime &&
-        t.fileEndTime <= endTime
+        t.fileStartTime <= endTime &&
+        t.fileEndTime >= startTime
       );
 
-      if (match) {
-        console.log('[PLAYBACK REPLAY] found uploaded MP4:', match.fileUrl);
-        return NextResponse.json({ success: true, data: { replayUrl: match.fileUrl } });
+      // Fallback: any completed file for this device+channel
+      if (!match) {
+        match = taskData.data.records.find((t: any) =>
+          t.deviceId === deviceId &&
+          t.status === 1 &&
+          t.fileUrl &&
+          t.channelId === Number(channelId || 1)
+        );
       }
 
-      // Broader match: any uploaded file for this device/channel
-      const anyMatch = taskData.data.records.find((t: any) =>
-        t.deviceId === deviceId &&
-        t.status === 1 &&
-        t.fileUrl &&
-        t.channelId === Number(channelId || 1)
-      );
-
-      if (anyMatch) {
-        console.log('[PLAYBACK REPLAY] found any uploaded MP4:', anyMatch.fileUrl);
-        return NextResponse.json({ success: true, data: { replayUrl: anyMatch.fileUrl } });
+      if (match) {
+        console.log('[PLAYBACK REPLAY] using uploaded MP4:', match.fileUrl);
+        return NextResponse.json({ success: true, data: { replayUrl: match.fileUrl } });
       }
     }
 

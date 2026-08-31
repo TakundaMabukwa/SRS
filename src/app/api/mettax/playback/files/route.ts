@@ -72,7 +72,7 @@ export async function POST(req: NextRequest) {
     const defaultEnd = (endTime || now.toISOString()).replace('T', ' ').slice(0, 19);
     const defaultStart = startTime || new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString().replace('T', ' ').slice(0, 19);
 
-    // Try history/list first
+    // ── Step 1: Try history/list (requires device online) ──
     const data = await mettaxPost('/video/history/list', {
       deviceId,
       channelId: Number(channelId || 1),
@@ -80,9 +80,10 @@ export async function POST(req: NextRequest) {
       endTime: defaultEnd,
     });
 
-    console.log('[PLAYBACK FILES] deviceId:', deviceId, 'history/list code:', data.code);
+    console.log('[PLAYBACK FILES] deviceId:', deviceId, 'history/list code:', data.code, 'msg:', data.msg);
 
-    if (data.code === 0 && Array.isArray(data.data) && data.data.length > 0) {
+    // Device online and returned files
+    if (data.code === 0 && Array.isArray(data.data)) {
       const records = data.data
         .filter((r: any) => !channelId || r.channelId === Number(channelId))
         .map((r: any) => ({
@@ -94,11 +95,31 @@ export async function POST(req: NextRequest) {
           fileUrl: r.fileUrl || null,
           fileType: r.fileType || '',
         }));
+
+      // Check if any files need uploading (fileUrl is null)
+      const needsUpload = records.filter((r: any) => !r.fileUrl);
+      if (needsUpload.length > 0) {
+        console.log('[PLAYBACK FILES]', needsUpload.length, 'files need uploading, triggering upload');
+        for (const f of needsUpload) {
+          try {
+            await mettaxPost('/video/history/upload', {
+              deviceId,
+              channelId: f.channelId,
+              startTime: f.startTime,
+              endTime: f.endTime,
+            });
+          } catch (e) {
+            console.log('[PLAYBACK FILES] upload trigger failed for', f.startTime, e);
+          }
+        }
+      }
+
+      console.log('[PLAYBACK FILES] returning', records.length, 'files from device');
       return NextResponse.json({ success: true, data: { files: records } });
     }
 
-    // Fallback: use upload tasks (works even when device is offline)
-    console.log('[PLAYBACK FILES] history/list empty or offline, trying upload tasks for', deviceId);
+    // ── Step 2: Device offline or no files — fall back to upload tasks ──
+    console.log('[PLAYBACK FILES] device offline or empty, checking upload tasks');
     const taskData = await mettaxPost('/video/history/upload/task', {
       pageSize: 200,
       pageIndex: 1,
@@ -108,7 +129,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: true, data: { files: [] } });
     }
 
-    // Filter tasks for this device, with completed uploads (status=1) and valid fileUrl
     const deviceTasks = taskData.data.records.filter((t: any) =>
       t.deviceId === deviceId &&
       t.status === 1 &&
