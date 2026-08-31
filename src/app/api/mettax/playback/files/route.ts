@@ -73,30 +73,21 @@ export async function POST(req: NextRequest) {
     const defaultStart = startTime || new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString().replace('T', ' ').slice(0, 19);
 
     const body: Record<string, unknown> = {
-      pageSize: 50,
-      pageIndex: 1,
-      deviceIds: deviceId,
+      deviceId,
+      channelId: Number(channelId || 1),
       startTime: defaultStart,
       endTime: defaultEnd,
-      queryType: 'Device',
     };
 
-    const data = await mettaxPost('/gallery/page/file/v2', body);
+    const data = await mettaxPost('/video/history/list', body);
 
-    console.log('[PLAYBACK FILES] deviceId:', deviceId, 'code:', data.code, 'total:', data.data?.total, 'records:', data.data?.records?.length);
+    console.log('[PLAYBACK FILES] deviceId:', deviceId, 'code:', data.code, 'records:', data.data?.length);
 
     if (data.code !== 0) {
       return NextResponse.json({ success: false, message: data.msg || 'Failed', data: { files: [] } });
     }
 
-    const allRecords = data.data?.records || [];
-    const videoRecords = allRecords.filter((r: any) => r.fileType === '02');
-    const imageRecords = allRecords.filter((r: any) => r.fileType === '00');
-
-    console.log('[PLAYBACK FILES] all:', allRecords.length, 'video(02):', videoRecords.length, 'image(00):', imageRecords.length);
-    if (allRecords.length > 0) {
-      console.log('[PLAYBACK FILES] sample types:', allRecords.slice(0, 5).map((r: any) => r.fileType));
-    }
+    const allRecords = Array.isArray(data.data) ? data.data : [];
 
     const records = allRecords
       .filter((r: any) => !channelId || r.channelId === Number(channelId))
@@ -104,8 +95,8 @@ export async function POST(req: NextRequest) {
         deviceName: r.deviceName || '',
         channelId: r.channelId,
         fileSize: r.fileSize || 0,
-        startTime: r.createTime || '',
-        endTime: r.createTime || '',
+        startTime: r.startTime || '',
+        endTime: r.endTime || '',
         fileUrl: r.fileUrl || null,
         fileType: r.fileType || '',
       }));

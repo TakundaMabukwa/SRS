@@ -72,7 +72,7 @@ export async function POST(req: NextRequest) {
       deviceId,
       channelId: Number(channelId || 1),
       playbackType: 0,
-      fastForwardOrBackward: 0,
+      fastForwardOrBackward: 1,
       startTime,
       endTime,
     });
