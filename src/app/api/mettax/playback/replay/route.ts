@@ -11,10 +11,10 @@ let cachedUploadTasks: any[] = [];
 let uploadTasksExpiry = 0;
 const UPLOAD_CACHE_TTL = 2 * 60 * 1000;
 
-const agent = new https.Agent({ rejectUnauthorized: false });
+const agent = new https.Agent({ rejectUnauthorized: false, keepAlive: true });
 
-function mettaxPostRaw(endpoint: string, body: Record<string, unknown>, token?: string): Promise<any> {
-  return new Promise((resolve, reject) => {
+function mettaxPostRaw(endpoint: string, body: Record<string, unknown>, token?: string, timeoutMs = 15000): Promise<any> {
+  return new Promise((resolve) => {
     const url = new URL(`${METTAX_BASE}${endpoint}`);
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (token) headers['Authorization'] = token;
@@ -28,6 +28,7 @@ function mettaxPostRaw(endpoint: string, body: Record<string, unknown>, token?: 
       method: 'POST',
       headers,
       agent,
+      timeout: timeoutMs,
     }, (res) => {
       let data = '';
       res.on('data', (chunk) => { data += chunk; });
@@ -37,7 +38,8 @@ function mettaxPostRaw(endpoint: string, body: Record<string, unknown>, token?: 
         catch { resolve({ code: -1, msg: 'Invalid JSON' }); }
       });
     });
-    req.on('error', reject);
+    req.on('timeout', () => { req.destroy(); resolve({ code: -1, msg: 'timeout' }); });
+    req.on('error', (err) => resolve({ code: -1, msg: err.message }));
     req.write(bodyStr);
     req.end();
   });
@@ -52,14 +54,14 @@ async function getMettaxToken(): Promise<string> {
   return cachedToken;
 }
 
-async function mettaxPost(endpoint: string, body: Record<string, unknown>) {
+async function mettaxPost(endpoint: string, body: Record<string, unknown>, timeoutMs = 15000) {
   const token = await getMettaxToken();
-  let data = await mettaxPostRaw(endpoint, body, token);
+  let data = await mettaxPostRaw(endpoint, body, token, timeoutMs);
   if (data.code === 10000 || data.code === 10001) {
     cachedToken = null;
     tokenExpiry = 0;
     const newToken = await getMettaxToken();
-    data = await mettaxPostRaw(endpoint, body, newToken);
+    data = await mettaxPostRaw(endpoint, body, newToken, timeoutMs);
   }
   return data;
 }
@@ -68,7 +70,7 @@ async function getUploadTasks(): Promise<any[]> {
   if (cachedUploadTasks.length > 0 && Date.now() < uploadTasksExpiry) {
     return cachedUploadTasks;
   }
-  const taskData = await mettaxPost('/video/history/upload/task', { pageSize: 200, pageIndex: 1 });
+  const taskData = await mettaxPost('/video/history/upload/task', { pageSize: 200, pageIndex: 1 }, 15000);
   if (taskData.code === 0 && Array.isArray(taskData.data?.records)) {
     cachedUploadTasks = taskData.data.records;
     uploadTasksExpiry = Date.now() + UPLOAD_CACHE_TTL;
@@ -83,7 +85,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, message: 'deviceId, startTime, endTime required' });
     }
 
-    // ── Step 1: Try live replay (requires device online) ──
+    // ── Step 1: Try live replay (streams from device, 10s timeout) ──
     const data = await mettaxPost('/video/history/replay', {
       deviceId,
       channelId: Number(channelId || 1),
@@ -91,7 +93,7 @@ export async function POST(req: NextRequest) {
       fastForwardOrBackward: 1,
       startTime,
       endTime,
-    });
+    }, 10000);
 
     console.log('[PLAYBACK REPLAY] deviceId:', deviceId, 'code:', data.code, 'msg:', data.msg);
 
@@ -100,11 +102,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: true, data: { replayUrl: data.data } });
     }
 
-    // ── Step 2: Device offline — fall back to cached uploaded MP4 ──
-    console.log('[PLAYBACK REPLAY] live replay failed, checking cached upload tasks');
+    // ── Step 2: Device offline/slow — fall back to cached uploaded MP4 ──
+    console.log('[PLAYBACK REPLAY] live replay unavailable, checking cached upload tasks');
     const allTasks = await getUploadTasks();
 
-    // Best match: same device, channel, within time range
     let match = allTasks.find((t: any) =>
       t.deviceId === deviceId &&
       t.status === 1 &&
@@ -114,7 +115,6 @@ export async function POST(req: NextRequest) {
       t.fileEndTime >= startTime
     );
 
-    // Fallback: any completed file for this device+channel
     if (!match) {
       match = allTasks.find((t: any) =>
         t.deviceId === deviceId &&
@@ -129,7 +129,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: true, data: { replayUrl: match.fileUrl } });
     }
 
-    return NextResponse.json({ success: false, message: data.msg || 'No replay available. Device may be offline.' });
+    return NextResponse.json({ success: false, message: data.msg === 'timeout' ? 'Device did not respond. It may be offline.' : (data.msg || 'No replay available.') });
   } catch (err: any) {
     return NextResponse.json({ success: false, message: err.message });
   }

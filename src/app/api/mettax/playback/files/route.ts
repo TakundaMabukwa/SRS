@@ -11,9 +11,9 @@ let cachedUploadTasks: any[] = [];
 let uploadTasksExpiry = 0;
 const UPLOAD_CACHE_TTL = 2 * 60 * 1000;
 
-const agent = new https.Agent({ rejectUnauthorized: false });
+const agent = new https.Agent({ rejectUnauthorized: false, keepAlive: true });
 
-function mettaxPostRaw(endpoint: string, body: Record<string, unknown>, token?: string): Promise<any> {
+function mettaxPostRaw(endpoint: string, body: Record<string, unknown>, token?: string, timeoutMs = 15000): Promise<any> {
   return new Promise((resolve, reject) => {
     const url = new URL(`${METTAX_BASE}${endpoint}`);
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -28,6 +28,7 @@ function mettaxPostRaw(endpoint: string, body: Record<string, unknown>, token?: 
       method: 'POST',
       headers,
       agent,
+      timeout: timeoutMs,
     }, (res) => {
       let data = '';
       res.on('data', (chunk) => { data += chunk; });
@@ -37,7 +38,8 @@ function mettaxPostRaw(endpoint: string, body: Record<string, unknown>, token?: 
         catch { resolve({ code: -1, msg: 'Invalid JSON' }); }
       });
     });
-    req.on('error', reject);
+    req.on('timeout', () => { req.destroy(); resolve({ code: -1, msg: 'timeout' }); });
+    req.on('error', (err) => resolve({ code: -1, msg: err.message }));
     req.write(bodyStr);
     req.end();
   });
@@ -52,14 +54,14 @@ async function getMettaxToken(): Promise<string> {
   return cachedToken;
 }
 
-async function mettaxPost(endpoint: string, body: Record<string, unknown>) {
+async function mettaxPost(endpoint: string, body: Record<string, unknown>, timeoutMs = 15000) {
   const token = await getMettaxToken();
-  let data = await mettaxPostRaw(endpoint, body, token);
+  let data = await mettaxPostRaw(endpoint, body, token, timeoutMs);
   if (data.code === 10000 || data.code === 10001) {
     cachedToken = null;
     tokenExpiry = 0;
     const newToken = await getMettaxToken();
-    data = await mettaxPostRaw(endpoint, body, newToken);
+    data = await mettaxPostRaw(endpoint, body, newToken, timeoutMs);
   }
   return data;
 }
@@ -68,7 +70,7 @@ async function getUploadTasks(): Promise<any[]> {
   if (cachedUploadTasks.length > 0 && Date.now() < uploadTasksExpiry) {
     return cachedUploadTasks;
   }
-  const taskData = await mettaxPost('/video/history/upload/task', { pageSize: 200, pageIndex: 1 });
+  const taskData = await mettaxPost('/video/history/upload/task', { pageSize: 200, pageIndex: 1 }, 15000);
   if (taskData.code === 0 && Array.isArray(taskData.data?.records)) {
     cachedUploadTasks = taskData.data.records;
     uploadTasksExpiry = Date.now() + UPLOAD_CACHE_TTL;
@@ -86,22 +88,29 @@ export async function POST(req: NextRequest) {
     const now = new Date();
     const defaultEnd = (endTime || now.toISOString()).replace('T', ' ').slice(0, 19);
     const defaultStart = startTime || new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString().replace('T', ' ').slice(0, 19);
+    const dayPrefix = defaultStart.slice(0, 10);
 
-    // ── Step 1: Try history/list (device online) ──
-    const data = await mettaxPost('/video/history/list', {
-      deviceId,
-      channelId: Number(channelId || 1),
-      startTime: defaultStart,
-      endTime: defaultEnd,
-    });
+    // Run both calls in parallel — history/list may timeout, upload tasks are cached
+    const [historyData, allTasks] = await Promise.all([
+      mettaxPost('/video/history/list', {
+        deviceId,
+        channelId: Number(channelId || 1),
+        startTime: defaultStart,
+        endTime: defaultEnd,
+      }, 10000).catch((e) => {
+        console.log('[PLAYBACK FILES] history/list failed:', e.message);
+        return { code: -1, msg: e.message };
+      }),
+      getUploadTasks(),
+    ]);
 
-    console.log('[PLAYBACK FILES] deviceId:', deviceId, 'history/list code:', data.code, 'msg:', data.msg);
+    console.log('[PLAYBACK FILES] deviceId:', deviceId, 'history/list code:', historyData.code, 'msg:', historyData.msg);
 
     let files: any[] = [];
 
-    if (data.code === 0 && Array.isArray(data.data)) {
-      // Return ALL files from history/list — they're on the device and streamable via replay
-      files = data.data
+    // History/list files (on device, streamable via replay)
+    if (historyData.code === 0 && Array.isArray(historyData.data)) {
+      files = historyData.data
         .filter((r: any) => !channelId || r.channelId === Number(channelId))
         .map((r: any) => ({
           deviceName: r.deviceName || '',
@@ -113,13 +122,10 @@ export async function POST(req: NextRequest) {
           fileType: r.fileType || '',
           streamable: true,
         }));
-      console.log('[PLAYBACK FILES] history/list returned', files.length, 'files from device');
+      console.log('[PLAYBACK FILES] history/list:', files.length, 'files');
     }
 
-    // ── Step 2: Also check upload tasks for this device + day ──
-    const allTasks = await getUploadTasks();
-    const dayPrefix = defaultStart.slice(0, 10); // "2026-08-31"
-
+    // Upload task files (already uploaded to cloud, have fileUrl)
     const taskFiles = allTasks
       .filter((t: any) =>
         t.deviceId === deviceId &&
@@ -139,7 +145,7 @@ export async function POST(req: NextRequest) {
         fileType: 'mp4',
       }));
 
-    // Merge: history/list files + upload task files, deduplicate by startTime
+    // Merge, deduplicate by channel+startTime
     const seen = new Set(files.map((f: any) => `${f.channelId}_${f.startTime}`));
     for (const tf of taskFiles) {
       const key = `${tf.channelId}_${tf.startTime}`;
@@ -149,10 +155,9 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Sort by startTime
     files.sort((a: any, b: any) => (a.startTime || '').localeCompare(b.startTime || ''));
 
-    console.log('[PLAYBACK FILES] total available:', files.length, 'for device', deviceId);
+    console.log('[PLAYBACK FILES] total:', files.length, 'for', deviceId);
     return NextResponse.json({ success: true, data: { files } });
   } catch (err: any) {
     return NextResponse.json({ success: false, message: err.message, data: { files: [] } });
