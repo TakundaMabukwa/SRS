@@ -103,7 +103,7 @@ export function ResolveAlertsModal({
           if (registration) params.set('fleet', registration);
           const res = await fetch(`${baseUrl}/telematics/vehicle-alerts/${encodeURIComponent(deviceId || 'none')}?${params.toString()}`, {
             cache: "no-store",
-            signal: AbortSignal.timeout(10000),
+            signal: AbortSignal.timeout(20000),
           });
           const data = await res.json();
           return Array.isArray(data?.alerts) ? data.alerts : [];
@@ -193,66 +193,52 @@ export function ResolveAlertsModal({
     });
   }, [allAlerts]);
 
-  const resolveSingle = useCallback(async (resolveId: string) => {
+  const resolveBulk = useCallback(async (ids: string[]) => {
     try {
-      const res = await fetch(`${baseUrl}/alerts/${encodeURIComponent(resolveId)}/close`, {
+      const res = await fetch(`${baseUrl}/alerts/bulk-close`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-internal-key": "srs-internal-2026" },
-        body: JSON.stringify({ closureType: "resolved", notes: "Bulk resolved from resolve modal" }),
+        body: JSON.stringify({ alertIds: ids, closureType: "resolved", notes: "Bulk resolved from resolve modal" }),
       });
       const data = await res.json();
-      return data.success === true;
-    } catch { return false; }
+      return data.success === true ? data.resolved : 0;
+    } catch { return 0; }
   }, [baseUrl]);
 
   const handleResolveSelected = useCallback(async () => {
     if (selectedIds.size === 0) { toast.warning("No alerts selected"); return; }
     setResolving(true);
-    let resolved = 0;
-    let failed = 0;
     const toResolve = allAlerts.filter((a) => selectedIds.has(a._key));
+    const ids = toResolve.map((a) => a._resolveId).filter(Boolean);
 
-    for (let i = 0; i < toResolve.length; i += 5) {
-      const batch = toResolve.slice(i, i + 5);
-      setResolvingIds(new Set(batch.map((a) => a._key)));
-      const results = await Promise.all(batch.map((a) => resolveSingle(a._resolveId)));
-      resolved += results.filter(Boolean).length;
-      failed += results.filter((r) => !r).length;
-    }
+    const resolved = await resolveBulk(ids);
 
     setResolving(false);
     setResolvingIds(new Set());
     if (resolved > 0) {
-      toast.success(`${resolved} alert${resolved !== 1 ? "s" : ""} resolved${failed > 0 ? ` (${failed} failed)` : ""}`);
+      toast.success(`${resolved} alert${resolved !== 1 ? "s" : ""} resolved`);
       onResolved();
     } else {
       toast.error("Failed to resolve alerts");
     }
-  }, [selectedIds, allAlerts, resolveSingle, onResolved]);
+  }, [selectedIds, allAlerts, resolveBulk, onResolved]);
 
   const handleResolveAll = useCallback(async () => {
     if (allAlerts.length === 0) return;
     setResolving(true);
-    let resolved = 0;
-    let failed = 0;
+    const ids = allAlerts.map((a) => a._resolveId).filter(Boolean);
 
-    for (let i = 0; i < allAlerts.length; i += 5) {
-      const batch = allAlerts.slice(i, i + 5);
-      setResolvingIds(new Set(batch.map((a) => a._key)));
-      const results = await Promise.all(batch.map((a) => resolveSingle(a._resolveId)));
-      resolved += results.filter(Boolean).length;
-      failed += results.filter((r) => !r).length;
-    }
+    const resolved = await resolveBulk(ids);
 
     setResolving(false);
     setResolvingIds(new Set());
     if (resolved > 0) {
-      toast.success(`${resolved} alert${resolved !== 1 ? "s" : ""} resolved${failed > 0 ? ` (${failed} failed)` : ""}`);
+      toast.success(`${resolved} alert${resolved !== 1 ? "s" : ""} resolved`);
       onResolved();
     } else {
       toast.error("Failed to resolve alerts");
     }
-  }, [allAlerts, resolveSingle, onResolved]);
+  }, [allAlerts, resolveBulk, onResolved]);
 
   const severityColor = (sev: string) => {
     switch (sev?.toLowerCase()) {
