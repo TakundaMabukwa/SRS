@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Video, RefreshCw, Search, Wifi, WifiOff, Play, Loader2, X, ChevronLeft, Clock, Calendar, Download } from "lucide-react";
+import { Video, RefreshCw, Search, Wifi, WifiOff, Play, Loader2, X, ChevronLeft, Clock, Calendar, Download, AlertTriangle } from "lucide-react";
 import { useSupabaseAuth } from "@/context/supabase-auth-context";
 import { UniversalVideoPlayer } from "./universal-video-player";
 import { useCostCenters } from "@/context/cost-centers-context";
@@ -144,6 +144,7 @@ export default function PlaybackDashboardTab({ selectedCostCenterIds = [] }: Pla
   const [files, setFiles] = useState<HistoryFile[]>([]);
   const [filesSearched, setFilesSearched] = useState(false);
   const [replayUrl, setReplayUrl] = useState("");
+  const [replayFileType, setReplayFileType] = useState<"mp4" | "flv" | "avi" | "other">("other");
   const [replayLoading, setReplayLoading] = useState(false);
   const [replayError, setReplayError] = useState("");
   const [earliestFootage, setEarliestFootage] = useState<string | null>(null);
@@ -278,6 +279,7 @@ export default function PlaybackDashboardTab({ selectedCostCenterIds = [] }: Pla
     setFiles([]);
     setFilesSearched(false);
     setReplayUrl("");
+    setReplayFileType("other");
     setReplayError("");
     setEarliestFootage(null);
     setLatestFootage(null);
@@ -292,6 +294,7 @@ export default function PlaybackDashboardTab({ selectedCostCenterIds = [] }: Pla
     setFiles([]);
     setFilesSearched(false);
     setReplayUrl("");
+    setReplayFileType("other");
     setReplayError("");
     setEarliestFootage(null);
     setLatestFootage(null);
@@ -360,6 +363,7 @@ export default function PlaybackDashboardTab({ selectedCostCenterIds = [] }: Pla
     setReplayLoading(true);
     setReplayError("");
     setReplayUrl("");
+    setReplayFileType("other");
 
     const startCombined = `${selectedDate} ${startTime}`;
     const endCombined = `${selectedDate} ${endTime}`;
@@ -380,7 +384,12 @@ export default function PlaybackDashboardTab({ selectedCostCenterIds = [] }: Pla
       const json = await res.json().catch(() => ({}));
 
       if (json.success && json.data?.replayUrl) {
-        setReplayUrl(json.data.replayUrl);
+        const url: string = json.data.replayUrl;
+        setReplayUrl(url);
+        if (url.endsWith(".avi")) setReplayFileType("avi");
+        else if (url.endsWith(".mp4")) setReplayFileType("mp4");
+        else if (url.endsWith(".flv") || url.includes(".history.flv")) setReplayFileType("flv");
+        else setReplayFileType("mp4");
       } else {
         setReplayError(json.message || "No replay available. Device may be offline.");
       }
@@ -568,7 +577,7 @@ export default function PlaybackDashboardTab({ selectedCostCenterIds = [] }: Pla
                   </Button>
                   <Button
                     variant="outline"
-                    onClick={() => { setReplayUrl(""); setReplayError(""); }}
+                    onClick={() => { setReplayUrl(""); setReplayFileType("other"); setReplayError(""); }}
                     className="border-slate-300"
                   >
                     Close
@@ -604,24 +613,55 @@ export default function PlaybackDashboardTab({ selectedCostCenterIds = [] }: Pla
                           size="sm"
                           className="h-7 gap-1.5 border-emerald-500/40 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20"
                           onClick={() => {
-                            const [sh, sm, ss] = startTime.split(":").map(Number);
-                            const [eh, em, es] = endTime.split(":").map(Number);
-                            const startSec = sh * 3600 + sm * 60 + ss;
-                            const endSec = eh * 3600 + em * 60 + es;
-                            const duration = Math.max(endSec - startSec, 60);
-                            window.location.href = `/api/video-server/playback/download-mp4?url=${encodeURIComponent(replayUrl)}&duration=${duration}`;
+                            const a = document.createElement("a");
+                            a.href = replayUrl;
+                            a.download = "";
+                            a.target = "_blank";
+                            a.rel = "noopener noreferrer";
+                            document.body.appendChild(a);
+                            a.click();
+                            document.body.removeChild(a);
                           }}
                         >
                           <Download className="h-3.5 w-3.5" />
-                          Download MP4
+                          Download {replayFileType.toUpperCase()}
                         </Button>
                       </div>
                     </div>
-                    <UniversalVideoPlayer
-                      url={replayUrl}
-                      className="flex-1 w-full rounded-xl border border-slate-800 bg-black"
-                      autoPlay
-                    />
+                    {replayFileType === "avi" ? (
+                      <div className="flex flex-1 items-center justify-center rounded-xl border border-amber-500/30 bg-amber-950/30 p-8">
+                        <div className="text-center max-w-sm">
+                          <AlertTriangle className="mx-auto h-12 w-12 text-amber-400 mb-3" />
+                          <p className="text-sm font-semibold text-amber-300">Cannot play .avi format</p>
+                          <p className="mt-1.5 text-xs text-slate-400">
+                            This video file is in AVI format which is not supported for browser playback.
+                            Please download the file to view it.
+                          </p>
+                          <Button
+                            className="mt-4 bg-amber-600 hover:bg-amber-700 text-white gap-2"
+                            onClick={() => {
+                              const a = document.createElement("a");
+                              a.href = replayUrl;
+                              a.download = "";
+                              a.target = "_blank";
+                              a.rel = "noopener noreferrer";
+                              document.body.appendChild(a);
+                              a.click();
+                              document.body.removeChild(a);
+                            }}
+                          >
+                            <Download className="h-4 w-4" />
+                            Download .avi File
+                          </Button>
+                        </div>
+                      </div>
+                    ) : (
+                      <UniversalVideoPlayer
+                        url={replayUrl}
+                        className="flex-1 w-full rounded-xl border border-slate-800 bg-black"
+                        autoPlay
+                      />
+                    )}
                   </div>
                 ) : (
                   <div className="flex flex-1 items-center justify-center">
