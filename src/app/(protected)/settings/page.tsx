@@ -9,6 +9,12 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
   Plus,
   Pencil,
   Trash2,
@@ -261,49 +267,54 @@ function AlertConfigSection() {
             </Button>
           </CardHeader>
           <CardContent>
-            {showDefForm && (
-              <div className="mb-4 p-4 border rounded-lg bg-gray-50 space-y-3">
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-sm font-medium">Name</label>
-                    <Input value={defForm.name} onChange={(e) => setDefForm({ ...defForm, name: e.target.value })} placeholder="e.g. Harsh Braking" />
+            <Dialog open={showDefForm} onOpenChange={(open) => { if (!open) { setShowDefForm(false); setEditingDef(null); } }}>
+              <DialogContent className="sm:max-w-[500px]">
+                <DialogHeader>
+                  <DialogTitle>{editingDef ? "Edit Alert Type" : "Add Alert Type"}</DialogTitle>
+                </DialogHeader>
+                <div className="space-y-4 pt-2">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-sm font-medium">Name</label>
+                      <Input value={defForm.name} onChange={(e) => setDefForm({ ...defForm, name: e.target.value })} placeholder="e.g. Harsh Braking" />
+                    </div>
+                    <div>
+                      <label className="text-sm font-medium">Category</label>
+                      <Select value={defForm.category} onValueChange={(v: "telematics" | "video") => setDefForm({ ...defForm, category: v })}>
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="telematics">Telematics</SelectItem>
+                          <SelectItem value="video">Video</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div>
+                      <label className="text-sm font-medium">Signal Code</label>
+                      <Input value={defForm.signal_code} onChange={(e) => setDefForm({ ...defForm, signal_code: e.target.value })} placeholder="e.g. HARSH_BRAKE" />
+                    </div>
+                    <div>
+                      <label className="text-sm font-medium">Severity</label>
+                      <Select value={defForm.severity} onValueChange={(v: Severity) => setDefForm({ ...defForm, severity: v })}>
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          {SEVERITY_OPTIONS.map((s) => (
+                            <SelectItem key={s} value={s}>{s}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
                   </div>
                   <div>
-                    <label className="text-sm font-medium">Category</label>
-                    <Select value={defForm.category} onValueChange={(v: "telematics" | "video") => setDefForm({ ...defForm, category: v })}>
-                      <SelectTrigger><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="telematics">Telematics</SelectItem>
-                        <SelectItem value="video">Video</SelectItem>
-                      </SelectContent>
-                    </Select>
+                    <label className="text-sm font-medium">Description</label>
+                    <Input value={defForm.description || ""} onChange={(e) => setDefForm({ ...defForm, description: e.target.value })} placeholder="Optional description" />
                   </div>
-                  <div>
-                    <label className="text-sm font-medium">Signal Code</label>
-                    <Input value={defForm.signal_code} onChange={(e) => setDefForm({ ...defForm, signal_code: e.target.value })} placeholder="e.g. HARSH_BRAKE" />
-                  </div>
-                  <div>
-                    <label className="text-sm font-medium">Severity</label>
-                    <Select value={defForm.severity} onValueChange={(v: Severity) => setDefForm({ ...defForm, severity: v })}>
-                      <SelectTrigger><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        {SEVERITY_OPTIONS.map((s) => (
-                          <SelectItem key={s} value={s}>{s}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                  <div className="flex gap-2 justify-end">
+                    <Button size="sm" variant="outline" onClick={() => { setShowDefForm(false); setEditingDef(null); }}>Cancel</Button>
+                    <Button size="sm" onClick={handleSaveDef}><Save className="w-4 h-4 mr-1" /> {editingDef ? "Update" : "Create"}</Button>
                   </div>
                 </div>
-                <div>
-                  <label className="text-sm font-medium">Description</label>
-                  <Input value={defForm.description} onChange={(e) => setDefForm({ ...defForm, description: e.target.value })} placeholder="Optional description" />
-                </div>
-                <div className="flex gap-2">
-                  <Button size="sm" onClick={handleSaveDef}><Save className="w-4 h-4 mr-1" /> {editingDef ? "Update" : "Create"}</Button>
-                  <Button size="sm" variant="outline" onClick={() => { setShowDefForm(false); setEditingDef(null); }}>Cancel</Button>
-                </div>
-              </div>
-            )}
+              </DialogContent>
+            </Dialog>
 
             <table className="w-full text-sm">
               <thead>
