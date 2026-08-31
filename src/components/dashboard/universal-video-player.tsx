@@ -111,18 +111,16 @@ export function UniversalVideoPlayer({
           if (!destroyed) setPlaybackError("FLV not supported in this browser.");
           return;
         }
-        // Proxy external FLV URLs through backend to avoid CORS issues
-        // But skip proxy for skycamx.co.za (has CORS headers) and direct Mettax URLs
+        // Always proxy external FLV URLs through backend to avoid CORS/codec issues
         const isExternalUrl = /^https?:\/\//i.test(activeUrl) && !activeUrl.includes(window.location.host);
-        const isSkycamx = /skycamx\.co\.za|mettaxiot\.com/i.test(activeUrl);
         const alreadyProxied = /\/(flv-proxy|stream\/proxy)/i.test(activeUrl);
-        const needsProxy = !alreadyProxied && isExternalUrl && !isSkycamx;
+        const needsProxy = !alreadyProxied && isExternalUrl;
         const proxyUrl = needsProxy
           ? `/api/video-server/playback/flv-proxy?url=${encodeURIComponent(activeUrl)}`
           : activeUrl;
         const player = flvjs.createPlayer(
-          { type: "flv", url: proxyUrl, isLive: true },
-          { enableWorker: false, enableStashBuffer: true, stashInitialSize: 384, liveBufferLatencyChasing: true, liveBufferLatencyMaxLatency: 3 }
+          { type: "flv", url: proxyUrl, isLive: true, hasAudio: false },
+          { enableWorker: false, enableStashBuffer: false, stashInitialSize: 128, liveBufferLatencyChasing: true, liveBufferLatencyMaxLatency: 3 }
         );
         flvPlayerRef.current = player;
         player.attachMediaElement(videoEl);
