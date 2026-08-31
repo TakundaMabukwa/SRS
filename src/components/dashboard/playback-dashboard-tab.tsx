@@ -390,14 +390,6 @@ export default function PlaybackDashboardTab({ selectedCostCenterIds = [] }: Pla
     }
   }, [selectedVehicle, selectedChannel, selectedDate, startTime, endTime]);
 
-  const playFullRange = useCallback(() => {
-    if (earliestFootage && latestFootage) {
-      setStartTime(earliestFootage.split(" ")[1] || "00:00:00");
-      setEndTime(latestFootage.split(" ")[1] || "23:59:59");
-      setTimeout(() => void playVideo(), 50);
-    }
-  }, [earliestFootage, latestFootage, playVideo]);
-
   const onlineCount = useMemo(() => filteredVehicles.filter((v) => v.online).length, [filteredVehicles]);
 
   return (
@@ -526,14 +518,19 @@ export default function PlaybackDashboardTab({ selectedCostCenterIds = [] }: Pla
                 </Button>
 
                 {filesSearched && files.length > 0 && (
-                  <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3">
-                    <p className="text-[11px] font-medium text-emerald-700">{files.length} segment{files.length !== 1 ? "s" : ""} found</p>
-                    <p className="mt-0.5 text-[10px] text-emerald-600">
+                  <div className="rounded-lg border border-blue-200 bg-blue-50 p-3">
+                    <p className="text-[11px] font-medium text-blue-700">{files.length} clip{files.length !== 1 ? "s" : ""} available</p>
+                    <p className="mt-0.5 text-[10px] text-blue-600">
                       {formatTime(earliestFootage || "")} — {formatTime(latestFootage || "")} SAST
                     </p>
-                    <Button size="sm" variant="outline" className="mt-2 h-7 w-full text-[10px] border-emerald-300 text-emerald-700 hover:bg-emerald-100" onClick={() => void playFullRange()}>
-                      <Play className="mr-1 h-3 w-3" /> Play Full Range
-                    </Button>
+                    <p className="mt-1 text-[10px] text-blue-500">Adjust start/end times below, then click Play</p>
+                  </div>
+                )}
+
+                {filesSearched && files.length === 0 && (
+                  <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
+                    <p className="text-[11px] font-medium text-amber-700">No footage available</p>
+                    <p className="mt-0.5 text-[10px] text-amber-600">No uploaded files found for this date/channel.</p>
                   </div>
                 )}
 

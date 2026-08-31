@@ -9,7 +9,7 @@ let cachedToken: string | null = null;
 let tokenExpiry = 0;
 let cachedUploadTasks: any[] = [];
 let uploadTasksExpiry = 0;
-const UPLOAD_CACHE_TTL = 2 * 60 * 1000; // 2 minutes
+const UPLOAD_CACHE_TTL = 2 * 60 * 1000;
 
 const agent = new https.Agent({ rejectUnauthorized: false });
 
@@ -87,7 +87,7 @@ export async function POST(req: NextRequest) {
     const defaultEnd = (endTime || now.toISOString()).replace('T', ' ').slice(0, 19);
     const defaultStart = startTime || new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString().replace('T', ' ').slice(0, 19);
 
-    // ── Step 1: Try history/list (requires device online) ──
+    // ── Step 1: Try history/list (device online) ──
     const data = await mettaxPost('/video/history/list', {
       deviceId,
       channelId: Number(channelId || 1),
@@ -97,65 +97,62 @@ export async function POST(req: NextRequest) {
 
     console.log('[PLAYBACK FILES] deviceId:', deviceId, 'history/list code:', data.code, 'msg:', data.msg);
 
-    // Device online and returned files
+    let files: any[] = [];
+
     if (data.code === 0 && Array.isArray(data.data)) {
-      const records = data.data
-        .filter((r: any) => !channelId || r.channelId === Number(channelId))
+      // Only include files that have a fileUrl (actually uploaded)
+      files = data.data
+        .filter((r: any) => r.fileUrl && (!channelId || r.channelId === Number(channelId)))
         .map((r: any) => ({
           deviceName: r.deviceName || '',
           channelId: r.channelId,
           fileSize: r.fileSize || 0,
           startTime: r.startTime || '',
           endTime: r.endTime || '',
-          fileUrl: r.fileUrl || null,
+          fileUrl: r.fileUrl,
           fileType: r.fileType || '',
         }));
-
-      // Check if any files need uploading (fileUrl is null)
-      const needsUpload = records.filter((r: any) => !r.fileUrl);
-      if (needsUpload.length > 0) {
-        console.log('[PLAYBACK FILES]', needsUpload.length, 'files need uploading, triggering upload');
-        for (const f of needsUpload) {
-          try {
-            await mettaxPost('/video/history/upload', {
-              deviceId,
-              channelId: f.channelId,
-              startTime: f.startTime,
-              endTime: f.endTime,
-            });
-          } catch (e) {
-            console.log('[PLAYBACK FILES] upload trigger failed for', f.startTime, e);
-          }
-        }
-      }
-
-      console.log('[PLAYBACK FILES] returning', records.length, 'files from device');
-      return NextResponse.json({ success: true, data: { files: records } });
+      console.log('[PLAYBACK FILES] history/list returned', data.data.length, 'total,', files.length, 'with fileUrl');
     }
 
-    // ── Step 2: Device offline or no files — fall back to cached upload tasks ──
-    console.log('[PLAYBACK FILES] device offline or empty, checking cached upload tasks');
+    // ── Step 2: Also check upload tasks for this device + day ──
     const allTasks = await getUploadTasks();
+    const dayPrefix = defaultStart.slice(0, 10); // "2026-08-31"
 
-    const deviceTasks = allTasks.filter((t: any) =>
-      t.deviceId === deviceId &&
-      t.status === 1 &&
-      t.fileUrl &&
-      (!channelId || t.channelId === Number(channelId))
-    );
+    const taskFiles = allTasks
+      .filter((t: any) =>
+        t.deviceId === deviceId &&
+        t.status === 1 &&
+        t.fileUrl &&
+        (!channelId || t.channelId === Number(channelId)) &&
+        t.fileStartTime &&
+        t.fileStartTime.startsWith(dayPrefix)
+      )
+      .map((t: any) => ({
+        deviceName: t.deviceName || '',
+        channelId: t.channelId,
+        fileSize: t.fileSize || 0,
+        startTime: t.fileStartTime || '',
+        endTime: t.fileEndTime || '',
+        fileUrl: t.fileUrl,
+        fileType: 'mp4',
+      }));
 
-    const records = deviceTasks.map((t: any) => ({
-      deviceName: t.deviceName || '',
-      channelId: t.channelId,
-      fileSize: t.fileSize || 0,
-      startTime: t.fileStartTime || '',
-      endTime: t.fileEndTime || '',
-      fileUrl: t.fileUrl || null,
-      fileType: 'mp4',
-    }));
+    // Merge: history/list files + upload task files, deduplicate by startTime
+    const seen = new Set(files.map((f: any) => `${f.channelId}_${f.startTime}`));
+    for (const tf of taskFiles) {
+      const key = `${tf.channelId}_${tf.startTime}`;
+      if (!seen.has(key)) {
+        files.push(tf);
+        seen.add(key);
+      }
+    }
 
-    console.log('[PLAYBACK FILES] upload tasks found:', records.length, 'for device', deviceId);
-    return NextResponse.json({ success: true, data: { files: records } });
+    // Sort by startTime
+    files.sort((a: any, b: any) => (a.startTime || '').localeCompare(b.startTime || ''));
+
+    console.log('[PLAYBACK FILES] total available:', files.length, 'for device', deviceId);
+    return NextResponse.json({ success: true, data: { files } });
   } catch (err: any) {
     return NextResponse.json({ success: false, message: err.message, data: { files: [] } });
   }
