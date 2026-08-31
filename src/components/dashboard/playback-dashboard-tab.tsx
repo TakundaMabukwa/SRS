@@ -333,12 +333,13 @@ export default function PlaybackDashboardTab({ selectedCostCenterIds = [] }: Pla
         // Sort by startTime and get earliest/latest
         const sorted = [...fileList].sort((a, b) => (a.startTime || "").localeCompare(b.startTime || ""));
         const earliest = sorted[0].startTime || "";
-        const latest = sorted[sorted.length - 1].startTime || "";
+        const latestFile = sorted[sorted.length - 1];
+        const latest = latestFile.endTime || latestFile.startTime || "";
         setEarliestFootage(earliest);
         setLatestFootage(latest);
         // Extract time part (after space) from "2026-08-26 20:07:35"
         setStartTime(earliest.split(" ")[1] || "00:00:00");
-        setEndTime(latest.split(" ")[1] || "23:59:59");
+        setEndTime((latest.split(" ")[1] || "23:59:59").replace(/:\d{2}$/, ":59"));
       } else {
         // No files found - set default time range for direct playback
         setEarliestFootage(range.start);

@@ -100,19 +100,20 @@ export async function POST(req: NextRequest) {
     let files: any[] = [];
 
     if (data.code === 0 && Array.isArray(data.data)) {
-      // Only include files that have a fileUrl (actually uploaded)
+      // Return ALL files from history/list — they're on the device and streamable via replay
       files = data.data
-        .filter((r: any) => r.fileUrl && (!channelId || r.channelId === Number(channelId)))
+        .filter((r: any) => !channelId || r.channelId === Number(channelId))
         .map((r: any) => ({
           deviceName: r.deviceName || '',
           channelId: r.channelId,
           fileSize: r.fileSize || 0,
           startTime: r.startTime || '',
           endTime: r.endTime || '',
-          fileUrl: r.fileUrl,
+          fileUrl: r.fileUrl || null,
           fileType: r.fileType || '',
+          streamable: true,
         }));
-      console.log('[PLAYBACK FILES] history/list returned', data.data.length, 'total,', files.length, 'with fileUrl');
+      console.log('[PLAYBACK FILES] history/list returned', files.length, 'files from device');
     }
 
     // ── Step 2: Also check upload tasks for this device + day ──
