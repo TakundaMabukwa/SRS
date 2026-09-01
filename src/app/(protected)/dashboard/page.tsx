@@ -2271,7 +2271,6 @@ export default function Dashboard() {
   const [activeTab, setActiveTab] = useState<string>("video-alerts");
   const [costCenterOptions, setCostCenterOptions] = useState<string[]>([]);
   const [auditData, setAuditData] = useState<any[]>([]);
-  const [auditData, setAuditData] = useState<any[]>([]);
   const [auditLoading, setAuditLoading] = useState(true);
   const [userRole, setUserRole] = useState<string>("");
   const [mapOpen, setMapOpen] = useState(false);
