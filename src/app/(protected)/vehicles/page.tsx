@@ -37,6 +37,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
+import { useCostCenters } from '@/context/cost-centers-context';
 import Link from "next/link";
 import { DataTable } from "@/components/ui/data-table";
 import { initialVehiclesState } from "@/context/vehicles-context/context";
@@ -112,6 +113,7 @@ export default function Vehicles() {
   const [isAddingVehicle, setIsAddingVehicle] = useState(false);
   const router = useRouter();
   const supabase = createClient();
+  const { selectedCostCenterIds } = useCostCenters();
   const [search, setSearch] = useState("");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [selectedVehicleId, setSelectedVehicleId] = useState<number | null>(
@@ -230,12 +232,15 @@ export default function Vehicles() {
   // Filter vehicles based on search
   const filteredVehicles = vehicles.filter((vehicle) => {
     const searchLower = search.toLowerCase();
-    return (
+    const matchesSearch = (
       (vehicle.make || '').toLowerCase().includes(searchLower) ||
       (vehicle.model || '').toLowerCase().includes(searchLower) ||
       (vehicle.registration_number || '').toLowerCase().includes(searchLower) ||
       (vehicle.vehicle_type || '').toLowerCase().includes(searchLower)
     );
+    const vccId = (vehicle as any).cost_center_id;
+    const matchesCostCenter = selectedCostCenterIds.length === 0 || (vccId && selectedCostCenterIds.includes(vccId));
+    return matchesSearch && matchesCostCenter;
   });
 
   // Pagination state & logic (50 per page)

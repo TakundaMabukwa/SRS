@@ -22,6 +22,7 @@ import DriverPerformanceDashboard from '@/components/dashboard/DriverPerformance
 import ExecutiveDashboardEPS from '@/components/dashboard/ExecutiveDashboardEPS'
 import { MaterialCharts } from '@/components/material-charts'
 import { epsApi, BiWeeklyCategory, DailyStats } from '@/lib/eps-api'
+import { useCostCenters } from '@/context/cost-centers-context'
 
 import ViolationsChart from '@/components/charts/ViolationsChart'
 import SpeedingViolationsChart from '@/components/charts/SpeedingViolationsChart'
@@ -70,6 +71,7 @@ type Driver = {
 
 export default function Drivers() {
     const supabase = createClient()
+    const { selectedCostCenterIds } = useCostCenters()
     const [activeTab, setActiveTab] = useState<string>('drivers-management')
 
     const [drivers, setDrivers] = useState<Driver[]>([])
@@ -413,7 +415,9 @@ export default function Drivers() {
 
         const matchesFilter = licenseFilter === 'all' || (licenseFilter === 'sa' && driver.sa_issued) || (licenseFilter === 'foreign' && !driver.sa_issued)
 
-        return matchesSearch && matchesFilter
+        const matchesCostCenter = selectedCostCenterIds.length === 0 || (driver.cost_center_id && selectedCostCenterIds.includes(driver.cost_center_id))
+
+        return matchesSearch && matchesFilter && matchesCostCenter
     })
 
     return (

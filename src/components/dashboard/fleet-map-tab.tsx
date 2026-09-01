@@ -3,6 +3,7 @@
 import React, { useEffect, useState, useRef, useMemo, useCallback } from 'react';
 import { Search, MapPin, AlertTriangle, Gauge, Clock, Zap, EyeOff, Filter, ChevronDown, ChevronLeft } from 'lucide-react';
 import { useGoogleMaps } from '@/hooks/use-google-maps';
+import { useCostCenters } from '@/context/cost-centers-context';
 
 type VehicleStatus = {
   device_id: string;
@@ -140,14 +141,13 @@ export function FleetMapTab() {
   const losPolylineRef = useRef<google.maps.Polyline | null>(null);
   const zonePolygonsRef = useRef<google.maps.Polygon[]>([]);
   const { loaded: googleMapsLoaded, error: googleMapsError } = useGoogleMaps();
+  const { selectedCostCenterIds, costCenterMap } = useCostCenters();
 
   const [vehicleStatuses, setVehicleStatuses] = useState<VehicleStatus[]>([]);
   const [vehicleIdentities, setVehicleIdentities] = useState<Map<string, VehicleIdentity>>(new Map());
   const [priorityZones, setPriorityZones] = useState<Zone[]>([]);
   const [allZones, setAllZones] = useState<Zone[]>([]);
   const [search, setSearch] = useState('');
-  const [costCenterFilter, setCostCenterFilter] = useState<string>('all');
-  const [costCenters, setCostCenters] = useState<string[]>([]);
   const [selectedVehicle, setSelectedVehicle] = useState<string | null>(null);
   const [flashingVehicles, setFlashingVehicles] = useState<Set<string>>(new Set());
   const [flashingMapMarkers, setFlashingMapMarkers] = useState<Set<string>>(new Set());
@@ -168,15 +168,12 @@ export function FleetMapTab() {
         const json = await res.json();
         const rows: VehicleIdentity[] = Array.isArray(json?.vehicles) ? json.vehicles : [];
         const map = new Map<string, VehicleIdentity>();
-        const centers = new Set<string>();
         for (const row of rows) {
           if (row.deviceId) map.set(row.deviceId.toUpperCase(), row);
           if (row.plate) map.set(row.plate.toUpperCase(), row);
           if (row.fleetNumber) map.set(row.fleetNumber.toUpperCase(), row);
-          if (row.costCenter) centers.add(row.costCenter);
         }
         setVehicleIdentities(map);
-        setCostCenters(Array.from(centers).sort());
       } catch (e) { console.warn('[FleetMap] Vehicle lookup failed:', e); }
     };
     fetchIdentities();
@@ -221,15 +218,26 @@ export function FleetMapTab() {
     return Array.from(map.values());
   }, [priorityZones, allZones]);
 
+  const selectedCostCenterNames = useMemo(() => {
+    if (selectedCostCenterIds.length === 0) return new Set<string>();
+    const names = new Set<string>();
+    for (const id of selectedCostCenterIds) {
+      const name = costCenterMap.get(id);
+      if (name) names.add(name.toLowerCase());
+    }
+    return names;
+  }, [selectedCostCenterIds, costCenterMap]);
+
   const supabaseVehicles = useMemo(() => {
     return vehicleStatuses.filter((v) => {
-      if (costCenterFilter !== 'all') {
+      if (selectedCostCenterNames.size > 0) {
         const identity = findIdentity(v, vehicleIdentities);
-        if (!identity || identity.costCenter !== costCenterFilter) return false;
+        const cc = (identity?.costCenter || '').toLowerCase();
+        if (!cc || !selectedCostCenterNames.has(cc)) return false;
       }
       return true;
     });
-  }, [vehicleStatuses, vehicleIdentities, costCenterFilter]);
+  }, [vehicleStatuses, vehicleIdentities, selectedCostCenterNames]);
 
   const vehiclesWithPosition = useMemo(() => {
     return supabaseVehicles.filter((v) => v.latitude && v.longitude);
@@ -732,18 +740,6 @@ export function FleetMapTab() {
                   onChange={(e) => setSearch(e.target.value)}
                   className="w-full rounded-lg border border-slate-200 bg-slate-50 py-2.5 pl-10 pr-3 text-sm outline-none transition-colors focus:border-blue-400 focus:bg-white focus:ring-1 focus:ring-blue-400" />
               </div>
-
-              {costCenters.length > 0 && (
-                <div className="relative mt-2">
-                  <Filter className="absolute left-3 top-2.5 h-3.5 w-3.5 text-slate-400" />
-                  <select value={costCenterFilter} onChange={(e) => setCostCenterFilter(e.target.value)}
-                    className="w-full appearance-none rounded-lg border border-slate-200 bg-slate-50 py-2.5 pl-9 pr-8 text-sm text-slate-700 outline-none transition-colors focus:border-blue-400 focus:bg-white focus:ring-1 focus:ring-blue-400">
-                    <option value="all">All Cost Centers</option>
-                    {costCenters.map((cc) => (<option key={cc} value={cc}>{cc}</option>))}
-                  </select>
-                  <ChevronDown className="pointer-events-none absolute right-3 top-2.5 h-3.5 w-3.5 text-slate-400" />
-                </div>
-              )}
             </>
           )}
         </div>
