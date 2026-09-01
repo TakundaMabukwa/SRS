@@ -30,6 +30,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+import { useCostCenters } from "@/context/cost-centers-context";
 
 const ALERT_CONFIG_API = "/api/video-server/alert-config";
 const DRIVER_CONFIG_API = "/api/video-server/driver-config";
@@ -80,6 +81,10 @@ type DriverConfigCriterion = {
   updated_at: string;
   nrc_deduction: boolean;
   incidents_threshold: number;
+  deduction_per_alert: number;
+  deduction_with_ncr: number;
+  ncr_threshold: number;
+  cost_center_id: number | null;
 };
 
 export default function SettingsPage() {
@@ -536,6 +541,8 @@ function DriverConfigSection() {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editForm, setEditForm] = useState<Partial<DriverConfigCriterion>>({});
   const [showAddForm, setShowAddForm] = useState(false);
+  const [selectedConfigCostCenterId, setSelectedConfigCostCenterId] = useState<number | null>(null);
+  const { costCenters } = useCostCenters();
   const [addForm, setAddForm] = useState({ 
     name: "", 
     selected_weighting: 10, 
@@ -543,17 +550,21 @@ function DriverConfigSection() {
     statuses: [] as string[],
     nrc_deduction: false,
     incidents_threshold: 1,
+    deduction_per_alert: 10,
+    deduction_with_ncr: 0,
+    ncr_threshold: 3,
   });
 
   const fetchCriteria = useCallback(async () => {
     try {
-      const res = await fetch(`${DRIVER_CONFIG_API}/criteria`, { cache: "no-store" });
+      const ccParam = selectedConfigCostCenterId != null ? `?cost_center_id=${selectedConfigCostCenterId}` : "";
+      const res = await fetch(`${DRIVER_CONFIG_API}/criteria${ccParam}`, { cache: "no-store" });
       const data = await res.json();
       setCriteria(data?.data || []);
     } catch {
       setCriteria([]);
     }
-  }, []);
+  }, [selectedConfigCostCenterId]);
 
   const fetchAlertDefinitions = useCallback(async () => {
     try {
@@ -594,16 +605,20 @@ function DriverConfigSection() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name: addForm.name,
-          selected_weighting: addForm.selected_weighting,
+          selected_weighting: addForm.deduction_per_alert,
           risk_tiers: addForm.risk_tiers,
           statuses: addForm.statuses,
           nrc_deduction: addForm.nrc_deduction,
           incidents_threshold: addForm.incidents_threshold,
+          deduction_per_alert: addForm.deduction_per_alert,
+          deduction_with_ncr: addForm.deduction_with_ncr,
+          ncr_threshold: addForm.ncr_threshold,
+          cost_center_id: selectedConfigCostCenterId,
         }),
       });
       toast.success("Criterion added");
       setShowAddForm(false);
-      setAddForm({ name: "", selected_weighting: 10, risk_tiers: 4, statuses: [], nrc_deduction: false, incidents_threshold: 1 });
+      setAddForm({ name: "", selected_weighting: 10, risk_tiers: 4, statuses: [], nrc_deduction: false, incidents_threshold: 1, deduction_per_alert: 10, deduction_with_ncr: 0, ncr_threshold: 3 });
       fetchCriteria();
     } catch {
       toast.error("Failed to add");
@@ -628,38 +643,48 @@ function DriverConfigSection() {
           <h2 className="text-lg font-semibold">Driver Monitoring Config</h2>
           <p className="text-sm text-gray-500">Configure driver behavior criteria, risk tiers, and thresholds</p>
         </div>
-        <Button size="sm" onClick={() => setShowAddForm(true)}>
-          <Plus className="w-4 h-4 mr-1" /> Add Criterion
-        </Button>
+        <div className="flex items-center gap-2">
+          <div className="w-56">
+            <Select value={selectedConfigCostCenterId?.toString() ?? "global"} onValueChange={(v) => setSelectedConfigCostCenterId(v === "global" ? null : Number(v))}>
+              <SelectTrigger className="h-9">
+                <SelectValue placeholder="Global Default" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="global">Global Default</SelectItem>
+                {costCenters.map((cc) => (
+                  <SelectItem key={cc.id} value={cc.id.toString()}>{cc.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <Button size="sm" onClick={() => setShowAddForm(true)}>
+            <Plus className="w-4 h-4 mr-1" /> Add Criterion
+          </Button>
+        </div>
       </div>
 
       {showAddForm && (
         <Card>
           <CardContent className="p-4 space-y-3">
-            <div className="grid grid-cols-5 gap-3">
+            <div className="grid grid-cols-4 gap-3">
               <div>
                 <label className="text-sm font-medium">Name</label>
                 <Input value={addForm.name} onChange={(e) => setAddForm({ ...addForm, name: e.target.value })} placeholder="e.g. Speeding" />
               </div>
               <div>
-                <label className="text-sm font-medium">Weighting</label>
-                <Input type="number" value={addForm.selected_weighting} onChange={(e) => setAddForm({ ...addForm, selected_weighting: Number(e.target.value) })} />
+                <label className="text-sm font-medium">Per-Alert Deduction</label>
+                <Input type="number" value={addForm.deduction_per_alert} onChange={(e) => setAddForm({ ...addForm, deduction_per_alert: Number(e.target.value) })} />
               </div>
               <div>
-                <label className="text-sm font-medium">Incidents</label>
-                <Input type="number" value={addForm.incidents_threshold} min={1} onChange={(e) => setAddForm({ ...addForm, incidents_threshold: Number(e.target.value) })} />
+                <label className="text-sm font-medium">NCR Deduction</label>
+                <Input type="number" value={addForm.deduction_with_ncr} onChange={(e) => setAddForm({ ...addForm, deduction_with_ncr: Number(e.target.value) })} />
               </div>
-              <div className="flex flex-col">
-                <label className="text-sm font-medium mb-1">NCR</label>
-                <select 
-                  className="border rounded px-2 py-1.5 h-[38px]"
-                  value={addForm.nrc_deduction ? "yes" : "no"}
-                  onChange={(e) => setAddForm({ ...addForm, nrc_deduction: e.target.value === "yes" })}
-                >
-                  <option value="no">No</option>
-                  <option value="yes">Yes</option>
-                </select>
+              <div>
+                <label className="text-sm font-medium">NCR Threshold</label>
+                <Input type="number" value={addForm.ncr_threshold} min={1} onChange={(e) => setAddForm({ ...addForm, ncr_threshold: Number(e.target.value) })} />
               </div>
+            </div>
+            <div className="grid grid-cols-3 gap-3">
               <div className="col-span-2">
                 <label className="text-sm font-medium">Statuses</label>
                 <AlertSearchDropdown
@@ -669,10 +694,10 @@ function DriverConfigSection() {
                   onRemove={(name) => setAddForm({ ...addForm, statuses: addForm.statuses.filter(x => x !== name) })}
                 />
               </div>
-            </div>
-            <div className="flex gap-2">
-              <Button size="sm" onClick={handleAdd} disabled={!addForm.name}><Save className="w-4 h-4 mr-1" /> Add</Button>
-              <Button size="sm" variant="outline" onClick={() => setShowAddForm(false)}>Cancel</Button>
+              <div className="flex gap-2 items-end">
+                <Button size="sm" onClick={handleAdd} disabled={!addForm.name}><Save className="w-4 h-4 mr-1" /> Add</Button>
+                <Button size="sm" variant="outline" onClick={() => setShowAddForm(false)}>Cancel</Button>
+              </div>
             </div>
           </CardContent>
         </Card>
@@ -684,9 +709,10 @@ function DriverConfigSection() {
             <thead>
               <tr className="border-b bg-gray-50 text-left text-gray-500">
                 <th className="py-3 px-4">Criterion</th>
-                <th>Weighting</th>
-                <th>NCR</th>
-                <th>Incidents</th>
+                <th>Per-Alert</th>
+                <th>NCR Deduction</th>
+                <th>NCR Threshold</th>
+                <th>Cost Center</th>
                 <th>Statuses</th>
                 <th>Actions</th>
               </tr>
@@ -703,33 +729,29 @@ function DriverConfigSection() {
                   </td>
                   <td>
                     {editingId === c.id ? (
-                      <Input type="number" value={editForm.selected_weighting ?? c.selected_weighting} onChange={(e) => setEditForm({ ...editForm, selected_weighting: Number(e.target.value) })} className="h-8 w-20" />
+                      <Input type="number" value={editForm.deduction_per_alert ?? c.deduction_per_alert ?? c.selected_weighting} onChange={(e) => setEditForm({ ...editForm, deduction_per_alert: Number(e.target.value) })} className="h-8 w-20" />
                     ) : (
-                      c.selected_weighting
+                      c.deduction_per_alert ?? c.selected_weighting
                     )}
                   </td>
                   <td>
                     {editingId === c.id ? (
-                      <select 
-                        className="border rounded px-1 py-0.5 h-8"
-                        value={editForm.nrc_deduction ? "yes" : "no"}
-                        onChange={(e) => setEditForm({ ...editForm, nrc_deduction: e.target.value === "yes" })}
-                      >
-                        <option value="no">No</option>
-                        <option value="yes">Yes</option>
-                      </select>
+                      <Input type="number" value={editForm.deduction_with_ncr ?? c.deduction_with_ncr ?? 0} onChange={(e) => setEditForm({ ...editForm, deduction_with_ncr: Number(e.target.value) })} className="h-8 w-20" />
                     ) : (
-                      <span className={cn("px-2 py-1 rounded text-xs font-medium", c.nrc_deduction ? "bg-purple-100 text-purple-700" : "bg-gray-100 text-gray-700")}>
-                        {c.nrc_deduction ? "Yes" : "No"}
-                      </span>
+                      c.deduction_with_ncr ?? 0
                     )}
                   </td>
                   <td>
                     {editingId === c.id ? (
-                      <Input type="number" value={editForm.incidents_threshold ?? c.incidents_threshold ?? 1} min={1} onChange={(e) => setEditForm({ ...editForm, incidents_threshold: Number(e.target.value) })} className="h-8 w-20" />
+                      <Input type="number" value={editForm.ncr_threshold ?? c.ncr_threshold ?? 3} min={1} onChange={(e) => setEditForm({ ...editForm, ncr_threshold: Number(e.target.value) })} className="h-8 w-20" />
                     ) : (
-                      c.incidents_threshold ?? 1
+                      c.ncr_threshold ?? 3
                     )}
+                  </td>
+                  <td>
+                    {c.cost_center_id != null
+                      ? (costCenters.find(cc => cc.id === c.cost_center_id)?.name || `ID: ${c.cost_center_id}`)
+                      : <Badge variant="outline" className="text-xs">Global</Badge>}
                   </td>
                   <td>
                     {editingId === c.id ? (
@@ -759,7 +781,7 @@ function DriverConfigSection() {
                         </>
                       ) : (
                         <>
-                          <Button variant="ghost" size="sm" onClick={() => { setEditingId(c.id); setEditForm({ name: c.name, selected_weighting: c.selected_weighting, statuses: c.statuses, nrc_deduction: c.nrc_deduction, incidents_threshold: c.incidents_threshold }); }}>
+                          <Button variant="ghost" size="sm" onClick={() => { setEditingId(c.id); setEditForm({ name: c.name, deduction_per_alert: c.deduction_per_alert ?? c.selected_weighting, deduction_with_ncr: c.deduction_with_ncr, ncr_threshold: c.ncr_threshold, statuses: c.statuses }); }}>
                             <Pencil className="w-3 h-3" />
                           </Button>
                           <Button variant="ghost" size="sm" onClick={() => handleDelete(c.id)}>
@@ -792,14 +814,17 @@ function RTMSConfigSection() {
   const [loading, setLoading] = useState(true);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editForm, setEditForm] = useState<any>({});
+  const [selectedConfigCostCenterId, setSelectedConfigCostCenterId] = useState<number | null>(null);
+  const { costCenters } = useCostCenters();
 
   const fetchRules = useCallback(async () => {
     try {
-      const res = await fetch('/api/video-server/rtms/rules', { cache: 'no-store' });
+      const ccParam = selectedConfigCostCenterId != null ? `?cost_center_id=${selectedConfigCostCenterId}` : "";
+      const res = await fetch(`/api/video-server/rtms/rules${ccParam}`, { cache: 'no-store' });
       const data = await res.json();
       setRules(data?.rules || []);
     } catch { setRules([]); }
-  }, []);
+  }, [selectedConfigCostCenterId]);
 
   useEffect(() => {
     setLoading(true);
@@ -808,7 +833,7 @@ function RTMSConfigSection() {
 
   const handleSeedDefaults = async () => {
     try {
-      // Filter out rules that already exist
+      // Filter out rules that already exist for this cost center context
       const existingNames = new Set(rules.map(r => r.rule_name));
       const newRules = DEFAULT_RTMS_RULES.filter(r => !existingNames.has(r.rule_name));
       if (newRules.length === 0) {
@@ -818,7 +843,7 @@ function RTMSConfigSection() {
       await fetch('/api/video-server/rtms/rules', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ rules: newRules }),
+        body: JSON.stringify({ rules: newRules, cost_center_id: selectedConfigCostCenterId }),
       });
       toast.success(`${newRules.length} rule(s) added`);
       fetchRules();
@@ -858,7 +883,20 @@ function RTMSConfigSection() {
           <h2 className="text-lg font-semibold">RTMS Configuration</h2>
           <p className="text-sm text-gray-500">Road Transport Management System rules for driving time monitoring</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 items-center">
+          <div className="w-56">
+            <Select value={selectedConfigCostCenterId?.toString() ?? "global"} onValueChange={(v) => setSelectedConfigCostCenterId(v === "global" ? null : Number(v))}>
+              <SelectTrigger className="h-9">
+                <SelectValue placeholder="Global Default" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="global">Global Default</SelectItem>
+                {costCenters.map((cc) => (
+                  <SelectItem key={cc.id} value={cc.id.toString()}>{cc.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
           {rules.length === 0 && (
             <Button size="sm" variant="outline" onClick={handleSeedDefaults}>
               <Plus className="w-4 h-4 mr-1" /> Load Defaults
@@ -881,6 +919,7 @@ function RTMSConfigSection() {
                 <th>Audit Focus</th>
                 <th>Max</th>
                 <th>Unit</th>
+                <th>Cost Center</th>
                 <th>Enabled</th>
                 <th>Actions</th>
               </tr>
@@ -929,6 +968,11 @@ function RTMSConfigSection() {
                     ) : (
                       r.unit
                     )}
+                  </td>
+                  <td>
+                    {r.cost_center_id != null
+                      ? (costCenters.find(cc => cc.id === r.cost_center_id)?.name || `ID: ${r.cost_center_id}`)
+                      : <Badge variant="outline" className="text-xs">Global</Badge>}
                   </td>
                   <td>
                     {editingId === r.id ? (

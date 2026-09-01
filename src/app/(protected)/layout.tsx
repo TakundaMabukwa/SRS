@@ -35,6 +35,7 @@ import { createClient } from "@/lib/supabase/client";
 import { ElevationNotification } from "@/components/ui/elevation-notification";
 import { VideoAlertsProvider } from "@/context/video-alerts-context";
 import { CostCentersProvider, useCostCenters } from "@/context/cost-centers-context";
+import { UserProvider } from "@/context/contexts/UserContext";
 import AlertBellNotification from "@/components/notifications/alert-bell-notification";
 import {
   DropdownMenu,
@@ -277,6 +278,7 @@ export default function ProtectedLayout({ children }: ProtectedLayoutProps) {
   };
 
   return (
+    <UserProvider>
     <VideoAlertsProvider>
       <div className="flex h-screen bg-gray-100 text-gray-900">
         {/* Sidebar */}
@@ -415,5 +417,6 @@ export default function ProtectedLayout({ children }: ProtectedLayoutProps) {
       </div>
       </div>
     </VideoAlertsProvider>
+    </UserProvider>
   );
 }

@@ -18,6 +18,7 @@ interface UserContextType {
   loading: boolean;
   isAdmin: boolean;
   userCostCode: string | null;
+  userCostCenterIds: number[];
   signOut: () => Promise<void>;
 }
 
@@ -26,6 +27,7 @@ const UserContext = createContext<UserContextType | undefined>(undefined);
 export function UserProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const [userCostCenterIds, setUserCostCenterIds] = useState<number[]>([]);
 
   useEffect(() => {
     const initializeUser = async () => {
@@ -69,7 +71,6 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
             });
           } else {
             console.log('⚠️ No user metadata found, creating basic user object');
-            // If no metadata found, create a basic user object
             setUser({
               id: authUser.id,
               email: authUser.email || '',
@@ -91,6 +92,17 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
             tech_admin: userData.tech_admin,
             first_login: userData.first_login
           });
+
+          // Fetch user cost center assignments
+          try {
+            const { data: userCCs } = await supabase
+              .from('user_cost_centers')
+              .select('cost_center_id')
+              .eq('user_id', authUser.id);
+            setUserCostCenterIds((userCCs || []).map(uc => uc.cost_center_id).filter(Boolean));
+          } catch {
+            setUserCostCenterIds([]);
+          }
         }
 
         // Listen for auth changes
@@ -98,8 +110,8 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
           async (event, session) => {
             if (event === 'SIGNED_OUT' || !session) {
               setUser(null);
+              setUserCostCenterIds([]);
             } else if (event === 'SIGNED_IN' && session.user) {
-              // Re-fetch user data when signed in
               const { data: userData, error: userError } = await supabase
                 .from('users')
                 .select('*')
@@ -107,7 +119,6 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
                 .single();
 
               if (!userError && userData) {
-                console.log('✅ User data found in users table (auth change):', userData);
                 setUser({
                   id: userData.id,
                   email: userData.email,
@@ -117,11 +128,19 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
                   tech_admin: userData.tech_admin,
                   first_login: userData.first_login
                 });
+                // Fetch cost centers for new session
+                try {
+                  const { data: userCCs } = await supabase
+                    .from('user_cost_centers')
+                    .select('cost_center_id')
+                    .eq('user_id', session.user.id);
+                  setUserCostCenterIds((userCCs || []).map(uc => uc.cost_center_id).filter(Boolean));
+                } catch {
+                  setUserCostCenterIds([]);
+                }
               } else {
-                // Fallback: Get data from auth user's metadata
                 if (session.user.user_metadata) {
                   const metaData = session.user.user_metadata;
-                  console.log('📊 Using auth user metadata (auth change):', metaData);
                   setUser({
                     id: session.user.id,
                     email: session.user.email || '',
@@ -195,6 +214,7 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
         loading,
         isAdmin,
         userCostCode,
+        userCostCenterIds,
         signOut
       }}
     >

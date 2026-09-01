@@ -98,7 +98,7 @@ export default function NCRFormModal({ isOpen, onClose, onSaved, driverInfo, ale
   const [saving, setSaving] = useState(false)
   const [drivers, setDrivers] = useState<DriverOption[]>([])
   const [selectedDriverId, setSelectedDriverId] = useState<string>('')
-  const [deductionInfo, setDeductionInfo] = useState<{ show: boolean; alertType: string; weighting: number; criteriaId: number } | null>(null)
+  const [deductionInfo, setDeductionInfo] = useState<{ show: boolean; alertType: string; deduction_per_alert: number; deduction_with_ncr: number; criteriaId: number } | null>(null)
   const [pendingSave, setPendingSave] = useState(false)
   const normalizedScreenshots = useMemo(() => normalizeReportScreenshots(alertDetails?.screenshots), [alertDetails?.screenshots])
 
@@ -231,7 +231,7 @@ export default function NCRFormModal({ isOpen, onClose, onSaved, driverInfo, ale
       const res = await fetch(`/api/video-server/driver-scoring/lookup?fleet_number=${encodeURIComponent(fleetNum)}&alert_type=${encodeURIComponent(alertType)}`)
       const data = await res.json()
       if (data.success && data.eligible) {
-        setDeductionInfo({ show: true, alertType, weighting: data.weighting, criteriaId: data.criteria_id })
+        setDeductionInfo({ show: true, alertType, deduction_per_alert: data.deduction_per_alert, deduction_with_ncr: data.deduction_with_ncr, criteriaId: data.criteria_id })
         return true
       }
     } catch {}
@@ -274,7 +274,7 @@ export default function NCRFormModal({ isOpen, onClose, onSaved, driverInfo, ale
           await fetch('/api/video-server/driver-scoring/deduct', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ fleet_number: formData.vehicleFleetNumber, criteria_id: deductionInfo.criteriaId })
+            body: JSON.stringify({ fleet_number: formData.vehicleFleetNumber, criteria_id: deductionInfo.criteriaId, deduction_with_ncr: deductionInfo.deduction_with_ncr })
           })
         } catch {}
       }
@@ -337,9 +337,19 @@ export default function NCRFormModal({ isOpen, onClose, onSaved, driverInfo, ale
           <div className="bg-white rounded-lg shadow-2xl p-6 max-w-md w-full">
             <h3 className="text-lg font-bold text-slate-900 mb-2">Deduction Confirmation</h3>
             <p className="text-sm text-slate-600 mb-4">
-              This alert qualifies for an NCR deduction. Saving this NCR will deduct <strong className="text-red-600">{deductionInfo.weighting} points</strong> from the vehicle's score.
+              This alert qualifies for an NCR deduction. Saving this NCR will deduct:
             </p>
-            <p className="text-xs text-slate-500 mb-4">Alert: {deductionInfo.alertType}</p>
+            <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4">
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-red-700">Per-alert deduction:</span>
+                <span className="text-lg font-bold text-red-600">{deductionInfo.deduction_per_alert} pts (auto)</span>
+              </div>
+              <div className="flex items-center justify-between mt-1">
+                <span className="text-sm text-red-700">NCR bonus:</span>
+                <span className="text-lg font-bold text-red-600">{deductionInfo.deduction_with_ncr} pts (on save)</span>
+              </div>
+              <div className="text-xs text-red-500 mt-2">Alert: {deductionInfo.alertType}</div>
+            </div>
             <div className="flex gap-2 justify-end">
               <Button size="sm" variant="outline" onClick={() => { setDeductionInfo(null); doSave() }}>Save Without Deducting</Button>
               <Button size="sm" variant="default" onClick={doSave}>Save & Deduct</Button>

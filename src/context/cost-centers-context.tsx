@@ -2,6 +2,7 @@
 
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { useUser } from "@/context/contexts/UserContext";
 
 interface CostCenter {
   id: number;
@@ -36,6 +37,7 @@ export function CostCentersProvider({ children }: { children: React.ReactNode })
   const [loading, setLoading] = useState(false);
   const [selectedCostCenterIds, setSelectedCostCenterIds] = useState<number[]>([]);
   const fetchedRef = useRef(false);
+  const { user, isAdmin, userCostCenterIds } = useUser();
 
   const fetchCostCenters = useCallback(async () => {
     if (fetchedRef.current) return;
@@ -60,13 +62,20 @@ export function CostCentersProvider({ children }: { children: React.ReactNode })
         seen.add(key);
         return true;
       });
-      setCostCenters(deduped);
+
+      // Filter by user assignment (non-admin users only see their assigned cost centers)
+      if (!isAdmin && userCostCenterIds.length > 0) {
+        const filtered = deduped.filter(cc => userCostCenterIds.includes(cc.id));
+        setCostCenters(filtered);
+      } else {
+        setCostCenters(deduped);
+      }
     } catch (err) {
       console.error("Error fetching cost centers:", err);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [isAdmin, userCostCenterIds]);
 
   useEffect(() => {
     fetchCostCenters();

@@ -71,7 +71,7 @@ export default function NRCCameraCoveredModal({ isOpen, onClose, onSaved, driver
   const [preventiveTargetDate, setPreventiveTargetDate] = useState('')
   const [drivers, setDrivers] = useState<DriverOption[]>([])
   const [selectedDriverId, setSelectedDriverId] = useState('')
-  const [deductionInfo, setDeductionInfo] = useState<{ show: boolean; alertType: string; weighting: number; criteriaId: number } | null>(null)
+  const [deductionInfo, setDeductionInfo] = useState<{ show: boolean; alertType: string; deduction_per_alert: number; deduction_with_ncr: number; criteriaId: number } | null>(null)
   const [investigator, setInvestigator] = useState('')
   const [manager, setManager] = useState('')
   const [selectedRootCauses, setSelectedRootCauses] = useState<string[]>([])
@@ -255,7 +255,7 @@ export default function NRCCameraCoveredModal({ isOpen, onClose, onSaved, driver
       const res = await fetch(`/api/video-server/driver-scoring/lookup?fleet_number=${encodeURIComponent(fleetNum)}&alert_type=${encodeURIComponent(alertType)}`)
       const data = await res.json()
       if (data.success && data.eligible) {
-        setDeductionInfo({ show: true, alertType, weighting: data.weighting, criteriaId: data.criteria_id })
+        setDeductionInfo({ show: true, alertType, deduction_per_alert: data.deduction_per_alert, deduction_with_ncr: data.deduction_with_ncr, criteriaId: data.criteria_id })
         return true
       }
     } catch (e) { console.error('[NCR] Deduction check error:', e) }
@@ -298,7 +298,7 @@ export default function NRCCameraCoveredModal({ isOpen, onClose, onSaved, driver
           await fetch('/api/video-server/driver-scoring/deduct', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ fleet_number: vehicleFleetNumber || driverInfo.fleetNumber, criteria_id: deductionInfo.criteriaId })
+            body: JSON.stringify({ fleet_number: vehicleFleetNumber || driverInfo.fleetNumber, criteria_id: deductionInfo.criteriaId, deduction_with_ncr: deductionInfo.deduction_with_ncr })
           })
         } catch {}
       }
@@ -333,10 +333,14 @@ export default function NRCCameraCoveredModal({ isOpen, onClose, onSaved, driver
             </p>
             <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4">
               <div className="flex items-center justify-between">
-                <span className="text-sm text-red-700">Points to deduct:</span>
-                <span className="text-2xl font-bold text-red-600">{deductionInfo.weighting}</span>
+                <span className="text-sm text-red-700">Per-alert deduction:</span>
+                <span className="text-lg font-bold text-red-600">{deductionInfo.deduction_per_alert} pts (auto)</span>
               </div>
-              <div className="text-xs text-red-500 mt-1">Alert: {deductionInfo.alertType}</div>
+              <div className="flex items-center justify-between mt-1">
+                <span className="text-sm text-red-700">NCR bonus:</span>
+                <span className="text-lg font-bold text-red-600">{deductionInfo.deduction_with_ncr} pts (on save)</span>
+              </div>
+              <div className="text-xs text-red-500 mt-2">Alert: {deductionInfo.alertType}</div>
             </div>
             <div className="flex gap-2 justify-end">
               <Button size="sm" variant="outline" onClick={() => { setDeductionInfo(null); doSave() }}>Save Without Deducting</Button>

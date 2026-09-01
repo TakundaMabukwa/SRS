@@ -94,6 +94,8 @@ export default function SettingsPage() {
     const [newUserRole, setNewUserRole] = useState("");
     const [newUserDriverCode, setNewUserDriverCode] = useState("");
     const [newUserPermissions, setNewUserPermissions] = useState<Permission[]>([]);
+    const [newUserCostCenterIds, setNewUserCostCenterIds] = useState<number[]>([]);
+    const [costCentersList, setCostCentersList] = useState<{id: number, name: string, code: string}[]>([]);
     const [expandedPages, setExpandedPages] = useState<Set<string>>(new Set());
     const [roleFilter, setRoleFilter] = useState<string>("all");
     const [emailSearch, setEmailSearch] = useState<string>("");
@@ -185,6 +187,21 @@ export default function SettingsPage() {
 
     useEffect(() => {
         fetchUsers();
+
+        // Fetch cost centers for user assignment
+        const fetchCostCenters = async () => {
+            try {
+                const { data } = await supabase
+                    .from("cost_centers")
+                    .select("id, name, code")
+                    .eq("is_active", true)
+                    .order("name");
+                setCostCentersList(data || []);
+            } catch {
+                setCostCentersList([]);
+            }
+        };
+        fetchCostCenters();
 
         setRoles([
             {
@@ -372,6 +389,7 @@ export default function SettingsPage() {
             formData.append('role', newUserRole);
             formData.append('driverCode', newUserDriverCode);
             formData.append('permissions', JSON.stringify(newUserPermissions));
+            formData.append('costCenterIds', JSON.stringify(newUserCostCenterIds));
 
             console.log('Calling CreateUser with formData');
             const result = await CreateUser(formData);
@@ -663,6 +681,50 @@ export default function SettingsPage() {
                                                 </div>
                                             </div>
                                         
+                                            {newUserRole && (
+                                                <div className="bg-white border rounded-lg p-6 space-y-6">
+                                                    <div className="flex items-center justify-between">
+                                                        <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+                                                            <Building className="h-5 w-5" />
+                                                            Cost Center Assignment
+                                                        </h3>
+                                                        <Tooltip>
+                                                            <TooltipTrigger>
+                                                                <Info className="h-4 w-4 text-gray-400" />
+                                                            </TooltipTrigger>
+                                                            <TooltipContent>
+                                                                <p>Assign cost centers this user can manage</p>
+                                                            </TooltipContent>
+                                                        </Tooltip>
+                                                    </div>
+                                                    <div className="grid grid-cols-3 gap-2 max-h-48 overflow-y-auto border rounded-md p-3">
+                                                        {costCentersList.map((cc) => (
+                                                            <label key={cc.id} className="flex items-center gap-2 text-sm cursor-pointer hover:bg-gray-50 p-1 rounded">
+                                                                <input
+                                                                    type="checkbox"
+                                                                    checked={newUserCostCenterIds.includes(cc.id)}
+                                                                    onChange={(e) => {
+                                                                        if (e.target.checked) {
+                                                                            setNewUserCostCenterIds(prev => [...prev, cc.id]);
+                                                                        } else {
+                                                                            setNewUserCostCenterIds(prev => prev.filter(id => id !== cc.id));
+                                                                        }
+                                                                    }}
+                                                                    className="rounded border-gray-300"
+                                                                />
+                                                                <span>{cc.name}</span>
+                                                            </label>
+                                                        ))}
+                                                        {costCentersList.length === 0 && (
+                                                            <p className="text-sm text-gray-500 col-span-3">No cost centers found</p>
+                                                        )}
+                                                    </div>
+                                                    {newUserCostCenterIds.length > 0 && (
+                                                        <p className="text-xs text-blue-600">{newUserCostCenterIds.length} cost center(s) selected</p>
+                                                    )}
+                                                </div>
+                                            )}
+
                                             {newUserRole && (
                                                 <div className="bg-white border rounded-lg p-6 space-y-6">
                                                     <div className="flex items-center justify-between">
