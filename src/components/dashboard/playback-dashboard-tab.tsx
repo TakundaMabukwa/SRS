@@ -121,12 +121,10 @@ function sastDateToRange(dateStr: string): { start: string; end: string } {
   return { start: d(0, 0, 0), end: d(23, 59, 59) };
 }
 
-type PlaybackDashboardTabProps = {
-  selectedCostCenterIds?: number[];
-};
+type PlaybackDashboardTabProps = {};
 
-export default function PlaybackDashboardTab({ selectedCostCenterIds = [] }: PlaybackDashboardTabProps) {
-  const { costCenterMap } = useCostCenters();
+export default function PlaybackDashboardTab({}: PlaybackDashboardTabProps) {
+  const { costCenterMap, selectedCostCenterIds } = useCostCenters();
   const { supabase } = useSupabaseAuth();
   const [vehicles, setVehicles] = useState<PlaybackVehicle[]>([]);
   const [loading, setLoading] = useState(true);

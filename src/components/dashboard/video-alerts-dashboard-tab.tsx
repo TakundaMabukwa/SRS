@@ -60,7 +60,6 @@ type VideoAlertsDashboardTabProps = {
   standaloneSeverity?: "critical" | "high" | "medium" | "low" | "all" | null;
   standaloneMode?: boolean;
   suspendBackgroundWork?: boolean;
-  selectedCostCenterIds?: number[];
   onDriversLoaded?: (drivers: Map<string, DriverInfo>) => void;
 };
 
@@ -266,11 +265,10 @@ export default function VideoAlertsDashboardTab({
   standaloneSeverity = null,
   standaloneMode = false,
   suspendBackgroundWork = false,
-  selectedCostCenterIds = [],
   onDriversLoaded,
 }: VideoAlertsDashboardTabProps) {
   const router = useRouter();
-  const { costCenterMap } = useCostCenters();
+  const { costCenterMap, selectedCostCenterIds } = useCostCenters();
   const [loading, setLoading] = useState(false);
   const videoProxyBase = "/api/video-server";
   const [searchTerm, setSearchTerm] = useState("");

@@ -10,6 +10,7 @@ import {
   Building2,
   Car,
   ChartBar,
+  ChevronDown,
   DollarSign,
   Phone,
   PlusSquare,
@@ -33,8 +34,16 @@ import { PAGES, Permission, hasPermission } from "@/lib/permissions/permissions"
 import { createClient } from "@/lib/supabase/client";
 import { ElevationNotification } from "@/components/ui/elevation-notification";
 import { VideoAlertsProvider } from "@/context/video-alerts-context";
-import { CostCentersProvider } from "@/context/cost-centers-context";
+import { CostCentersProvider, useCostCenters } from "@/context/cost-centers-context";
 import AlertBellNotification from "@/components/notifications/alert-bell-notification";
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 interface ProtectedLayoutProps {
   children: React.ReactNode;
@@ -76,6 +85,48 @@ function DateTimeDisplay() {
         })}
       </div>
     </div>
+  );
+}
+
+function CostCenterDropdown() {
+  const { costCenters, selectedCostCenterIds, setSelectedCostCenterIds, toggleCostCenterFilter, selectedCostCenterSummary } = useCostCenters();
+
+  if (costCenters.length === 0) return null;
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="outline" className="h-9 min-w-[220px] justify-between border-slate-300 bg-white text-slate-700 text-xs">
+          <span className="flex items-center gap-2">
+            <Building2 className="h-3.5 w-3.5" />
+            {selectedCostCenterSummary}
+          </span>
+          <ChevronDown className="h-3.5 w-3.5" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-80 max-h-[24rem] overflow-y-auto">
+        <DropdownMenuLabel>Cost Center Filter</DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        <DropdownMenuCheckboxItem
+          checked={selectedCostCenterIds.length === 0}
+          onSelect={(e) => e.preventDefault()}
+          onCheckedChange={() => setSelectedCostCenterIds([])}
+        >
+          All Cost Centers
+        </DropdownMenuCheckboxItem>
+        <DropdownMenuSeparator />
+        {costCenters.map((cc) => (
+          <DropdownMenuCheckboxItem
+            key={cc.id}
+            checked={selectedCostCenterIds.includes(cc.id)}
+            onSelect={(e) => e.preventDefault()}
+            onCheckedChange={() => toggleCostCenterFilter(cc.id)}
+          >
+            {cc.name}
+          </DropdownMenuCheckboxItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
@@ -321,6 +372,7 @@ export default function ProtectedLayout({ children }: ProtectedLayoutProps) {
         className={`flex-1 flex flex-col transition-margin duration-300 ease-in-out ${sidebarExpanded ? "ml-64" : "ml-20"
           }`}
       >
+        <CostCentersProvider>
         {/* Top Bar */}
         <header className="sticky top-0 z-40 bg-white border-b shadow-sm">
           <div className="flex items-center justify-between px-6 py-3">
@@ -343,6 +395,7 @@ export default function ProtectedLayout({ children }: ProtectedLayoutProps) {
               </span>
             </div>
             <div className="flex items-center gap-4">
+              <CostCenterDropdown />
               <AlertBellNotification />
               <DateTimeDisplay />
             </div>
@@ -352,11 +405,10 @@ export default function ProtectedLayout({ children }: ProtectedLayoutProps) {
         {/* Content Area */}
         <main className="flex-1 overflow-y-auto bg-gray-50 p-6">
           <div className="max-w-7xl mx-auto">
-            <CostCentersProvider>
               <GlobalProvider>{children}</GlobalProvider>
-            </CostCentersProvider>
           </div>
         </main>
+        </CostCentersProvider>
         
         {/* Elevation Notification - Only for admin users */}
         <ElevationNotification userRole={userRole} userId={userId} />

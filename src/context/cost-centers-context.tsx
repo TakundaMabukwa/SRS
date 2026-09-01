@@ -14,6 +14,10 @@ interface CostCentersContextType {
   costCenterMap: Map<number, string>;
   loading: boolean;
   getCostCenterName: (id: number | null | undefined) => string;
+  selectedCostCenterIds: number[];
+  setSelectedCostCenterIds: React.Dispatch<React.SetStateAction<number[]>>;
+  toggleCostCenterFilter: (id: number) => void;
+  selectedCostCenterSummary: string;
 }
 
 const CostCentersContext = createContext<CostCentersContextType>({
@@ -21,11 +25,16 @@ const CostCentersContext = createContext<CostCentersContextType>({
   costCenterMap: new Map(),
   loading: false,
   getCostCenterName: () => "",
+  selectedCostCenterIds: [],
+  setSelectedCostCenterIds: () => {},
+  toggleCostCenterFilter: () => {},
+  selectedCostCenterSummary: "All Cost Centers",
 });
 
 export function CostCentersProvider({ children }: { children: React.ReactNode }) {
   const [costCenters, setCostCenters] = useState<CostCenter[]>([]);
   const [loading, setLoading] = useState(false);
+  const [selectedCostCenterIds, setSelectedCostCenterIds] = useState<number[]>([]);
   const fetchedRef = useRef(false);
 
   const fetchCostCenters = useCallback(async () => {
@@ -79,8 +88,21 @@ export function CostCentersProvider({ children }: { children: React.ReactNode })
     [costCenterMap]
   );
 
+  const toggleCostCenterFilter = useCallback((costCenterId: number) => {
+    setSelectedCostCenterIds((prev) => {
+      if (prev.includes(costCenterId)) return prev.filter((id) => id !== costCenterId);
+      return [...prev, costCenterId];
+    });
+  }, []);
+
+  const selectedCostCenterSummary = React.useMemo(() => {
+    if (selectedCostCenterIds.length === 0) return "All Cost Centers";
+    if (selectedCostCenterIds.length === 1) return getCostCenterName(selectedCostCenterIds[0]) || `ID: ${selectedCostCenterIds[0]}`;
+    return `${selectedCostCenterIds.length} Cost Centers`;
+  }, [selectedCostCenterIds, getCostCenterName]);
+
   return (
-    <CostCentersContext.Provider value={{ costCenters, costCenterMap, loading, getCostCenterName }}>
+    <CostCentersContext.Provider value={{ costCenters, costCenterMap, loading, getCostCenterName, selectedCostCenterIds, setSelectedCostCenterIds, toggleCostCenterFilter, selectedCostCenterSummary }}>
       {children}
     </CostCentersContext.Provider>
   );

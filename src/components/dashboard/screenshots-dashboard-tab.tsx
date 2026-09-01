@@ -69,14 +69,12 @@ function withCacheBuster(url: string): string {
 
 type ScreenshotsDashboardTabProps = {
   detachable?: boolean;
-  selectedCostCenterIds?: number[];
 };
 
 export default function ScreenshotsDashboardTab({
   detachable = true,
-  selectedCostCenterIds = [],
 }: ScreenshotsDashboardTabProps) {
-  const { costCenterMap } = useCostCenters();
+  const { costCenterMap, selectedCostCenterIds } = useCostCenters();
   const { supabase } = useSupabaseAuth();
   const dbVehiclesRef = useRef<DbVehicle[] | null>(null);
   const [cards, setCards] = useState<VehicleCard[]>([]);
