@@ -415,7 +415,7 @@ export default function Drivers() {
 
         const matchesFilter = licenseFilter === 'all' || (licenseFilter === 'sa' && driver.sa_issued) || (licenseFilter === 'foreign' && !driver.sa_issued)
 
-        const matchesCostCenter = selectedCostCenterIds.length === 0 || (driver.cost_center_id && selectedCostCenterIds.includes(driver.cost_center_id))
+        const matchesCostCenter = selectedCostCenterIds.length === 0 || (driver.cost_center_id && selectedCostCenterIds.includes(Number(driver.cost_center_id)))
 
         return matchesSearch && matchesFilter && matchesCostCenter
     })

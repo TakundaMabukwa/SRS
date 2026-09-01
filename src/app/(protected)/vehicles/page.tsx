@@ -238,7 +238,7 @@ export default function Vehicles() {
       (vehicle.registration_number || '').toLowerCase().includes(searchLower) ||
       (vehicle.vehicle_type || '').toLowerCase().includes(searchLower)
     );
-    const vccId = (vehicle as any).cost_center_id;
+    const vccId = Number((vehicle as any).cost_center_id) || null;
     const matchesCostCenter = selectedCostCenterIds.length === 0 || (vccId && selectedCostCenterIds.includes(vccId));
     return matchesSearch && matchesCostCenter;
   });
