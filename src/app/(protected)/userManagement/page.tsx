@@ -29,7 +29,6 @@ import { CreateUser } from "@/lib/action/createUser"
 import { createClient } from "@/lib/supabase/client"
 import { createClient as createServerClient } from "@supabase/supabase-js"
 import { PagePermissionSelector } from "@/components/ui/page-permission-selector"
-import { PageActionSelector } from "@/components/ui/page-action-selector"
 import { DEFAULT_ROLE_PERMISSIONS, Permission, PAGES, ACTIONS } from "@/lib/permissions/permissions"
 import { SecureButton } from "@/components/SecureButton"
 import { resetUserPassword } from "@/lib/action/resetPassword"
@@ -49,6 +48,7 @@ interface User {
     company: string
     last_sign_in_at?: string
     is_active?: boolean
+    cost_center_ids?: number[]
 }
 
 interface Role {
@@ -78,8 +78,6 @@ export default function SettingsPage() {
     const supabase = createClient();
     const [isEditOpen, setIsEditOpen] = useState(false);
     const [editingUser, setEditingUser] = useState(null);
-    const [userPermissions, setUserPermissions] = useState<Permission[]>([]);
-    const [isPermissionOpen, setIsPermissionOpen] = useState(false);
     const [isResetPasswordOpen, setIsResetPasswordOpen] = useState(false);
     const [resetPasswordUser, setResetPasswordUser] = useState<{id: string, email: string} | null>(null);
     const [isResultDialogOpen, setIsResultDialogOpen] = useState(false);
@@ -100,16 +98,29 @@ export default function SettingsPage() {
     const [roleFilter, setRoleFilter] = useState<string>("all");
     const [emailSearch, setEmailSearch] = useState<string>("");
 
-    // Form states:
+    // Edit form states
     const [editEmail, setEditEmail] = useState("");
     const [editRole, setEditRole] = useState("");
+    const [editPermissions, setEditPermissions] = useState<Permission[]>([]);
+    const [editCostCenterIds, setEditCostCenterIds] = useState<number[]>([]);
+    const [editExpandedPages, setEditExpandedPages] = useState<Set<string>>(new Set());
 
     // Handlers:
     function openEditDialog(user: User) {
         setEditingUser(user as any);
         setEditEmail(user.email);
         setEditRole(user.role ?? "");
+        setEditPermissions(user.permissions || []);
         setIsEditOpen(true);
+
+        // Fetch user's current cost center assignments
+        const ccClient: any = supabase;
+        ccClient.from("user_cost_centers")
+            .select("cost_center_id")
+            .eq("user_id", user.id)
+            .then(({ data }: any) => {
+                setEditCostCenterIds((data || []).map((uc: any) => uc.cost_center_id).filter(Boolean));
+            });
     }
 
     function closeEditDialog() {
@@ -117,25 +128,43 @@ export default function SettingsPage() {
         setEditingUser(null);
         setEditEmail("");
         setEditRole("");
+        setEditPermissions([]);
+        setEditCostCenterIds([]);
+        setEditExpandedPages(new Set());
     }
 
     async function submitUserUpdate() {
         if (!editingUser) return;
 
-        const { error } = await supabase
+        const ccClient: any = supabase;
+
+        const { error } = await ccClient
             .from("users")
-            .update({ email: editEmail, role: editRole })
+            .update({
+                email: editEmail,
+                role: editRole,
+                permissions: editPermissions
+            })
             .eq("id", (editingUser as { id: string }).id);
 
-        console.log("Update user : " + editEmail + " " + editRole);
-
         if (error) {
-            alert("Failed to update user: " + error.message);
+            toast.error("Failed to update user: " + error.message);
             return;
         }
+
+        // Update cost center assignments
+        const userId = (editingUser as { id: string }).id;
+        await ccClient.from("user_cost_centers").delete().eq("user_id", userId);
+        if (editCostCenterIds.length > 0) {
+            const inserts = editCostCenterIds.map(ccId => ({
+                user_id: userId,
+                cost_center_id: ccId,
+            }));
+            await ccClient.from("user_cost_centers").insert(inserts);
+        }
+
         await fetchUsers();
         toast.success("User updated successfully");
-        alert("User updated successfully");
         closeEditDialog();
     }
 
@@ -165,15 +194,19 @@ export default function SettingsPage() {
                 }
             );
             const usersWithAuth = await Promise.all(
-                (usersData || []).map(async (user) => {
+                (usersData || []).map(async (user: any) => {
                     try {
-                        const { data: authUser } = await serviceSupabase.auth.admin.getUserById(user.id);
+                        const [authResult, ccResult] = await Promise.all([
+                            serviceSupabase.auth.admin.getUserById(user.id),
+                            (supabase as any).from("user_cost_centers").select("cost_center_id").eq("user_id", user.id)
+                        ]);
                         return {
                             ...user,
-                            last_sign_in_at: authUser.user?.last_sign_in_at
+                            last_sign_in_at: authResult.data.user?.last_sign_in_at,
+                            cost_center_ids: ((ccResult as any).data || []).map((uc: any) => uc.cost_center_id).filter(Boolean)
                         };
                     } catch {
-                        return { ...user, last_sign_in_at: null };
+                        return { ...user, last_sign_in_at: null, cost_center_ids: [] };
                     }
                 })
             );
@@ -933,6 +966,7 @@ export default function SettingsPage() {
                                         <TableRow className="h-10">
                                             <TableHead className="py-2">Email</TableHead>
                                             <TableHead className="py-2">Role</TableHead>
+                                            <TableHead className="py-2">Cost Centers</TableHead>
                                             <TableHead className="py-2">Status</TableHead>
                                             <TableHead className="py-2">Last Sign In</TableHead>
                                             <TableHead className="py-2">Actions</TableHead>
@@ -951,6 +985,24 @@ export default function SettingsPage() {
                                                     <Badge className={getRoleBadgeColor(user.role)}>
                                                         {user.role === 'customer' ? 'EXTERNAL' : user.role?.replace("-", " ").toUpperCase() || 'NO ROLE'}
                                                     </Badge>
+                                                </TableCell>
+                                                <TableCell className="py-2">
+                                                    {user.cost_center_ids && user.cost_center_ids.length > 0 ? (
+                                                        <div className="flex flex-wrap gap-1 max-w-[220px]">
+                                                            {user.cost_center_ids.slice(0, 2).map(ccId => (
+                                                                <span key={ccId} className="text-xs bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full border border-blue-200">
+                                                                    {costCentersList.find(c => c.id === ccId)?.name || `#${ccId}`}
+                                                                </span>
+                                                            ))}
+                                                            {user.cost_center_ids.length > 2 && (
+                                                                <span className="text-xs text-gray-500">
+                                                                    +{user.cost_center_ids.length - 2} more
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                    ) : (
+                                                        <span className="text-xs text-gray-400">All</span>
+                                                    )}
                                                 </TableCell>
                                                 <TableCell className="py-2">
                                                     <Badge className={user.is_active !== false ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}>
@@ -975,11 +1027,7 @@ export default function SettingsPage() {
                                                             action="edit"
                                                             variant="outline" 
                                                             size="sm" 
-                                                            onClick={() => {
-                                                                setEditingUser(user as any);
-                                                                setUserPermissions(user.permissions || []);
-                                                                setIsPermissionOpen(true);
-                                                            }}
+                                                            onClick={() => openEditDialog(user)}
                                                         >
                                                             <Edit className="h-4 w-4" />
                                                         </SecureButton>
@@ -1141,90 +1189,147 @@ export default function SettingsPage() {
 
 
                 {/* Edit User Dialog */}
-                <Dialog open={isEditOpen} onOpenChange={setIsEditOpen}>
-                    <DialogContent className="max-w-md">
+                <Dialog open={isEditOpen} onOpenChange={(open) => { if (!open) closeEditDialog(); }}>
+                    <DialogContent className="!max-w-none w-[80vw] max-h-[90vh] overflow-y-auto sm:!max-w-none">
                         <DialogHeader>
-                            <DialogTitle>Edit User</DialogTitle>
+                            <DialogTitle className="text-xl">Edit User</DialogTitle>
                             <DialogDescription>
-                                Update email and role for the user.
+                                Update account details, cost centers, and permissions for {(editingUser as { email?: string } | null)?.email}
                             </DialogDescription>
                         </DialogHeader>
-                        <form
-                            onSubmit={(e) => {
-                                e.preventDefault();
-                                submitUserUpdate();
-                            }}
-                        >
-                            <div className="space-y-4">
-                                <div>
-                                    <Label htmlFor="editEmail">Email Address</Label>
-                                    <Input
-                                        id="editEmail"
-                                        name="editEmail"
-                                        type="email"
-                                        value={editEmail}
-                                        onChange={(e) => setEditEmail(e.target.value)}
-                                        required
-                                    />
-                                </div>
-                                <div>
-                                    <Label htmlFor="editRole">Role</Label>
-                                    <Select value={editRole} onValueChange={setEditRole}>
-                                        <SelectTrigger>
-                                            <SelectValue placeholder="Select a role" />
-                                        </SelectTrigger>
-                                        <SelectContent>
-                                            <SelectItem value="admin">Administrator</SelectItem>
-                                            <SelectItem value="fleet manager">Fleet Manager</SelectItem>
-                                            <SelectItem value="fc">FC</SelectItem>
-                                            <SelectItem value="customer">External</SelectItem>
-                                        </SelectContent>
-                                    </Select>
+                        <div className="space-y-6">
+                            {/* Basic Info */}
+                            <div className="bg-gray-50 rounded-lg p-6 space-y-4">
+                                <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+                                    <User className="h-5 w-5" />
+                                    Basic Information
+                                </h3>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <div className="space-y-2">
+                                        <Label htmlFor="editEmail">Email Address</Label>
+                                        <Input id="editEmail" type="email" value={editEmail} onChange={(e) => setEditEmail(e.target.value)} required />
+                                    </div>
+                                    <div className="space-y-2">
+                                        <Label htmlFor="editRole">Role</Label>
+                                        <Select value={editRole} onValueChange={(value) => {
+                                            setEditRole(value);
+                                            setEditPermissions(DEFAULT_ROLE_PERMISSIONS[value] || []);
+                                        }}>
+                                            <SelectTrigger><SelectValue placeholder="Select role" /></SelectTrigger>
+                                            <SelectContent>
+                                                <SelectItem value="admin">Administrator</SelectItem>
+                                                <SelectItem value="fleet manager">Fleet Manager</SelectItem>
+                                                <SelectItem value="fc">Fleet Controller</SelectItem>
+                                                <SelectItem value="customer">External User</SelectItem>
+                                                <SelectItem value="driver">Driver</SelectItem>
+                                            </SelectContent>
+                                        </Select>
+                                    </div>
                                 </div>
                             </div>
-                            <div className="flex justify-end gap-2 mt-4">
-                                <Button
-                                    type="button"
-                                    variant="outline"
-                                    onClick={() => closeEditDialog()}
-                                >
-                                    Cancel
-                                </Button>
-                                <Button type="submit">Save</Button>
-                            </div>
-                        </form>
-                    </DialogContent>
-                </Dialog>
 
-                {/* User Permissions Modal */}
-                <Dialog open={isPermissionOpen} onOpenChange={setIsPermissionOpen}>
-                    <DialogContent className="!max-w-none w-[70vw] max-h-[90vh] overflow-y-auto sm:!max-w-none">
-                        <DialogHeader>
-                            <DialogTitle>View User Permissions</DialogTitle>
-                            <DialogDescription>
-                                Current permissions for {editingUser?.email}
-                            </DialogDescription>
-                        </DialogHeader>
-                        <div className="space-y-4">
-                            <div className="text-sm text-gray-600">
-                                Permissions assigned to <strong>{editingUser?.email}</strong>:
+                            {/* Cost Center Assignment */}
+                            <div className="bg-white border rounded-lg p-6 space-y-4">
+                                <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+                                    <Building className="h-5 w-5" />
+                                    Cost Center Assignment
+                                </h3>
+                                <div className="grid grid-cols-3 gap-2 max-h-48 overflow-y-auto border rounded-md p-3">
+                                    {costCentersList.map((cc) => (
+                                        <label key={cc.id} className="flex items-center gap-2 text-sm cursor-pointer hover:bg-gray-50 p-1 rounded">
+                                            <input
+                                                type="checkbox"
+                                                checked={editCostCenterIds.includes(cc.id)}
+                                                onChange={(e) => {
+                                                    if (e.target.checked) {
+                                                        setEditCostCenterIds(prev => [...prev, cc.id]);
+                                                    } else {
+                                                        setEditCostCenterIds(prev => prev.filter(id => id !== cc.id));
+                                                    }
+                                                }}
+                                                className="rounded border-gray-300"
+                                            />
+                                            <span>{cc.name}</span>
+                                        </label>
+                                    ))}
+                                </div>
+                                {editCostCenterIds.length > 0 && (
+                                    <p className="text-xs text-blue-600">{editCostCenterIds.length} cost center(s) assigned</p>
+                                )}
                             </div>
-                            <PageActionSelector
-                                initialPermissions={userPermissions}
-                                readOnly={true}
-                                onChange={() => {}}
-                            />
-                            <div className="flex justify-end pt-4">
-                                <Button 
-                                    onClick={() => {
-                                        setIsPermissionOpen(false);
-                                        setEditingUser(null);
-                                        setUserPermissions([]);
-                                    }}
-                                >
-                                    Close
-                                </Button>
+
+                            {/* Permissions */}
+                            <div className="bg-white border rounded-lg p-6 space-y-4">
+                                <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+                                    <Shield className="h-5 w-5" />
+                                    Permissions
+                                </h3>
+                                <div className="space-y-3">
+                                    {Object.entries(PAGES).map(([pageKey, pageInfo]) => {
+                                        const pagePermission = editPermissions.find(p => p.page === pageKey);
+                                        const hasPage = !!pagePermission;
+                                        const isExpanded = editExpandedPages.has(pageKey);
+                                        return (
+                                            <div key={pageKey} className={`border rounded-lg ${hasPage ? 'border-blue-200 bg-blue-50' : 'border-gray-200'}`}>
+                                                <div className="flex items-center space-x-3 p-3">
+                                                    <Checkbox
+                                                        checked={hasPage}
+                                                        onCheckedChange={(checked) => {
+                                                            if (checked) {
+                                                                setEditPermissions(prev => [...prev.filter(p => p.page !== pageKey), { page: pageKey as any, actions: ['view'] }]);
+                                                                setEditExpandedPages(prev => new Set([...prev, pageKey]));
+                                                            } else {
+                                                                setEditPermissions(prev => prev.filter(p => p.page !== pageKey));
+                                                                setEditExpandedPages(prev => { const s = new Set(prev); s.delete(pageKey); return s; });
+                                                            }
+                                                        }}
+                                                    />
+                                                    <div className="flex-1">
+                                                        <span className="font-semibold text-sm">{pageInfo.name}</span>
+                                                        <span className="text-xs text-gray-500 ml-2">{pageInfo.description}</span>
+                                                    </div>
+                                                    {hasPage && (
+                                                        <Button type="button" variant="ghost" size="sm" onClick={() => {
+                                                            setEditExpandedPages(prev => { const s = new Set(prev); s.has(pageKey) ? s.delete(pageKey) : s.add(pageKey); return s; });
+                                                        }} className="p-1 h-6 w-6">
+                                                            {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                                                        </Button>
+                                                    )}
+                                                </div>
+                                                {hasPage && isExpanded && (
+                                                    <div className="px-3 pb-3 ml-6 grid grid-cols-2 gap-2">
+                                                        {Object.entries(ACTIONS).map(([actionKey, actionName]) => (
+                                                            <label key={actionKey} className={`flex items-center space-x-2 p-2 rounded border text-sm ${pagePermission?.actions.includes(actionKey as any) ? 'bg-blue-100 border-blue-300' : 'bg-gray-50 border-gray-200'}`}>
+                                                                <Checkbox
+                                                                    checked={pagePermission?.actions.includes(actionKey as any) || false}
+                                                                    onCheckedChange={(checked) => {
+                                                                        setEditPermissions(prev => prev.map(p => {
+                                                                            if (p.page === pageKey) {
+                                                                                const actions = checked
+                                                                                    ? [...p.actions.filter(a => a !== actionKey), actionKey as any]
+                                                                                    : p.actions.filter(a => a !== actionKey);
+                                                                                return { ...p, actions: actions.length ? actions : ['view'] };
+                                                                            }
+                                                                            return p;
+                                                                        }));
+                                                                    }}
+                                                                    disabled={actionKey === 'view'}
+                                                                />
+                                                                <span>{actionName}</span>
+                                                            </label>
+                                                        ))}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        );
+                                    })}
+                                </div>
                             </div>
+                        </div>
+
+                        <div className="flex justify-end gap-3 pt-4 border-t">
+                            <Button type="button" variant="outline" onClick={closeEditDialog}>Cancel</Button>
+                            <Button type="button" onClick={submitUserUpdate} className="bg-blue-600 hover:bg-blue-700">Save Changes</Button>
                         </div>
                     </DialogContent>
                 </Dialog>
