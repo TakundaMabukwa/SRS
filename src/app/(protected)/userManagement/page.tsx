@@ -49,6 +49,7 @@ interface User {
     last_sign_in_at?: string
     is_active?: boolean
     cost_center_ids?: number[]
+    assigned_cost_centers?: any
 }
 
 interface Role {
@@ -67,6 +68,13 @@ interface SystemSetting {
     type: "text" | "number" | "boolean" | "select"
     options?: string[]
 }
+
+// Pages to hide from the permission editor (not applicable to this system)
+const HIDDEN_PERMISSION_PAGES = new Set(['fuel', 'loadPlan', 'fleetJobs', 'financials']);
+
+// Filter a permission list to drop hidden pages
+const filterVisiblePermissions = (perms: Permission[]): Permission[] =>
+    perms.filter(p => !HIDDEN_PERMISSION_PAGES.has(p.page));
 
 export default function SettingsPage() {
     const [users, setUsers] = useState<User[]>([])
@@ -113,14 +121,12 @@ export default function SettingsPage() {
         setEditPermissions(user.permissions || []);
         setIsEditOpen(true);
 
-        // Fetch user's current cost center assignments
-        const ccClient: any = supabase;
-        ccClient.from("user_cost_centers")
-            .select("cost_center_id")
-            .eq("user_id", user.id)
-            .then(({ data }: any) => {
-                setEditCostCenterIds((data || []).map((uc: any) => uc.cost_center_id).filter(Boolean));
-            });
+        // Load user's assigned cost centers from the users table (JSONB column)
+        const raw = (user as any).assigned_cost_centers;
+        const ids = Array.isArray(raw)
+            ? raw.map((id: any) => Number(id)).filter((id: number) => !isNaN(id))
+            : [];
+        setEditCostCenterIds(ids);
     }
 
     function closeEditDialog() {
@@ -143,7 +149,8 @@ export default function SettingsPage() {
             .update({
                 email: editEmail,
                 role: editRole,
-                permissions: editPermissions
+                permissions: editPermissions,
+                assigned_cost_centers: editCostCenterIds
             })
             .eq("id", (editingUser as { id: string }).id);
 
@@ -152,7 +159,7 @@ export default function SettingsPage() {
             return;
         }
 
-        // Update cost center assignments
+        // Legacy: keep user_cost_centers junction table in sync
         const userId = (editingUser as { id: string }).id;
         await ccClient.from("user_cost_centers").delete().eq("user_id", userId);
         if (editCostCenterIds.length > 0) {
@@ -196,14 +203,15 @@ export default function SettingsPage() {
             const usersWithAuth = await Promise.all(
                 (usersData || []).map(async (user: any) => {
                     try {
-                        const [authResult, ccResult] = await Promise.all([
-                            serviceSupabase.auth.admin.getUserById(user.id),
-                            (supabase as any).from("user_cost_centers").select("cost_center_id").eq("user_id", user.id)
-                        ]);
+                        const authResult = await serviceSupabase.auth.admin.getUserById(user.id);
+                        const raw = user.assigned_cost_centers;
+                        const ids = Array.isArray(raw)
+                            ? raw.map((id: any) => Number(id)).filter((id: number) => !isNaN(id))
+                            : [];
                         return {
                             ...user,
                             last_sign_in_at: authResult.data.user?.last_sign_in_at,
-                            cost_center_ids: ((ccResult as any).data || []).map((uc: any) => uc.cost_center_id).filter(Boolean)
+                            cost_center_ids: ids
                         };
                     } catch {
                         return { ...user, last_sign_in_at: null, cost_center_ids: [] };
@@ -627,7 +635,7 @@ export default function SettingsPage() {
                                                             value={newUserRole} 
                                                             onValueChange={(value) => {
                                                                 setNewUserRole(value);
-                                                                setNewUserPermissions(DEFAULT_ROLE_PERMISSIONS[value] || []);
+                                                                setNewUserPermissions(filterVisiblePermissions(DEFAULT_ROLE_PERMISSIONS[value] || []));
                                                             }}
                                                         >
                                                             <SelectTrigger className="h-11">
@@ -752,6 +760,14 @@ export default function SettingsPage() {
                                                             <p className="text-sm text-gray-500 col-span-3">No cost centers found</p>
                                                         )}
                                                     </div>
+                                                    <div className="flex gap-2">
+                                                        <Button type="button" variant="outline" size="sm" onClick={() => setNewUserCostCenterIds(costCentersList.map(cc => cc.id))}>
+                                                            Select All
+                                                        </Button>
+                                                        <Button type="button" variant="outline" size="sm" onClick={() => setNewUserCostCenterIds([])}>
+                                                            Deselect All
+                                                        </Button>
+                                                    </div>
                                                     {newUserCostCenterIds.length > 0 && (
                                                         <p className="text-xs text-blue-600">{newUserCostCenterIds.length} cost center(s) selected</p>
                                                     )}
@@ -802,7 +818,7 @@ export default function SettingsPage() {
                                                     </div>
                                                     
                                                     <div className="space-y-4">
-                                                        {Object.entries(PAGES).map(([pageKey, pageInfo]) => {
+                                                        {Object.entries(PAGES).filter(([pageKey]) => !HIDDEN_PERMISSION_PAGES.has(pageKey)).map(([pageKey, pageInfo]) => {
                                                             const pagePermission = newUserPermissions.find(p => p.page === pageKey);
                                                             const hasPage = !!pagePermission;
                                                             const isExpanded = expandedPages.has(pageKey);
@@ -1213,7 +1229,7 @@ export default function SettingsPage() {
                                         <Label htmlFor="editRole">Role</Label>
                                         <Select value={editRole} onValueChange={(value) => {
                                             setEditRole(value);
-                                            setEditPermissions(DEFAULT_ROLE_PERMISSIONS[value] || []);
+                                            setEditPermissions(filterVisiblePermissions(DEFAULT_ROLE_PERMISSIONS[value] || []));
                                         }}>
                                             <SelectTrigger><SelectValue placeholder="Select role" /></SelectTrigger>
                                             <SelectContent>
@@ -1253,6 +1269,14 @@ export default function SettingsPage() {
                                         </label>
                                     ))}
                                 </div>
+                                <div className="flex gap-2">
+                                    <Button type="button" variant="outline" size="sm" onClick={() => setEditCostCenterIds(costCentersList.map(cc => cc.id))}>
+                                        Select All
+                                    </Button>
+                                    <Button type="button" variant="outline" size="sm" onClick={() => setEditCostCenterIds([])}>
+                                        Deselect All
+                                    </Button>
+                                </div>
                                 {editCostCenterIds.length > 0 && (
                                     <p className="text-xs text-blue-600">{editCostCenterIds.length} cost center(s) assigned</p>
                                 )}
@@ -1265,7 +1289,7 @@ export default function SettingsPage() {
                                     Permissions
                                 </h3>
                                 <div className="space-y-3">
-                                    {Object.entries(PAGES).map(([pageKey, pageInfo]) => {
+                                    {Object.entries(PAGES).filter(([pageKey]) => !HIDDEN_PERMISSION_PAGES.has(pageKey)).map(([pageKey, pageInfo]) => {
                                         const pagePermission = editPermissions.find(p => p.page === pageKey);
                                         const hasPage = !!pagePermission;
                                         const isExpanded = editExpandedPages.has(pageKey);

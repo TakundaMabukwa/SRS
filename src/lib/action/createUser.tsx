@@ -86,6 +86,19 @@ export async function CreateUser(formData: FormData) {
     }
 
     // Insert into users table
+    const costCenterIdsRaw = formData.get("costCenterIds") as string;
+    let assignedCostCenters: number[] = [];
+    if (costCenterIdsRaw) {
+        try {
+            const parsed = JSON.parse(costCenterIdsRaw);
+            if (Array.isArray(parsed)) {
+                assignedCostCenters = parsed.map(Number).filter((id: number) => !isNaN(id));
+            }
+        } catch (e) {
+            console.error("Failed to parse costCenterIds:", e);
+        }
+    }
+
     const { error: insertError } = await supabase.from("users").insert({
         id: userId,
         email,
@@ -97,7 +110,8 @@ export async function CreateUser(formData: FormData) {
         permissions: permissions,
         energyrite: false,
         cost_code: "",
-        company: "SRS"
+        company: "SRS",
+        assigned_cost_centers: assignedCostCenters
     });
 
     if (insertError) {
@@ -105,25 +119,17 @@ export async function CreateUser(formData: FormData) {
         return { success: false, message: "Failed to create user profile: " + insertError.message };
     }
 
-    // Assign cost centers if provided
-    const costCenterIdsRaw = formData.get("costCenterIds") as string;
-    if (costCenterIdsRaw) {
-        try {
-            const costCenterIds: number[] = JSON.parse(costCenterIdsRaw);
-            if (costCenterIds.length > 0) {
-                const inserts = costCenterIds.map(ccId => ({
-                    user_id: userId,
-                    cost_center_id: ccId,
-                }));
-                const { error: ccError } = await supabase
-                    .from("user_cost_centers")
-                    .insert(inserts);
-                if (ccError) {
-                    console.error("Error assigning cost centers:", ccError.message);
-                }
-            }
-        } catch (e) {
-            console.error("Failed to parse costCenterIds:", e);
+    // Legacy: also record in user_cost_centers junction table for backward compat
+    if (assignedCostCenters.length > 0) {
+        const inserts = assignedCostCenters.map(ccId => ({
+            user_id: userId,
+            cost_center_id: ccId,
+        }));
+        const { error: ccError } = await supabase
+            .from("user_cost_centers")
+            .insert(inserts);
+        if (ccError) {
+            console.error("Error assigning cost centers (legacy):", ccError.message);
         }
     }
 

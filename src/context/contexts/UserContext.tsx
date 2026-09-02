@@ -11,6 +11,7 @@ interface User {
   company: string | null;
   tech_admin: boolean | null;
   first_login: boolean | null;
+  assigned_cost_centers?: any;
 }
 
 interface UserContextType {
@@ -93,13 +94,13 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
             first_login: userData.first_login
           });
 
-          // Fetch user cost center assignments
+          // Fetch assigned cost centers from the users table (JSONB column)
           try {
-            const { data: userCCs } = await supabase
-              .from('user_cost_centers')
-              .select('cost_center_id')
-              .eq('user_id', authUser.id);
-            setUserCostCenterIds((userCCs || []).map(uc => uc.cost_center_id).filter(Boolean));
+            const raw = userData.assigned_cost_centers;
+            const ids = Array.isArray(raw)
+              ? raw.map((id: any) => Number(id)).filter((id: number) => !isNaN(id))
+              : [];
+            setUserCostCenterIds(ids);
           } catch {
             setUserCostCenterIds([]);
           }
@@ -128,13 +129,13 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
                   tech_admin: userData.tech_admin,
                   first_login: userData.first_login
                 });
-                // Fetch cost centers for new session
+                // Fetch assigned cost centers for new session
                 try {
-                  const { data: userCCs } = await supabase
-                    .from('user_cost_centers')
-                    .select('cost_center_id')
-                    .eq('user_id', session.user.id);
-                  setUserCostCenterIds((userCCs || []).map(uc => uc.cost_center_id).filter(Boolean));
+                  const raw = userData.assigned_cost_centers;
+                  const ids = Array.isArray(raw)
+                    ? raw.map((id: any) => Number(id)).filter((id: number) => !isNaN(id))
+                    : [];
+                  setUserCostCenterIds(ids);
                 } catch {
                   setUserCostCenterIds([]);
                 }
