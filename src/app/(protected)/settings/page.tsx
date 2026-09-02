@@ -54,9 +54,14 @@ type AlertDefinition = {
   signal_code: string;
   severity: Severity;
   is_active: boolean;
-  cost_center_id: number | null;
   created_at: string;
   updated_at: string;
+  // Override fields (present when fetched with cost_center_id)
+  override_severity?: Severity | null;
+  override_description?: string | null;
+  override_is_active?: boolean | null;
+  override_id?: number | null;
+  override_cc_id?: number | null;
 };
 
 type AlertGroupConfig = {
@@ -65,10 +70,15 @@ type AlertGroupConfig = {
   severity: Severity;
   description: string;
   is_active: boolean;
-  cost_center_id: number | null;
   members: AlertDefinition[];
   created_at: string;
   updated_at: string;
+  // Override fields
+  override_severity?: Severity | null;
+  override_description?: string | null;
+  override_is_active?: boolean | null;
+  override_id?: number | null;
+  override_cc_id?: number | null;
 };
 
 type DriverConfigCriterion = {
@@ -158,72 +168,41 @@ function AlertConfigSection() {
   const [showGroupForm, setShowGroupForm] = useState(false);
   const [editingGroup, setEditingGroup] = useState<AlertGroupConfig | null>(null);
   const [groupForm, setGroupForm] = useState({ name: "", severity: "MEDIUM" as Severity, description: "", memberIds: [] as number[] });
-  const [showMemberPicker, setShowMemberPicker] = useState(false);
 
   const [showOverrideDefConfirm, setShowOverrideDefConfirm] = useState(false);
   const [showOverrideGroupConfirm, setShowOverrideGroupConfirm] = useState(false);
   const [overrideLoading, setOverrideLoading] = useState(false);
 
   const isMultiCc = selectedCostCenterIds.length > 1;
+  const firstCcId = selectedCostCenterIds[0] || null;
 
-  // Fetch definitions for all selected CCs, merged (CC-specific wins over global)
+  // Fetch definitions — server returns merged base + override rows
   const fetchDefinitions = useCallback(async () => {
     try {
-      if (selectedCostCenterIds.length === 0) {
-        const res = await fetch(`${ALERT_CONFIG_API}/definitions`, { cache: "no-store" });
-        const data = await res.json();
-        setDefinitions(((data?.data || []) as AlertDefinition[]).sort((a, b) => a.name.localeCompare(b.name)));
-        return;
-      }
-      // Fetch for each selected CC and merge
-      const allDefs = new Map<string, AlertDefinition>();
-      // First add globals
-      const globalRes = await fetch(`${ALERT_CONFIG_API}/definitions`, { cache: "no-store" });
-      const globalData = await globalRes.json();
-      for (const def of (globalData?.data || []) as AlertDefinition[]) {
-        if (def.cost_center_id === null) allDefs.set(def.name, def);
-      }
-      // Then overlay CC-specific (same key, overwrites global)
-      for (const ccId of selectedCostCenterIds) {
-        const res = await fetch(`${ALERT_CONFIG_API}/definitions?cost_center_id=${ccId}`, { cache: "no-store" });
-        const data = await res.json();
-        for (const def of (data?.data || []) as AlertDefinition[]) {
-          if (def.cost_center_id !== null) allDefs.set(def.name, def);
-        }
-      }
-      setDefinitions(Array.from(allDefs.values()).sort((a, b) => a.name.localeCompare(b.name)));
+      const url = firstCcId
+        ? `${ALERT_CONFIG_API}/definitions?cost_center_id=${firstCcId}`
+        : `${ALERT_CONFIG_API}/definitions`;
+      const res = await fetch(url, { cache: "no-store" });
+      const data = await res.json();
+      setDefinitions(((data?.data || []) as AlertDefinition[]).sort((a, b) => a.name.localeCompare(b.name)));
     } catch {
       setDefinitions([]);
     }
-  }, [selectedCostCenterIds.join(",")]);
+  }, [firstCcId]);
 
-  // Fetch groups for all selected CCs, merged
+  // Fetch groups — server returns merged base + override rows
   const fetchGroups = useCallback(async () => {
     try {
-      if (selectedCostCenterIds.length === 0) {
-        const res = await fetch(`${ALERT_CONFIG_API}/groups`, { cache: "no-store" });
-        const data = await res.json();
-        setGroups(((data?.data || []) as AlertGroupConfig[]).sort((a, b) => a.name.localeCompare(b.name)));
-        return;
-      }
-      const allGroups = new Map<string, AlertGroupConfig>();
-      const globalRes = await fetch(`${ALERT_CONFIG_API}/groups`, { cache: "no-store" });
-      const globalData = await globalRes.json();
-      for (const g of (globalData?.data || []) as AlertGroupConfig[]) {
-        if (g.cost_center_id === null) allGroups.set(g.name, g);
-      }
-      for (const ccId of selectedCostCenterIds) {
-        const res = await fetch(`${ALERT_CONFIG_API}/groups?cost_center_id=${ccId}`, { cache: "no-store" });
-        const data = await res.json();
-        for (const g of (data?.data || []) as AlertGroupConfig[]) {
-          if (g.cost_center_id !== null) allGroups.set(g.name, g);
-        }
-      }
-      setGroups(Array.from(allGroups.values()).sort((a, b) => a.name.localeCompare(b.name)));
+      const url = firstCcId
+        ? `${ALERT_CONFIG_API}/groups?cost_center_id=${firstCcId}`
+        : `${ALERT_CONFIG_API}/groups`;
+      const res = await fetch(url, { cache: "no-store" });
+      const data = await res.json();
+      setGroups(((data?.data || []) as AlertGroupConfig[]).sort((a, b) => a.name.localeCompare(b.name)));
     } catch {
       setGroups([]);
     }
-  }, [selectedCostCenterIds.join(",")]);
+  }, [firstCcId]);
 
   useEffect(() => {
     setLoading(true);
@@ -231,105 +210,81 @@ function AlertConfigSection() {
       .finally(() => setLoading(false));
   }, [fetchDefinitions, fetchGroups]);
 
-  // Save definition — apply to all selected CCs
+  // Save definition — global mode edits base; CC mode upserts override
   const handleSaveDef = async () => {
     try {
       if (selectedCostCenterIds.length === 0) {
-        // Global mode
+        // Global mode — edit base definition
         const url = editingDef ? `${ALERT_CONFIG_API}/definitions/${editingDef.id}` : `${ALERT_CONFIG_API}/definitions`;
         const method = editingDef ? "PUT" : "POST";
-        await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(defForm) });
+        const res = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(defForm) });
+        if (!res.ok) { const err = await res.json().catch(() => ({})); throw new Error(err.message || "Failed"); }
         toast.success(editingDef ? "Alert type updated" : "Alert type created");
       } else {
-        // Apply to all selected CCs — strip signal_code (global-only Geotab mapping)
-        let created = 0;
-        let updated = 0;
-        for (const ccId of selectedCostCenterIds) {
-          const existingOverride = definitions.find(d => d.name === defForm.name && d.cost_center_id === ccId);
-          if (editingDef && existingOverride) {
-            await fetch(`${ALERT_CONFIG_API}/definitions/${existingOverride.id}`, {
-              method: "PUT", headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ ...defForm, signal_code: "", cost_center_id: ccId }),
-            });
-            updated++;
-          } else {
-            await fetch(`${ALERT_CONFIG_API}/definitions`, {
-              method: "POST", headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ ...defForm, signal_code: "", cost_center_id: ccId }),
-            });
-            created++;
-          }
+        // CC mode — upsert overrides for all selected CCs
+        const defId = editingDef?.id;
+        if (!defId) {
+          toast.error("Select an alert type to edit");
+          return;
         }
-        toast.success(`Saved to ${selectedCostCenterIds.length} cost center(s): ${created} created, ${updated} updated`);
+        await fetch(`${ALERT_CONFIG_API}/definitions/${defId}/overrides/bulk`, {
+          method: "PUT", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ cost_center_ids: selectedCostCenterIds, severity: defForm.severity, description: defForm.description }),
+        });
+        toast.success(`Override saved for ${selectedCostCenterIds.length} cost center(s)`);
       }
       setShowDefForm(false);
       setEditingDef(null);
       setDefForm({ name: "", category: "telematics", description: "", signal_code: "", severity: "MEDIUM" });
       fetchDefinitions();
-      fetchGroups();
     } catch (e: any) {
       toast.error(e?.message || "Failed to save");
     }
   };
 
-  // Delete definition — from all selected CCs
+  // Delete definition
   const handleDeleteDef = async (def: AlertDefinition) => {
-    if (def.cost_center_id === null && selectedCostCenterIds.length > 0) {
-      toast.error("Can't delete a global default from here. Go to Global Defaults to remove it.");
-      return;
-    }
-    if (!confirm("Delete this alert type?")) return;
-    try {
-      if (selectedCostCenterIds.length > 1 && def.cost_center_id !== null) {
-        // Delete from all selected CCs that have it
-        let deleted = 0;
+    const hasOverride = def.override_id != null;
+    if (selectedCostCenterIds.length > 0 && hasOverride) {
+      // Delete override only
+      if (!confirm("Remove this cost center's override? The global default will apply.")) return;
+      try {
         for (const ccId of selectedCostCenterIds) {
-          const match = definitions.find(d => d.name === def.name && d.cost_center_id === ccId);
-          if (match) {
-            await fetch(`${ALERT_CONFIG_API}/definitions/${match.id}`, { method: "DELETE" });
-            deleted++;
-          }
+          await fetch(`${ALERT_CONFIG_API}/definitions/${def.id}/overrides/${ccId}`, { method: "DELETE" });
         }
-        toast.success(`Deleted from ${deleted} cost center(s)`);
-      } else {
+        toast.success("Override removed");
+        fetchDefinitions();
+      } catch { toast.error("Failed to delete override"); }
+    } else if (selectedCostCenterIds.length === 0) {
+      // Global mode — delete base definition
+      if (!confirm("Delete this alert type entirely? This cannot be undone.")) return;
+      try {
         await fetch(`${ALERT_CONFIG_API}/definitions/${def.id}`, { method: "DELETE" });
         toast.success("Deleted");
-      }
-      fetchDefinitions();
-      fetchGroups();
-    } catch {
-      toast.error("Failed to delete");
+        fetchDefinitions();
+      } catch { toast.error("Failed to delete"); }
+    } else {
+      toast.error("No override to remove for this cost center");
     }
   };
 
-  // Save group — apply to all selected CCs
+  // Save group — global mode edits base; CC mode upserts override
   const handleSaveGroup = async () => {
     try {
       if (selectedCostCenterIds.length === 0) {
         const url = editingGroup ? `${ALERT_CONFIG_API}/groups/${editingGroup.id}` : `${ALERT_CONFIG_API}/groups`;
         const method = editingGroup ? "PUT" : "POST";
-        await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...groupForm, member_ids: groupForm.memberIds }) });
+        const res = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...groupForm, member_ids: groupForm.memberIds }) });
+        if (!res.ok) { const err = await res.json().catch(() => ({})); throw new Error(err.message || "Failed"); }
         toast.success(editingGroup ? "Alert group updated" : "Alert group created");
       } else {
-        let created = 0;
-        let updated = 0;
-        for (const ccId of selectedCostCenterIds) {
-          const existingOverride = groups.find(g => g.name === groupForm.name && g.cost_center_id === ccId);
-          if (editingGroup && existingOverride) {
-            await fetch(`${ALERT_CONFIG_API}/groups/${existingOverride.id}`, {
-              method: "PUT", headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ ...groupForm, member_ids: groupForm.memberIds, cost_center_id: ccId }),
-            });
-            updated++;
-          } else {
-            await fetch(`${ALERT_CONFIG_API}/groups`, {
-              method: "POST", headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ ...groupForm, member_ids: groupForm.memberIds, cost_center_id: ccId }),
-            });
-            created++;
-          }
-        }
-        toast.success(`Saved to ${selectedCostCenterIds.length} cost center(s): ${created} created, ${updated} updated`);
+        const grpId = editingGroup?.id;
+        if (!grpId) { toast.error("Select a group to edit"); return; }
+        await fetch(`${ALERT_CONFIG_API}/groups/${grpId}/overrides/bulk`, {
+          method: "PUT", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ cost_center_ids: selectedCostCenterIds, severity: groupForm.severity, description: groupForm.description }),
+        });
+        toast.success(`Override saved for ${selectedCostCenterIds.length} cost center(s)`);
       }
       setShowGroupForm(false);
       setEditingGroup(null);
@@ -340,140 +295,66 @@ function AlertConfigSection() {
     }
   };
 
-  // Delete group — from all selected CCs
+  // Delete group
   const handleDeleteGroup = async (group: AlertGroupConfig) => {
-    if (group.cost_center_id === null && selectedCostCenterIds.length > 0) {
-      toast.error("Can't delete a global default from here. Go to Global Defaults to remove it.");
-      return;
-    }
-    if (!confirm("Delete this alert group?")) return;
-    try {
-      if (selectedCostCenterIds.length > 1 && group.cost_center_id !== null) {
-        let deleted = 0;
+    const hasOverride = group.override_id != null;
+    if (selectedCostCenterIds.length > 0 && hasOverride) {
+      if (!confirm("Remove this cost center's override? The global default will apply.")) return;
+      try {
         for (const ccId of selectedCostCenterIds) {
-          const match = groups.find(g => g.name === group.name && g.cost_center_id === ccId);
-          if (match) {
-            await fetch(`${ALERT_CONFIG_API}/groups/${match.id}`, { method: "DELETE" });
-            deleted++;
-          }
+          await fetch(`${ALERT_CONFIG_API}/groups/${group.id}/overrides/${ccId}`, { method: "DELETE" });
         }
-        toast.success(`Deleted from ${deleted} cost center(s)`);
-      } else {
+        toast.success("Override removed");
+        fetchGroups();
+      } catch { toast.error("Failed to delete override"); }
+    } else if (selectedCostCenterIds.length === 0) {
+      if (!confirm("Delete this alert group entirely? This cannot be undone.")) return;
+      try {
         await fetch(`${ALERT_CONFIG_API}/groups/${group.id}`, { method: "DELETE" });
         toast.success("Deleted");
-      }
-      fetchGroups();
-    } catch {
-      toast.error("Failed to delete");
+        fetchGroups();
+      } catch { toast.error("Failed to delete"); }
+    } else {
+      toast.error("No override to remove for this cost center");
     }
   };
 
-  // Override from global — apply to all selected CCs
+  // Override from global — create overrides for all defs/groups that don't have one yet
   const handleOverrideDefsFromGlobal = async () => {
     if (selectedCostCenterIds.length === 0) return;
     setOverrideLoading(true);
     try {
-      const globalDefs = definitions.filter(d => d.cost_center_id === null);
-      let total = 0;
-      for (const ccId of selectedCostCenterIds) {
-        for (const def of globalDefs) {
-          const existing = definitions.find(d => d.name === def.name && d.cost_center_id === ccId);
-          if (!existing) {
-            await fetch(`${ALERT_CONFIG_API}/definitions`, {
-              method: "POST", headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ ...def, signal_code: "", cost_center_id: ccId, id: undefined }),
-            });
-            total++;
-          }
-        }
+      const defsToOverride = definitions.filter(d => d.override_id == null);
+      for (const def of defsToOverride) {
+        await fetch(`${ALERT_CONFIG_API}/definitions/${def.id}/overrides/bulk`, {
+          method: "PUT", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ cost_center_ids: selectedCostCenterIds, severity: def.severity, description: def.description }),
+        });
       }
-      toast.success(`Override created: ${total} alert type(s) copied from global to ${selectedCostCenterIds.length} cost center(s)`);
+      toast.success(`Override created: ${defsToOverride.length} alert type(s) copied to ${selectedCostCenterIds.length} cost center(s)`);
       setShowOverrideDefConfirm(false);
       fetchDefinitions();
-    } catch (e: any) {
-      toast.error(e?.message || "Failed to override");
-    } finally {
-      setOverrideLoading(false);
-    }
+    } catch (e: any) { toast.error(e?.message || "Failed to override"); }
+    finally { setOverrideLoading(false); }
   };
 
   const handleOverrideGroupsFromGlobal = async () => {
     if (selectedCostCenterIds.length === 0) return;
     setOverrideLoading(true);
     try {
-      const globalGroups = groups.filter(g => g.cost_center_id === null);
-      let total = 0;
-      for (const ccId of selectedCostCenterIds) {
-        for (const group of globalGroups) {
-          const existing = groups.find(g => g.name === group.name && g.cost_center_id === ccId);
-          if (!existing) {
-            await fetch(`${ALERT_CONFIG_API}/groups`, {
-              method: "POST", headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                name: group.name, severity: group.severity, description: group.description,
-                member_ids: (group.members || []).map(m => m.id),
-                cost_center_id: ccId,
-              }),
-            });
-            total++;
-          }
-        }
+      const groupsToOverride = groups.filter(g => g.override_id == null);
+      for (const group of groupsToOverride) {
+        await fetch(`${ALERT_CONFIG_API}/groups/${group.id}/overrides/bulk`, {
+          method: "PUT", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ cost_center_ids: selectedCostCenterIds, severity: group.severity, description: group.description }),
+        });
       }
-      toast.success(`Override created: ${total} alert group(s) copied from global to ${selectedCostCenterIds.length} cost center(s)`);
+      toast.success(`Override created: ${groupsToOverride.length} alert group(s) copied to ${selectedCostCenterIds.length} cost center(s)`);
       setShowOverrideGroupConfirm(false);
       fetchGroups();
-    } catch (e: any) {
-      toast.error(e?.message || "Failed to override");
-    } finally {
-      setOverrideLoading(false);
-    }
+    } catch (e: any) { toast.error(e?.message || "Failed to override"); }
+    finally { setOverrideLoading(false); }
   };
-
-  if (selectedCostCenterIds.length === 0) {
-    return (
-      <div className="space-y-4">
-        <div>
-          <h2 className="text-lg font-semibold">Alert Types & Groups</h2>
-          <p className="text-sm text-gray-500">Global Defaults — baseline alert config inherited by all cost centers</p>
-        </div>
-        <AlertConfigPanel
-          activeSection={activeSection}
-          setActiveSection={setActiveSection}
-          definitions={definitions}
-          groups={groups}
-          loading={loading}
-          selectedCcIds={[]}
-          isMultiCc={false}
-          costCenterNames={[]}
-          onEditDef={(def: AlertDefinition) => { setEditingDef(def); setDefForm({ name: def.name, category: def.category, description: def.description, signal_code: def.signal_code, severity: def.severity || "MEDIUM" }); setShowDefForm(true); }}
-          onDeleteDef={handleDeleteDef}
-          onEditGroup={(group: AlertGroupConfig) => { setEditingGroup(group); setGroupForm({ name: group.name, severity: group.severity || "MEDIUM", description: group.description, memberIds: (group.members || []).map((m: AlertDefinition) => m.id) }); setShowGroupForm(true); }}
-          onDeleteGroup={handleDeleteGroup}
-          showDefForm={showDefForm}
-          setShowDefForm={setShowDefForm}
-          editingDef={editingDef}
-          setEditingDef={setEditingDef}
-          defForm={defForm}
-          setDefForm={setDefForm}
-          handleSaveDef={handleSaveDef}
-          showGroupForm={showGroupForm}
-          setShowGroupForm={setShowGroupForm}
-          editingGroup={editingGroup}
-          setEditingGroup={setEditingGroup}
-          groupForm={groupForm}
-          setGroupForm={setGroupForm}
-          handleSaveGroup={handleSaveGroup}
-          showOverrideDefConfirm={showOverrideDefConfirm}
-          setShowOverrideDefConfirm={setShowOverrideDefConfirm}
-          showOverrideGroupConfirm={showOverrideGroupConfirm}
-          setShowOverrideGroupConfirm={setShowOverrideGroupConfirm}
-          overrideLoading={overrideLoading}
-          handleOverrideDefsFromGlobal={handleOverrideDefsFromGlobal}
-          handleOverrideGroupsFromGlobal={handleOverrideGroupsFromGlobal}
-        />
-      </div>
-    );
-  }
 
   const ccNames = selectedCostCenterIds.map(id => costCenters.find(cc => cc.id === id)?.name || `CC#${id}`);
 
@@ -482,7 +363,10 @@ function AlertConfigSection() {
       <div>
         <h2 className="text-lg font-semibold">Alert Types & Groups</h2>
         <p className="text-sm text-gray-500">
-          Configuring {selectedCostCenterIds.length} cost center(s): {ccNames.join(", ")}
+          {selectedCostCenterIds.length === 0
+            ? "Global Defaults — baseline alert config inherited by all cost centers"
+            : `Configuring ${selectedCostCenterIds.length} cost center(s): ${ccNames.join(", ")}`
+          }
         </p>
       </div>
       <AlertConfigPanel
@@ -494,9 +378,21 @@ function AlertConfigSection() {
         selectedCcIds={selectedCostCenterIds}
         isMultiCc={isMultiCc}
         costCenterNames={ccNames}
-        onEditDef={(def: AlertDefinition) => { setEditingDef(def); setDefForm({ name: def.name, category: def.category, description: def.description, signal_code: def.signal_code, severity: def.severity || "MEDIUM" }); setShowDefForm(true); }}
+        onEditDef={(def: AlertDefinition) => {
+          const effectiveSeverity = def.override_severity || def.severity;
+          const effectiveDescription = def.override_description ?? def.description;
+          setEditingDef(def);
+          setDefForm({ name: def.name, category: def.category, description: effectiveDescription, signal_code: def.signal_code, severity: (effectiveSeverity as Severity) || "MEDIUM" });
+          setShowDefForm(true);
+        }}
         onDeleteDef={handleDeleteDef}
-        onEditGroup={(group: AlertGroupConfig) => { setEditingGroup(group); setGroupForm({ name: group.name, severity: group.severity || "MEDIUM", description: group.description, memberIds: (group.members || []).map((m: AlertDefinition) => m.id) }); setShowGroupForm(true); }}
+        onEditGroup={(group: AlertGroupConfig) => {
+          const effectiveSeverity = group.override_severity || group.severity;
+          const effectiveDescription = group.override_description ?? group.description;
+          setEditingGroup(group);
+          setGroupForm({ name: group.name, severity: (effectiveSeverity as Severity) || "MEDIUM", description: effectiveDescription, memberIds: (group.members || []).map((m: AlertDefinition) => m.id) });
+          setShowGroupForm(true);
+        }}
         onDeleteGroup={handleDeleteGroup}
         showDefForm={showDefForm}
         setShowDefForm={setShowDefForm}
@@ -535,10 +431,10 @@ function AlertConfigPanel({
   if (loading) return <div className="text-sm text-gray-500 py-4">Loading...</div>;
 
   const hasCcSelected = selectedCcIds.length > 0;
-  const customizedDefs = hasCcSelected ? definitions.filter((d: AlertDefinition) => d.cost_center_id !== null) : [];
-  const inheritedDefs = hasCcSelected ? definitions.filter((d: AlertDefinition) => d.cost_center_id === null) : [];
-  const customizedGroups = hasCcSelected ? groups.filter((g: AlertGroupConfig) => g.cost_center_id !== null) : [];
-  const inheritedGroups = hasCcSelected ? groups.filter((g: AlertGroupConfig) => g.cost_center_id === null) : [];
+  const customizedDefs = hasCcSelected ? definitions.filter((d: AlertDefinition) => d.override_id != null) : [];
+  const inheritedDefs = hasCcSelected ? definitions.filter((d: AlertDefinition) => d.override_id == null) : [];
+  const customizedGroups = hasCcSelected ? groups.filter((g: AlertGroupConfig) => g.override_id != null) : [];
+  const inheritedGroups = hasCcSelected ? groups.filter((g: AlertGroupConfig) => g.override_id == null) : [];
 
   return (
     <div className="space-y-4">
@@ -662,21 +558,21 @@ function AlertConfigPanel({
                     <td className="py-2 font-medium">
                       <div className="flex items-center gap-2">
                         {def.name}
-                        {hasCcSelected && def.cost_center_id !== null && <Badge variant="default" className="text-[10px]">Custom</Badge>}
-                        {hasCcSelected && def.cost_center_id === null && <Badge variant="outline" className="text-[10px] text-gray-400 border-gray-200">Global</Badge>}
+                        {hasCcSelected && def.override_id != null && <Badge variant="default" className="text-[10px]">Custom</Badge>}
+                        {hasCcSelected && def.override_id == null && <Badge variant="outline" className="text-[10px] text-gray-400 border-gray-200">Global</Badge>}
                       </div>
                     </td>
                     <td><Badge variant={def.category === "telematics" ? "default" : "secondary"}>{def.category}</Badge></td>
-                    <td><Badge className={SEVERITY_COLORS[def.severity || "MEDIUM"]}>{def.severity || "MEDIUM"}</Badge></td>
-                    <td className="text-gray-500">{def.description || "—"}</td>
+                    <td><Badge className={SEVERITY_COLORS[(def.override_severity || def.severity) as Severity]}>{(def.override_severity || def.severity) || "MEDIUM"}</Badge></td>
+                    <td className="text-gray-500">{(def.override_description ?? def.description) || "—"}</td>
                     <td><Badge variant={def.is_active ? "default" : "outline"}>{def.is_active ? "Active" : "Inactive"}</Badge></td>
                     <td>
                       <div className="flex gap-1">
                         <Button variant="ghost" size="sm" onClick={() => onEditDef(def)}>
                           <Pencil className="w-3 h-3" />
                         </Button>
-                        <Button variant="ghost" size="sm" disabled={hasCcSelected && def.cost_center_id === null} onClick={() => onDeleteDef(def)}>
-                          <Trash2 className={`w-3 h-3 ${hasCcSelected && def.cost_center_id === null ? 'text-gray-300' : 'text-red-500'}`} />
+                        <Button variant="ghost" size="sm" onClick={() => onDeleteDef(def)}>
+                          <Trash2 className="w-3 h-3 text-red-500" />
                         </Button>
                       </div>
                     </td>
@@ -776,12 +672,12 @@ function AlertConfigPanel({
                     <td className="py-2 font-medium">
                       <div className="flex items-center gap-2">
                         {group.name}
-                        {hasCcSelected && group.cost_center_id !== null && <Badge variant="default" className="text-[10px]">Custom</Badge>}
-                        {hasCcSelected && group.cost_center_id === null && <Badge variant="outline" className="text-[10px] text-gray-400 border-gray-200">Global</Badge>}
+                        {hasCcSelected && group.override_id != null && <Badge variant="default" className="text-[10px]">Custom</Badge>}
+                        {hasCcSelected && group.override_id == null && <Badge variant="outline" className="text-[10px] text-gray-400 border-gray-200">Global</Badge>}
                       </div>
                     </td>
-                    <td><Badge className={SEVERITY_COLORS[group.severity || "MEDIUM"]}>{group.severity || "MEDIUM"}</Badge></td>
-                    <td className="text-gray-500">{group.description || "—"}</td>
+                    <td><Badge className={SEVERITY_COLORS[(group.override_severity || group.severity) as Severity]}>{(group.override_severity || group.severity) || "MEDIUM"}</Badge></td>
+                    <td className="text-gray-500">{(group.override_description ?? group.description) || "—"}</td>
                     <td>
                       <div className="flex flex-wrap gap-1">
                         {(group.members || []).slice(0, 3).map((m: AlertDefinition) => (
@@ -798,8 +694,8 @@ function AlertConfigPanel({
                         <Button variant="ghost" size="sm" onClick={() => onEditGroup(group)}>
                           <Pencil className="w-3 h-3" />
                         </Button>
-                        <Button variant="ghost" size="sm" disabled={hasCcSelected && group.cost_center_id === null} onClick={() => onDeleteGroup(group)}>
-                          <Trash2 className={`w-3 h-3 ${hasCcSelected && group.cost_center_id === null ? 'text-gray-300' : 'text-red-500'}`} />
+                        <Button variant="ghost" size="sm" onClick={() => onDeleteGroup(group)}>
+                          <Trash2 className="w-3 h-3 text-red-500" />
                         </Button>
                       </div>
                     </td>
