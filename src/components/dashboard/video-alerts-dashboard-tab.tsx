@@ -540,6 +540,17 @@ export default function VideoAlertsDashboardTab({
     let fleetNumber = String(resolvedIdentity.details?.fleetNumber || "").trim();
     const fallbackVehicleId = String(resolvedIdentity.vehicleId || "").trim();
 
+    // Defensive: if fleetNumber is purely numeric (stale extraction like "32" from
+    // "32 - EX55 - LCL660MP"), try to find a better fleet code from device_name.
+    if (/^\d+$/.test(fleetNumber)) {
+      const deviceName = String(incoming?.device_name || incoming?.deviceName || "").trim();
+      for (const candidate of [registration, deviceName].filter(Boolean)) {
+        const parts = candidate.split(/\s*-\s*/);
+        const better = parts.find((p: string) => /^[A-Za-z]{2,}\d*$/.test(p));
+        if (better) { fleetNumber = better; break; }
+      }
+    }
+
     // Fall back to raw alert data when vehicle lookup fails (e.g. Geotab IDs not in camera lookup)
     if (!fleetNumber && !registration) {
       const rawFleet = String(incoming?.fleet_number || "").trim();
@@ -669,10 +680,22 @@ export default function VideoAlertsDashboardTab({
       ""
     ).trim();
 
-    if (fleetNumber && registration && fleetNumber.toLowerCase() !== registration.toLowerCase()) {
-      return `${fleetNumber} - ${registration}`;
+    // Defensive: if fleetNumber is purely numeric (stale extraction), try to find
+    // a better fleet code from the device_name (e.g. "32 - EX55 - LCL660MP" → "EX55")
+    let resolvedFleet = fleetNumber;
+    if (/^\d+$/.test(resolvedFleet)) {
+      const deviceName = String(alert?.device_name || alert?.deviceName || "").trim();
+      for (const candidate of [registration, deviceName].filter(Boolean)) {
+        const parts = candidate.split(/\s*-\s*/);
+        const better = parts.find((p: string) => /^[A-Za-z]{2,}\d*$/.test(p));
+        if (better) { resolvedFleet = better; break; }
+      }
     }
-    return fleetNumber || registration || "";
+
+    if (resolvedFleet && registration && resolvedFleet.toLowerCase() !== registration.toLowerCase()) {
+      return `${resolvedFleet} - ${registration}`;
+    }
+    return resolvedFleet || registration || "";
   }, []);
 
   useEffect(() => {
@@ -1835,7 +1858,19 @@ export default function VideoAlertsDashboardTab({
       const updatedAtMs = new Date(getGroupedAlertTimestamp(alert) || alert?.timestamp || 0).getTime() || Date.now();
 
       for (const id of ids) {
-        const fleetKey = String(alert?.fleet_number || "").trim().toUpperCase();
+        let fleetKey = String(alert?.fleet_number || "").trim().toUpperCase();
+
+        // Defensive: if fleetKey is purely numeric (stale extraction), try to find
+        // a better fleet code from device_name to match the vehicle identity lookup.
+        if (/^\d+$/.test(fleetKey)) {
+          const deviceName = String(alert?.device_name || alert?.deviceName || "").trim();
+          for (const candidate of [String(alert?.vehicle_registration || "").trim(), deviceName].filter(Boolean)) {
+            const parts = candidate.split(/\s*-\s*/);
+            const better = parts.find((p: string) => /^[A-Za-z]{2,}\d*$/.test(p));
+            if (better) { fleetKey = better.toUpperCase(); break; }
+          }
+        }
+
         const vehicleKey = deviceToVehicleKey.get(id) || (fleetKey ? deviceToVehicleKey.get(fleetKey) : null) || id;
         const existing = vehicleCards.get(vehicleKey);
         const alertCostCenter = String(

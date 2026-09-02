@@ -310,6 +310,18 @@ export function AlertDetailModal({
     let fleet = lookupData?.fleetNumber || String(selectedAlert?.fleet_number || selectedAlert?.fleetNumber || "").trim();
     let reg = lookupData?.registration || String(selectedAlert?.vehicle_registration || selectedAlert?.plate || selectedAlert?.registration || "").trim();
     
+    // Defensive: if fleet is purely numeric (stale extraction like "32" from "32 - EX55 - LCL660MP"),
+    // try to find a better fleet code from the registration or device name.
+    if (fleet && /^\d+$/.test(fleet)) {
+      const deviceName = String(selectedAlert?.device_name || selectedAlert?.deviceName || "").trim();
+      const candidates = [reg, deviceName].filter(Boolean);
+      for (const candidate of candidates) {
+        const parts = candidate.split(/\s*-\s*/);
+        const better = parts.find((p: string) => /^[A-Za-z]{2,}\d*$/.test(p));
+        if (better) { fleet = better; break; }
+      }
+    }
+    
     let display: string;
     if (fleet && reg && fleet.toUpperCase() !== reg.toUpperCase()) {
       display = `${fleet} - ${reg}`;
@@ -332,8 +344,19 @@ export function AlertDetailModal({
     if (!selectedAlert) return { name: "Unknown", phone: "", department: "" };
     const driverInfo = selectedAlert?.driverInfo || selectedAlert?.driver_info || selectedAlert?.metadata?.driver || {};
     const deviceId = String(selectedAlert?.device_id || selectedAlert?.deviceId || selectedAlert?.vehicleId || "").trim();
-    const fleetNum = String(selectedAlert?.fleet_number || selectedAlert?.fleetNumber || "").trim().toUpperCase();
+    let fleetNum = String(selectedAlert?.fleet_number || selectedAlert?.fleetNumber || "").trim().toUpperCase();
     const regPlate = String(selectedAlert?.vehicle_registration || selectedAlert?.plate || selectedAlert?.registration || "").trim().toUpperCase();
+
+    // Defensive: if fleetNum is purely numeric, try to find a better fleet code
+    if (/^\d+$/.test(fleetNum)) {
+      const deviceName = String(selectedAlert?.device_name || selectedAlert?.deviceName || "").trim();
+      for (const candidate of [regPlate, deviceName].filter(Boolean)) {
+        const parts = candidate.split(/\s*-\s*/);
+        const better = parts.find((p: string) => /^[A-Za-z]{2,}\d*$/.test(p));
+        if (better) { fleetNum = better.toUpperCase(); break; }
+      }
+    }
+
     const lookupByDevice = vehicleLookup[deviceId];
     const lookupByFleet = fleetNum ? vehicleLookup[fleetNum] : undefined;
     const lookupByReg = regPlate ? vehicleLookup[regPlate] : undefined;
