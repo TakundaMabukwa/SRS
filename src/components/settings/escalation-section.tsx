@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   Dialog,
   DialogContent,
@@ -16,7 +17,7 @@ import {
   DialogDescription,
   DialogFooter,
 } from "@/components/ui/dialog";
-import { Plus, Pencil, Trash2, Users, Loader2, Mail, BellRing } from "lucide-react";
+import { Plus, Pencil, Trash2, Users, Loader2, Mail, BellRing, Search, X, Check, Cpu, Camera } from "lucide-react";
 import { toast } from "sonner";
 import { useCostCenters } from "@/context/cost-centers-context";
 
@@ -29,9 +30,12 @@ type EscalationMember = {
   is_active?: boolean;
 };
 
-type EscalationAlertGroup = {
+type EscalationAlert = {
   id: number;
   name: string;
+  category?: "telematics" | "video";
+  signal_code?: string;
+  description?: string;
 };
 
 type EscalationGroup = {
@@ -43,14 +47,13 @@ type EscalationGroup = {
   created_at: string;
   updated_at: string;
   members: EscalationMember[];
-  alert_groups: EscalationAlertGroup[];
+  alerts: EscalationAlert[];
 };
 
 export function EscalationSection() {
   const [groups, setGroups] = useState<EscalationGroup[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [alertGroups, setAlertGroups] = useState<EscalationAlertGroup[]>([]);
   const [selectedCcId, setSelectedCcId] = useState<number | null>(null);
   const { costCenters } = useCostCenters();
 
@@ -60,7 +63,14 @@ export function EscalationSection() {
   const [editingDescription, setEditingDescription] = useState("");
   const [editingCostCenterId, setEditingCostCenterId] = useState<number | null>(null);
   const [emailsText, setEmailsText] = useState("");
-  const [selectedAlertGroupIds, setSelectedAlertGroupIds] = useState<number[]>([]);
+  const [selectedAlertIds, setSelectedAlertIds] = useState<number[]>([]);
+
+  // Combobox / fuzzy search state
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<EscalationAlert[]>([]);
+  const [searching, setSearching] = useState(false);
+  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const fetchGroups = useCallback(async () => {
     try {
@@ -75,24 +85,39 @@ export function EscalationSection() {
     }
   }, [selectedCcId]);
 
-  const fetchAlertGroups = useCallback(async () => {
+  const searchAlerts = useCallback(async (query: string) => {
+    if (!query.trim()) {
+      setSearchResults([]);
+      return;
+    }
+    setSearching(true);
     try {
-      const res = await fetch(`${ESCALATION_API}/alert-groups`, { cache: "no-store" });
+      const res = await fetch(`${ESCALATION_API}/alerts?search=${encodeURIComponent(query.trim())}&limit=15`, {
+        cache: "no-store",
+      });
       const data = await res.json();
-      setAlertGroups(data?.data || []);
+      setSearchResults(data?.data || []);
     } catch {
-      setAlertGroups([]);
+      setSearchResults([]);
+    } finally {
+      setSearching(false);
     }
   }, []);
+
+  const handleSearchChange = (value: string) => {
+    setSearchQuery(value);
+    if (searchTimer.current) clearTimeout(searchTimer.current);
+    searchTimer.current = setTimeout(() => searchAlerts(value), 300);
+  };
+
+  const selectedAlerts = selectedAlertIds
+    .map((id) => searchResults.concat(groups.flatMap((g) => g.alerts)).find((a) => a.id === id))
+    .filter((a): a is EscalationAlert => Boolean(a));
 
   useEffect(() => {
     setLoading(true);
     fetchGroups().finally(() => setLoading(false));
   }, [fetchGroups]);
-
-  useEffect(() => {
-    fetchAlertGroups();
-  }, [fetchAlertGroups]);
 
   const openCreate = () => {
     setEditingId(null);
@@ -100,7 +125,9 @@ export function EscalationSection() {
     setEditingDescription("");
     setEditingCostCenterId(selectedCcId);
     setEmailsText("");
-    setSelectedAlertGroupIds([]);
+    setSelectedAlertIds([]);
+    setSearchQuery("");
+    setSearchResults([]);
     setDialogOpen(true);
   };
 
@@ -110,7 +137,9 @@ export function EscalationSection() {
     setEditingDescription(g.description || "");
     setEditingCostCenterId(g.cost_center_id);
     setEmailsText((g.members || []).map((m) => m.email).join(", "));
-    setSelectedAlertGroupIds((g.alert_groups || []).map((a) => a.id));
+    setSelectedAlertIds((g.alerts || []).map((a) => a.id));
+    setSearchQuery("");
+    setSearchResults([]);
     setDialogOpen(true);
   };
 
@@ -138,7 +167,7 @@ export function EscalationSection() {
         cost_center_id: editingCostCenterId,
         description: editingDescription,
         emails,
-        alert_group_ids: selectedAlertGroupIds,
+        alert_definition_ids: selectedAlertIds,
       };
 
       if (editingId != null) {
@@ -186,8 +215,8 @@ export function EscalationSection() {
     }
   };
 
-  const toggleAlertGroup = (id: number) => {
-    setSelectedAlertGroupIds((prev) =>
+  const toggleAlert = (id: number) => {
+    setSelectedAlertIds((prev) =>
       prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
     );
   };
@@ -251,7 +280,7 @@ export function EscalationSection() {
                   <th className="py-3 px-4">Name</th>
                   <th>Cost Center</th>
                   <th>Contacts</th>
-                  <th>Alert Groups</th>
+                  <th>Alerts</th>
                   <th>Status</th>
                   <th className="text-right pr-4">Actions</th>
                 </tr>
@@ -288,13 +317,18 @@ export function EscalationSection() {
                       )}
                     </td>
                     <td className="py-2">
-                      {(g.alert_groups || []).length > 0 ? (
+                      {(g.alerts || []).length > 0 ? (
                         <div className="flex flex-wrap gap-1 max-w-[200px]">
-                          {g.alert_groups.map((a) => (
+                          {g.alerts.map((a) => (
                             <span
                               key={a.id}
-                              className="text-xs bg-purple-50 text-purple-700 px-2 py-0.5 rounded-full border border-purple-200"
+                              className="text-xs bg-purple-50 text-purple-700 px-2 py-0.5 rounded-full border border-purple-200 inline-flex items-center gap-1"
                             >
+                              {a.category === "video" ? (
+                                <Camera className="w-3 h-3" />
+                              ) : (
+                                <Cpu className="w-3 h-3" />
+                              )}
                               {a.name}
                             </span>
                           ))}
@@ -384,25 +418,116 @@ export function EscalationSection() {
             </div>
 
             <div className="space-y-2">
-              <Label>Triggered For Alert Groups</Label>
+              <Label>Triggered For Alerts</Label>
               <div className="flex items-center gap-2 text-xs text-gray-500 mb-1">
                 <BellRing className="w-3 h-3" />
                 Leave empty to apply to all alerts
               </div>
-              {alertGroups.length === 0 ? (
-                <p className="text-sm text-gray-400">No alert groups available.</p>
-              ) : (
-                <div className="grid grid-cols-2 gap-2 max-h-40 overflow-y-auto border rounded-md p-3">
-                  {alertGroups.map((ag) => (
-                    <label key={ag.id} className="flex items-center gap-2 text-sm cursor-pointer hover:bg-gray-50 p-1 rounded">
-                      <input
-                        type="checkbox"
-                        checked={selectedAlertGroupIds.includes(ag.id)}
-                        onChange={() => toggleAlertGroup(ag.id)}
-                        className="rounded border-gray-300"
-                      />
-                      {ag.name}
-                    </label>
+
+              <Popover open={pickerOpen} onOpenChange={setPickerOpen}>
+                <PopoverTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="w-full justify-between font-normal"
+                  >
+                    <span className="flex items-center gap-2 truncate">
+                      <Search className="w-4 h-4 text-gray-400" />
+                      Search alerts to add...
+                    </span>
+                    <span className="text-xs text-gray-400">
+                      {selectedAlertIds.length} selected
+                    </span>
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-80 p-2" align="start">
+                  <div className="relative">
+                    <Search className="w-4 h-4 text-gray-400 absolute left-2.5 top-2.5" />
+                    <Input
+                      autoFocus
+                      className="pl-8 pr-8"
+                      placeholder="Type to search alert types..."
+                      value={searchQuery}
+                      onChange={(e) => handleSearchChange(e.target.value)}
+                    />
+                    {searchQuery && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSearchQuery("");
+                          setSearchResults([]);
+                        }}
+                        className="absolute right-2 top-2 text-gray-400 hover:text-gray-600"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="mt-2 max-h-56 overflow-y-auto">
+                    {searching ? (
+                      <div className="flex items-center justify-center py-6 text-gray-500 text-sm">
+                        <Loader2 className="w-4 h-4 animate-spin mr-2" /> Searching...
+                      </div>
+                    ) : searchQuery && searchResults.length === 0 ? (
+                      <p className="py-6 text-center text-sm text-gray-400">No alerts found.</p>
+                    ) : !searchQuery && selectedAlertIds.length === 0 ? (
+                      <p className="py-6 text-center text-sm text-gray-400">
+                        Start typing to search for alerts.
+                      </p>
+                    ) : (
+                      <div className="space-y-0.5">
+                        {(searchQuery ? searchResults : []).map((a) => {
+                          const checked = selectedAlertIds.includes(a.id);
+                          return (
+                            <button
+                              key={a.id}
+                              type="button"
+                              onClick={() => toggleAlert(a.id)}
+                              className="w-full flex items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-gray-100"
+                            >
+                              {a.category === "video" ? (
+                                <Camera className="w-4 h-4 text-purple-500 shrink-0" />
+                              ) : (
+                                <Cpu className="w-4 h-4 text-blue-500 shrink-0" />
+                              )}
+                              <span className="flex-1 truncate">{a.name}</span>
+                              {a.signal_code && (
+                                <span className="text-[10px] font-mono text-gray-400 truncate max-w-[80px]">
+                                  {a.signal_code}
+                                </span>
+                              )}
+                              {checked && <Check className="w-4 h-4 text-green-600 shrink-0" />}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                </PopoverContent>
+              </Popover>
+
+              {selectedAlertIds.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 mt-2">
+                  {selectedAlerts.map((a) => (
+                    <span
+                      key={a.id}
+                      className="inline-flex items-center gap-1 text-xs bg-purple-50 text-purple-700 px-2 py-0.5 rounded-full border border-purple-200"
+                    >
+                      {a.category === "video" ? (
+                        <Camera className="w-3 h-3" />
+                      ) : (
+                        <Cpu className="w-3 h-3" />
+                      )}
+                      {a.name}
+                      <button
+                        type="button"
+                        onClick={() => toggleAlert(a.id)}
+                        className="ml-0.5 text-purple-400 hover:text-purple-700"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    </span>
                   ))}
                 </div>
               )}
