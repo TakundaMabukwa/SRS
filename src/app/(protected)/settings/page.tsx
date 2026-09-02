@@ -172,7 +172,7 @@ function AlertConfigSection() {
       if (selectedCostCenterIds.length === 0) {
         const res = await fetch(`${ALERT_CONFIG_API}/definitions`, { cache: "no-store" });
         const data = await res.json();
-        setDefinitions(data?.data || []);
+        setDefinitions(((data?.data || []) as AlertDefinition[]).sort((a, b) => a.name.localeCompare(b.name)));
         return;
       }
       // Fetch for each selected CC and merge
@@ -191,7 +191,7 @@ function AlertConfigSection() {
           if (def.cost_center_id !== null) allDefs.set(def.name, def);
         }
       }
-      setDefinitions(Array.from(allDefs.values()));
+      setDefinitions(Array.from(allDefs.values()).sort((a, b) => a.name.localeCompare(b.name)));
     } catch {
       setDefinitions([]);
     }
@@ -203,7 +203,7 @@ function AlertConfigSection() {
       if (selectedCostCenterIds.length === 0) {
         const res = await fetch(`${ALERT_CONFIG_API}/groups`, { cache: "no-store" });
         const data = await res.json();
-        setGroups(data?.data || []);
+        setGroups(((data?.data || []) as AlertGroupConfig[]).sort((a, b) => a.name.localeCompare(b.name)));
         return;
       }
       const allGroups = new Map<string, AlertGroupConfig>();
@@ -219,7 +219,7 @@ function AlertConfigSection() {
           if (g.cost_center_id !== null) allGroups.set(g.name, g);
         }
       }
-      setGroups(Array.from(allGroups.values()));
+      setGroups(Array.from(allGroups.values()).sort((a, b) => a.name.localeCompare(b.name)));
     } catch {
       setGroups([]);
     }
