@@ -22,7 +22,7 @@ import {
 } from "@/components/ui/dialog"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { Settings, MapPin, Plus, Edit, Trash2, Eye, ChevronDown, ChevronRight, Info, User, Shield, Users, Building, RotateCcw, Ban, CheckCircle } from "lucide-react"
+import { Settings, MapPin, Plus, Edit, Trash2, Eye, ChevronDown, ChevronRight, Info, User, Shield, Users, Building, RotateCcw, Ban, CheckCircle, Loader2 } from "lucide-react"
 import { toast } from "sonner"
 import { signup } from "@/lib/action/auth"
 import { CreateUser } from "@/lib/action/createUser"
@@ -112,6 +112,7 @@ export default function SettingsPage() {
     const [editPermissions, setEditPermissions] = useState<Permission[]>([]);
     const [editCostCenterIds, setEditCostCenterIds] = useState<number[]>([]);
     const [editExpandedPages, setEditExpandedPages] = useState<Set<string>>(new Set());
+    const [isSavingUser, setIsSavingUser] = useState(false);
 
     // Handlers:
     function openEditDialog(user: User) {
@@ -142,37 +143,35 @@ export default function SettingsPage() {
     async function submitUserUpdate() {
         if (!editingUser) return;
 
-        const ccClient: any = supabase;
-
-        const { error } = await ccClient
-            .from("users")
-            .update({
-                email: editEmail,
-                role: editRole,
-                permissions: editPermissions,
-                assigned_cost_centers: editCostCenterIds
-            })
-            .eq("id", (editingUser as { id: string }).id);
-
-        if (error) {
-            toast.error("Failed to update user: " + error.message);
-            return;
-        }
-
-        // Legacy: keep user_cost_centers junction table in sync
         const userId = (editingUser as { id: string }).id;
-        await ccClient.from("user_cost_centers").delete().eq("user_id", userId);
-        if (editCostCenterIds.length > 0) {
-            const inserts = editCostCenterIds.map(ccId => ({
-                user_id: userId,
-                cost_center_id: ccId,
-            }));
-            await ccClient.from("user_cost_centers").insert(inserts);
-        }
+        setIsSavingUser(true);
+        try {
+            const ccClient: any = supabase;
 
-        await fetchUsers();
-        toast.success("User updated successfully");
-        closeEditDialog();
+            const { error } = await ccClient
+                .from("users")
+                .update({
+                    email: editEmail,
+                    role: editRole,
+                    permissions: editPermissions,
+                    assigned_cost_centers: editCostCenterIds
+                })
+                .eq("id", userId);
+
+            if (error) {
+                toast.error("Failed to update user: " + error.message);
+                return;
+            }
+
+            await fetchUsers();
+            toast.success("User updated successfully");
+            closeEditDialog();
+        } catch (err: any) {
+            console.error("Error updating user:", err);
+            toast.error("Failed to update user: " + (err?.message || "Unexpected error"));
+        } finally {
+            setIsSavingUser(false);
+        }
     }
 
 
@@ -962,10 +961,17 @@ export default function SettingsPage() {
                                                 </Button>
                                                 <Button 
                                                     type="submit" 
-                                                    disabled={!newUserEmail || !newUserPhone || !newUserRole || (newUserRole === 'driver' && !newUserDriverCode)}
-                                                    className="px-6 bg-blue-600 hover:bg-blue-700"
+                                                    disabled={!newUserEmail || !newUserPhone || !newUserRole || (newUserRole === 'driver' && !newUserDriverCode) || isCreatingUser}
+                                                    className="px-6 bg-blue-600 hover:bg-blue-700 min-w-[180px]"
                                                 >
-                                                    Create User Account
+                                                    {isCreatingUser ? (
+                                                        <>
+                                                            <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                                                            Creating...
+                                                        </>
+                                                    ) : (
+                                                        "Create User Account"
+                                                    )}
                                                 </Button>
                                             </div>
                                         </form>
@@ -1352,8 +1358,17 @@ export default function SettingsPage() {
                         </div>
 
                         <div className="flex justify-end gap-3 pt-4 border-t">
-                            <Button type="button" variant="outline" onClick={closeEditDialog}>Cancel</Button>
-                            <Button type="button" onClick={submitUserUpdate} className="bg-blue-600 hover:bg-blue-700">Save Changes</Button>
+                            <Button type="button" variant="outline" onClick={closeEditDialog} disabled={isSavingUser}>Cancel</Button>
+                            <Button type="button" onClick={submitUserUpdate} disabled={isSavingUser} className="bg-blue-600 hover:bg-blue-700 min-w-[130px]">
+                                {isSavingUser ? (
+                                    <>
+                                        <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                                        Saving...
+                                    </>
+                                ) : (
+                                    "Save Changes"
+                                )}
+                            </Button>
                         </div>
                     </DialogContent>
                 </Dialog>

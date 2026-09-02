@@ -119,20 +119,6 @@ export async function CreateUser(formData: FormData) {
         return { success: false, message: "Failed to create user profile: " + insertError.message };
     }
 
-    // Legacy: also record in user_cost_centers junction table for backward compat
-    if (assignedCostCenters.length > 0) {
-        const inserts = assignedCostCenters.map(ccId => ({
-            user_id: userId,
-            cost_center_id: ccId,
-        }));
-        const { error: ccError } = await supabase
-            .from("user_cost_centers")
-            .insert(inserts);
-        if (ccError) {
-            console.error("Error assigning cost centers (legacy):", ccError.message);
-        }
-    }
-
     // Handle driver creation
     if (role === 'driver') {
         const fullDriverCode = `EPS${driverCode}`;
