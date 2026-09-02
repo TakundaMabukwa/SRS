@@ -286,6 +286,7 @@ export default function VideoAlertsDashboardTab({
   const [realtimeAlerts, setRealtimeAlerts] = useState<any[]>([]);
   const [pinnedHistoryAlerts, setPinnedHistoryAlerts] = useState<any[]>([]);
   const [closedHistoryAlerts, setClosedHistoryAlerts] = useState<any[]>([]);
+  const [closedCountFromApi, setClosedCountFromApi] = useState<number | null>(null);
   const [videoAvailability, setVideoAvailability] = useState<Record<string, boolean>>({});
   const [exactVideoReady, setExactVideoReady] = useState<Record<string, boolean>>({});
   const [vehicleIdentityLookup, setVehicleIdentityLookup] = useState<Map<string, VehicleIdentity>>(new Map());
@@ -1236,9 +1237,17 @@ export default function VideoAlertsDashboardTab({
   }, [fetchPinnedVehicleHistoryAlerts]);
 
   useEffect(() => {
-    if (activeTab !== "history") return;
     void fetchClosedHistoryAlerts();
-  }, [activeTab, fetchClosedHistoryAlerts]);
+  }, [fetchClosedHistoryAlerts]);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`${videoProxyBase}/eps/alerts/resolved-count`, { cache: "no-store" })
+      .then((r) => r.json())
+      .then((json) => { if (!cancelled && json.success) setClosedCountFromApi(json.count); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [videoProxyBase]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1754,7 +1763,7 @@ export default function VideoAlertsDashboardTab({
   const mediumCount = calculatedStats.medium_alerts || 0;
   const lowCount = calculatedStats.low_alerts || 0;
   const allOpenCount = displayStats?.total_alerts || 0;
-  const closedAlertsCount = costCenterScopedAlertCollection.filter((alert: any) => ["closed", "resolved"].includes(String(alert?.status || "").toLowerCase())).length;
+  const closedAlertsCount = closedCountFromApi ?? costCenterScopedAlertCollection.filter((alert: any) => ["closed", "resolved"].includes(String(alert?.status || "").toLowerCase())).length;
   const videoReadyCount = costCenterScopedAlertCollection.filter((alert: any) => {
     const status = String(alert?.status || "").toLowerCase();
     if (["closed", "resolved"].includes(status)) return false;
