@@ -1567,13 +1567,13 @@ export default function VideoAlertsDashboardTab({
       const currentTs = new Date(normalized.lastOccurrenceTimestamp || normalized.timestamp || 0).getTime();
       const existingFirstTs = new Date(existing.firstOccurrenceTimestamp || existing.timestamp || 0).getTime();
       const currentFirstTs = new Date(normalized.firstOccurrenceTimestamp || normalized.timestamp || 0).getTime();
-      const latestBase = currentTs >= existingTs ? normalized : existing;
+      const latestBase = currentTs > existingTs ? normalized : existing;
       groups.set(groupKey, {
         ...existing,
         ...latestBase,
         count: nextCount,
         groupedIds: Array.from(new Set([...(existing.groupedIds || []), normalized.id])),
-        latestTimestamp: currentTs >= existingTs ? (normalized.lastOccurrenceTimestamp || normalized.timestamp) : existing.latestTimestamp,
+        latestTimestamp: currentTs > existingTs ? (normalized.lastOccurrenceTimestamp || normalized.timestamp) : existing.latestTimestamp,
         timestamp: existingFirstTs <= currentFirstTs ? (existing.firstOccurrenceTimestamp || existing.timestamp) : (normalized.firstOccurrenceTimestamp || normalized.timestamp),
         firstOccurrenceTimestamp: existingFirstTs <= currentFirstTs ? (existing.firstOccurrenceTimestamp || existing.timestamp) : (normalized.firstOccurrenceTimestamp || normalized.timestamp),
       });
@@ -1894,7 +1894,7 @@ export default function VideoAlertsDashboardTab({
           updatedAtMs: 0,
         };
 
-        if (updatedAtMs >= nextCard.updatedAtMs) {
+        if (updatedAtMs > nextCard.updatedAtMs) {
           nextCard.hasAlert = true;
           nextCard.alert = alert;
           nextCard.severity = severity;
