@@ -181,14 +181,14 @@ function AlertConfigSection() {
       const globalRes = await fetch(`${ALERT_CONFIG_API}/definitions`, { cache: "no-store" });
       const globalData = await globalRes.json();
       for (const def of (globalData?.data || []) as AlertDefinition[]) {
-        if (def.cost_center_id === null) allDefs.set(`global:${def.name}`, def);
+        if (def.cost_center_id === null) allDefs.set(def.name, def);
       }
-      // Then overlay CC-specific (wins)
+      // Then overlay CC-specific (same key, overwrites global)
       for (const ccId of selectedCostCenterIds) {
         const res = await fetch(`${ALERT_CONFIG_API}/definitions?cost_center_id=${ccId}`, { cache: "no-store" });
         const data = await res.json();
         for (const def of (data?.data || []) as AlertDefinition[]) {
-          if (def.cost_center_id !== null) allDefs.set(`cc:${def.name}`, def);
+          if (def.cost_center_id !== null) allDefs.set(def.name, def);
         }
       }
       setDefinitions(Array.from(allDefs.values()));
@@ -210,13 +210,13 @@ function AlertConfigSection() {
       const globalRes = await fetch(`${ALERT_CONFIG_API}/groups`, { cache: "no-store" });
       const globalData = await globalRes.json();
       for (const g of (globalData?.data || []) as AlertGroupConfig[]) {
-        if (g.cost_center_id === null) allGroups.set(`global:${g.name}`, g);
+        if (g.cost_center_id === null) allGroups.set(g.name, g);
       }
       for (const ccId of selectedCostCenterIds) {
         const res = await fetch(`${ALERT_CONFIG_API}/groups?cost_center_id=${ccId}`, { cache: "no-store" });
         const data = await res.json();
         for (const g of (data?.data || []) as AlertGroupConfig[]) {
-          if (g.cost_center_id !== null) allGroups.set(`cc:${g.name}`, g);
+          if (g.cost_center_id !== null) allGroups.set(g.name, g);
         }
       }
       setGroups(Array.from(allGroups.values()));
