@@ -2927,7 +2927,6 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
             alerts: remainingAlerts,
           };
         });
-        setGroupedAlerts((prev) => dedupeAndSortAlerts(prev.filter((a: any) => String(a?.id || a?.alert_id || "") !== closingAlertId)));
         if (typeof window !== "undefined") {
           window.dispatchEvent(
             new CustomEvent("video-alert-closed", {
@@ -6231,8 +6230,37 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
           setSelectedAlert(null);
         }}
         onFalseAlert={async () => {
+          const alert = selectedAlert;
+          if (!alert?.id) return;
           if (!confirm('Mark this alert as a false alarm and close it?')) return;
-          await closeSelectedAlert("false_alert");
+          setAlertActionLoading(true);
+          try {
+            const supabase = createClient();
+            const { data: { session } } = await supabase.auth.getSession();
+            const actor = session?.user?.email || session?.user?.user_metadata?.email || "dashboard_user";
+            const closingAlertId = String(alert.id);
+            const res = await fetch(`${videoProxyBase}/eps/alerts/${encodeURIComponent(closingAlertId)}/mark-false`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              signal: AbortSignal.timeout(9000),
+              body: JSON.stringify({ userId: actor, notes: `Marked as false alert from dashboard.` }),
+            });
+            const body = await res.json().catch(() => ({}));
+            if (!res.ok || !body?.success) {
+              throw new Error(body?.message || `Failed to mark false (${res.status})`);
+            }
+            toast.success("Alert marked as false alarm.");
+            if (typeof window !== "undefined") {
+              window.dispatchEvent(new CustomEvent("video-alert-closed", { detail: { id: closingAlertId } }));
+            }
+          } catch (error: any) {
+            toast.error(error?.message || "Failed to mark as false alert.");
+          } finally {
+            setAlertDetailModalOpen(false);
+            setSelectedAlert(null);
+            setRefreshTrigger((prev) => prev + 1);
+            setAlertActionLoading(false);
+          }
         }}
         onResolve={async () => {
           setShowResolveModal(true);
@@ -6272,11 +6300,43 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
         }}
         onOpenAlertDetail={openAlertDetailRealtime}
         onSidebarAction={async (entry: any, action: "resolve" | "false_alert") => {
-          setAlertReason("");
-          setAlertNotesDraft("");
-          setAlertActionError("");
-          setAlertActionSuccess("");
-          // Just open the alert as the main active alert - don't resolve it
+          if (action === "false_alert") {
+            if (!confirm("Mark this alert as a false alarm and close it?")) return;
+            setAlertActionLoading(true);
+            try {
+              const supabase = createClient();
+              const { data: { session } } = await supabase.auth.getSession();
+              const actor = session?.user?.email || session?.user?.user_metadata?.email || "dashboard_user";
+              const closingAlertId = String(entry?.id || entry?.alert_id || "");
+              if (!closingAlertId) return;
+              const res = await fetch(`${videoProxyBase}/eps/alerts/${encodeURIComponent(closingAlertId)}/mark-false`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                signal: AbortSignal.timeout(9000),
+                body: JSON.stringify({ userId: actor, notes: `Marked as false alert from dashboard.` }),
+              });
+              const body = await res.json().catch(() => ({}));
+              if (!res.ok || !body?.success) {
+                throw new Error(body?.message || `Failed to mark false (${res.status})`);
+              }
+              toast.success("Alert marked as false alarm.");
+              if (typeof window !== "undefined") {
+                window.dispatchEvent(new CustomEvent("video-alert-closed", { detail: { id: closingAlertId } }));
+              }
+            } catch (error: any) {
+              toast.error(error?.message || "Failed to mark as false alert.");
+            } finally {
+              setAlertDetailModalOpen(false);
+              setSelectedAlert(null);
+              setRefreshTrigger((prev) => prev + 1);
+              setAlertActionLoading(false);
+            }
+            return;
+          }
+          if (action === "resolve") {
+            await openAlertDetailRealtime(entry, null, { silent: false });
+            return;
+          }
           await openAlertDetailRealtime(entry, null, { silent: false });
         }}
         onRefreshTrigger={() => setRefreshTrigger((prev) => prev + 1)}
@@ -6363,7 +6423,6 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
             setSelectedReportForm('');
             setAlertNotesDraft("");
             setPendingDocuments([]);
-            setGroupedAlerts([]);
             setRefreshTrigger((prev) => prev + 1);
           }}
           deviceId={String(selectedAlert?.device_id || selectedAlert?.deviceId || selectedAlert?.vehicleId || "").trim()}

@@ -89,6 +89,7 @@ type DriverConfigCriterion = {
 
 export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState("alert-config");
+  const { selectedCostCenterIds } = useCostCenters();
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -294,10 +295,6 @@ function AlertConfigSection() {
                       </Select>
                     </div>
                     <div>
-                      <label className="text-sm font-medium">Signal Code</label>
-                      <Input value={defForm.signal_code} onChange={(e) => setDefForm({ ...defForm, signal_code: e.target.value })} placeholder="e.g. HARSH_BRAKE" />
-                    </div>
-                    <div>
                       <label className="text-sm font-medium">Severity</label>
                       <Select value={defForm.severity} onValueChange={(v: Severity) => setDefForm({ ...defForm, severity: v })}>
                         <SelectTrigger><SelectValue /></SelectTrigger>
@@ -326,7 +323,6 @@ function AlertConfigSection() {
                 <tr className="border-b text-left text-gray-500">
                   <th className="py-2">Name</th>
                   <th>Category</th>
-                  <th>Signal Code</th>
                   <th>Severity</th>
                   <th>Description</th>
                   <th>Status</th>
@@ -338,7 +334,6 @@ function AlertConfigSection() {
                   <tr key={def.id} className="border-b">
                     <td className="py-2 font-medium">{def.name}</td>
                     <td><Badge variant={def.category === "telematics" ? "default" : "secondary"}>{def.category}</Badge></td>
-                    <td>{def.signal_code}</td>
                     <td><Badge className={SEVERITY_COLORS[def.severity || "MEDIUM"]}>{def.severity || "MEDIUM"}</Badge></td>
                     <td className="text-gray-500">{def.description || "—"}</td>
                     <td><Badge variant={def.is_active ? "default" : "outline"}>{def.is_active ? "Active" : "Inactive"}</Badge></td>
@@ -535,51 +530,85 @@ function AlertSearchDropdown({ selected, onAdd, onRemove, alertDefinitions }: { 
 }
 
 function DriverConfigSection() {
-  const [criteria, setCriteria] = useState<DriverConfigCriterion[]>([]);
+  const { costCenters, selectedCostCenterIds } = useCostCenters();
   const [alertDefinitions, setAlertDefinitions] = useState<AlertDefinition[]>([]);
+
+  useEffect(() => {
+    fetch(`${ALERT_CONFIG_API}/definitions`, { cache: "no-store" })
+      .then(r => r.json())
+      .then(d => setAlertDefinitions(d?.data || []))
+      .catch(() => {});
+  }, []);
+
+  if (selectedCostCenterIds.length === 0) {
+    return (
+      <div className="space-y-4">
+        <div>
+          <h2 className="text-lg font-semibold">Driver Monitoring Config</h2>
+          <p className="text-sm text-gray-500">Global Defaults — baseline criteria inherited by all cost centers</p>
+        </div>
+        <CostCenterTable costCenterId={null} costCenterName="Global Defaults" alertDefinitions={alertDefinitions} />
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h2 className="text-lg font-semibold">Driver Monitoring Config</h2>
+        <p className="text-sm text-gray-500">
+          {selectedCostCenterIds.length === 1
+            ? `Configuring: ${costCenters.find(cc => cc.id === selectedCostCenterIds[0])?.name}`
+            : `${selectedCostCenterIds.length} Cost Centers Selected`
+          }
+        </p>
+      </div>
+      {selectedCostCenterIds.map(ccId => {
+        const cc = costCenters.find(c => c.id === ccId);
+        return (
+          <CostCenterTable
+            key={ccId}
+            costCenterId={ccId}
+            costCenterName={cc?.name || `Cost Center #${ccId}`}
+            alertDefinitions={alertDefinitions}
+          />
+        );
+      })}
+    </div>
+  );
+}
+
+function CostCenterTable({ costCenterId, costCenterName, alertDefinitions }: { costCenterId: number | null; costCenterName: string; alertDefinitions: AlertDefinition[] }) {
+  const [criteria, setCriteria] = useState<DriverConfigCriterion[]>([]);
   const [loading, setLoading] = useState(true);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editForm, setEditForm] = useState<Partial<DriverConfigCriterion>>({});
   const [showAddForm, setShowAddForm] = useState(false);
-  const [selectedConfigCostCenterId, setSelectedConfigCostCenterId] = useState<number | null>(null);
-  const { costCenters } = useCostCenters();
-  const [addForm, setAddForm] = useState({ 
-    name: "", 
-    selected_weighting: 10, 
-    risk_tiers: 4, 
-    statuses: [] as string[],
-    nrc_deduction: false,
-    incidents_threshold: 1,
+  const [addForm, setAddForm] = useState({
+    name: "",
     deduction_per_alert: 10,
     deduction_with_ncr: 0,
     ncr_threshold: 3,
+    statuses: [] as string[],
   });
 
   const fetchCriteria = useCallback(async () => {
     try {
-      const ccParam = selectedConfigCostCenterId != null ? `?cost_center_id=${selectedConfigCostCenterId}` : "";
-      const res = await fetch(`${DRIVER_CONFIG_API}/criteria${ccParam}`, { cache: "no-store" });
+      const url = costCenterId === null
+        ? `${DRIVER_CONFIG_API}/criteria/global`
+        : `${DRIVER_CONFIG_API}/criteria/for-cc/${costCenterId}`;
+      const res = await fetch(url, { cache: "no-store" });
       const data = await res.json();
       setCriteria(data?.data || []);
     } catch {
       setCriteria([]);
     }
-  }, [selectedConfigCostCenterId]);
-
-  const fetchAlertDefinitions = useCallback(async () => {
-    try {
-      const res = await fetch(`${ALERT_CONFIG_API}/definitions`, { cache: "no-store" });
-      const data = await res.json();
-      setAlertDefinitions(data?.data || []);
-    } catch {
-      setAlertDefinitions([]);
-    }
-  }, []);
+  }, [costCenterId]);
 
   useEffect(() => {
     setLoading(true);
-    Promise.all([fetchCriteria(), fetchAlertDefinitions()]).finally(() => setLoading(false));
-  }, [fetchCriteria, fetchAlertDefinitions]);
+    fetchCriteria().finally(() => setLoading(false));
+  }, [fetchCriteria]);
 
   const handleSaveEdit = async () => {
     if (!editingId) return;
@@ -605,20 +634,16 @@ function DriverConfigSection() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name: addForm.name,
-          selected_weighting: addForm.deduction_per_alert,
-          risk_tiers: addForm.risk_tiers,
-          statuses: addForm.statuses,
-          nrc_deduction: addForm.nrc_deduction,
-          incidents_threshold: addForm.incidents_threshold,
           deduction_per_alert: addForm.deduction_per_alert,
           deduction_with_ncr: addForm.deduction_with_ncr,
           ncr_threshold: addForm.ncr_threshold,
-          cost_center_id: selectedConfigCostCenterId,
+          statuses: addForm.statuses,
+          cost_center_id: costCenterId,
         }),
       });
       toast.success("Criterion added");
       setShowAddForm(false);
-      setAddForm({ name: "", selected_weighting: 10, risk_tiers: 4, statuses: [], nrc_deduction: false, incidents_threshold: 1, deduction_per_alert: 10, deduction_with_ncr: 0, ncr_threshold: 3 });
+      setAddForm({ name: "", deduction_per_alert: 10, deduction_with_ncr: 0, ncr_threshold: 3, statuses: [] });
       fetchCriteria();
     } catch {
       toast.error("Failed to add");
@@ -637,42 +662,30 @@ function DriverConfigSection() {
   };
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-lg font-semibold">Driver Monitoring Config</h2>
-          <p className="text-sm text-gray-500">Configure driver behavior criteria, risk tiers, and thresholds</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <div className="w-56">
-            <Select value={selectedConfigCostCenterId?.toString() ?? "global"} onValueChange={(v) => setSelectedConfigCostCenterId(v === "global" ? null : Number(v))}>
-              <SelectTrigger className="h-9">
-                <SelectValue placeholder="Global Default" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="global">Global Default</SelectItem>
-                {costCenters.map((cc) => (
-                  <SelectItem key={cc.id} value={cc.id.toString()}>{cc.name}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <Button size="sm" onClick={() => setShowAddForm(true)}>
-            <Plus className="w-4 h-4 mr-1" /> Add Criterion
-          </Button>
-        </div>
-      </div>
-
-      {showAddForm && (
-        <Card>
-          <CardContent className="p-4 space-y-3">
+    <Card>
+      <CardHeader className="flex flex-row items-center justify-between py-3">
+        <CardTitle className="text-sm font-semibold flex items-center gap-2">
+          {costCenterId === null ? (
+            <Badge variant="outline">Global</Badge>
+          ) : (
+            <Badge>{costCenterName}</Badge>
+          )}
+          <span className="text-gray-400 font-normal">({criteria.length} criteria)</span>
+        </CardTitle>
+        <Button size="sm" onClick={() => setShowAddForm(true)}>
+          <Plus className="w-4 h-4 mr-1" /> Add
+        </Button>
+      </CardHeader>
+      <CardContent className="p-0">
+        {showAddForm && (
+          <div className="p-4 border-b bg-gray-50 space-y-3">
             <div className="grid grid-cols-4 gap-3">
               <div>
                 <label className="text-sm font-medium">Name</label>
                 <Input value={addForm.name} onChange={(e) => setAddForm({ ...addForm, name: e.target.value })} placeholder="e.g. Speeding" />
               </div>
               <div>
-                <label className="text-sm font-medium">Per-Alert Deduction</label>
+                <label className="text-sm font-medium">Per-Alert</label>
                 <Input type="number" value={addForm.deduction_per_alert} onChange={(e) => setAddForm({ ...addForm, deduction_per_alert: Number(e.target.value) })} />
               </div>
               <div>
@@ -684,8 +697,8 @@ function DriverConfigSection() {
                 <Input type="number" value={addForm.ncr_threshold} min={1} onChange={(e) => setAddForm({ ...addForm, ncr_threshold: Number(e.target.value) })} />
               </div>
             </div>
-            <div className="grid grid-cols-3 gap-3">
-              <div className="col-span-2">
+            <div className="flex gap-3 items-end">
+              <div className="flex-1">
                 <label className="text-sm font-medium">Statuses</label>
                 <AlertSearchDropdown
                   selected={addForm.statuses}
@@ -694,17 +707,16 @@ function DriverConfigSection() {
                   onRemove={(name) => setAddForm({ ...addForm, statuses: addForm.statuses.filter(x => x !== name) })}
                 />
               </div>
-              <div className="flex gap-2 items-end">
-                <Button size="sm" onClick={handleAdd} disabled={!addForm.name}><Save className="w-4 h-4 mr-1" /> Add</Button>
-                <Button size="sm" variant="outline" onClick={() => setShowAddForm(false)}>Cancel</Button>
-              </div>
+              <Button size="sm" onClick={handleAdd} disabled={!addForm.name}><Save className="w-4 h-4 mr-1" /> Add</Button>
+              <Button size="sm" variant="outline" onClick={() => setShowAddForm(false)}>Cancel</Button>
             </div>
-          </CardContent>
-        </Card>
-      )}
-
-      <Card>
-        <CardContent className="p-0">
+          </div>
+        )}
+        {loading ? (
+          <div className="p-6 text-center text-sm text-gray-500">Loading...</div>
+        ) : criteria.length === 0 ? (
+          <div className="p-6 text-center text-sm text-gray-400">No criteria configured. Click "Add" to create one.</div>
+        ) : (
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b bg-gray-50 text-left text-gray-500">
@@ -712,7 +724,6 @@ function DriverConfigSection() {
                 <th>Per-Alert</th>
                 <th>NCR Deduction</th>
                 <th>NCR Threshold</th>
-                <th>Cost Center</th>
                 <th>Statuses</th>
                 <th>Actions</th>
               </tr>
@@ -723,35 +734,22 @@ function DriverConfigSection() {
                   <td className="py-3 px-4 font-medium">
                     {editingId === c.id ? (
                       <Input value={editForm.name || ""} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} className="h-8" />
-                    ) : (
-                      c.name
-                    )}
+                    ) : c.name}
                   </td>
                   <td>
                     {editingId === c.id ? (
                       <Input type="number" value={editForm.deduction_per_alert ?? c.deduction_per_alert ?? c.selected_weighting} onChange={(e) => setEditForm({ ...editForm, deduction_per_alert: Number(e.target.value) })} className="h-8 w-20" />
-                    ) : (
-                      c.deduction_per_alert ?? c.selected_weighting
-                    )}
+                    ) : (c.deduction_per_alert ?? c.selected_weighting)}
                   </td>
                   <td>
                     {editingId === c.id ? (
                       <Input type="number" value={editForm.deduction_with_ncr ?? c.deduction_with_ncr ?? 0} onChange={(e) => setEditForm({ ...editForm, deduction_with_ncr: Number(e.target.value) })} className="h-8 w-20" />
-                    ) : (
-                      c.deduction_with_ncr ?? 0
-                    )}
+                    ) : (c.deduction_with_ncr ?? 0)}
                   </td>
                   <td>
                     {editingId === c.id ? (
                       <Input type="number" value={editForm.ncr_threshold ?? c.ncr_threshold ?? 3} min={1} onChange={(e) => setEditForm({ ...editForm, ncr_threshold: Number(e.target.value) })} className="h-8 w-20" />
-                    ) : (
-                      c.ncr_threshold ?? 3
-                    )}
-                  </td>
-                  <td>
-                    {c.cost_center_id != null
-                      ? (costCenters.find(cc => cc.id === c.cost_center_id)?.name || `ID: ${c.cost_center_id}`)
-                      : <Badge variant="outline" className="text-xs">Global</Badge>}
+                    ) : (c.ncr_threshold ?? 3)}
                   </td>
                   <td>
                     {editingId === c.id ? (
@@ -795,9 +793,9 @@ function DriverConfigSection() {
               ))}
             </tbody>
           </table>
-        </CardContent>
-      </Card>
-    </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
