@@ -637,15 +637,8 @@ export function AlertDetailModal({
     setDerivedAlertScreenshots([]);
     setSelectedAlertPlaybackVideos([]);
 
-    // Auto-open Map tab for telematics alerts and speed alerts (focus on location/speed)
-    const sourceType = String(selectedAlert?.source_type || "").trim().toLowerCase();
-    const alertType = String(selectedAlert?.type || selectedAlert?.alert_type || "").toLowerCase();
-    const isSpeedAlert = /speed/i.test(alertType) || (selectedAlert?.speed != null && selectedAlert?.speed > 0);
-    if (sourceType === "telematics" || isSpeedAlert) {
-      setActiveTab("map");
-    } else {
-      setActiveTab("screenshots");
-    }
+    // Default to Screenshots tab for all alert types (no source_type separation)
+    setActiveTab("screenshots");
 
     // If already on Event Video tab, fetch immediately
     const alertId = String(selectedAlert?.id || "").trim();
