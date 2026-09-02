@@ -261,7 +261,6 @@ function AlertConfigSection() {
             created++;
           }
         }
-        }
         toast.success(`Saved to ${selectedCostCenterIds.length} cost center(s): ${created} created, ${updated} updated`);
       }
       setShowDefForm(false);
