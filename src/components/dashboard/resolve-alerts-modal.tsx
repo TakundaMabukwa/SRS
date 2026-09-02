@@ -42,6 +42,7 @@ export function ResolveAlertsModal({
   const [resolvingIds, setResolvingIds] = useState<Set<string>>(new Set());
   const [selectedDriverId, setSelectedDriverId] = useState<string>("");
   const [selectedDriverName, setSelectedDriverName] = useState<string>("");
+  const [notesMap, setNotesMap] = useState<Record<string, string>>({});
   const fetchActiveRef = useRef(0);
 
   const alertTypeName = (type: string) => {
@@ -202,25 +203,33 @@ export function ResolveAlertsModal({
     });
   }, [allAlerts]);
 
-  const resolveBulk = useCallback(async (ids: string[]) => {
-    try {
-      const res = await fetch(`${baseUrl}/alerts/bulk-close`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "x-internal-key": "srs-internal-2026" },
-        body: JSON.stringify({ alertIds: ids, closureType: "resolved", notes: "Bulk resolved from resolve modal" }),
-      });
-      const data = await res.json();
-      return data.success === true ? data.resolved : 0;
-    } catch { return 0; }
-  }, [baseUrl]);
+  const resolveBulk = useCallback(async (ids: string[], alertKeys: string[]) => {
+    let resolved = 0;
+    for (let i = 0; i < ids.length; i++) {
+      const id = ids[i];
+      const key = alertKeys[i] || id;
+      const note = notesMap[key] || "Bulk resolved from resolve modal";
+      try {
+        const res = await fetch(`${baseUrl}/alerts/${encodeURIComponent(id)}/close`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "x-internal-key": "srs-internal-2026" },
+          body: JSON.stringify({ closureType: "resolved", notes: note, userId: "dashboard_user" }),
+        });
+        const data = await res.json();
+        if (data.success) resolved++;
+      } catch { /* skip */ }
+    }
+    return resolved;
+  }, [baseUrl, notesMap]);
 
   const handleResolveSelected = useCallback(async () => {
     if (selectedIds.size === 0) { toast.warning("No alerts selected"); return; }
     setResolving(true);
     const toResolve = allAlerts.filter((a) => selectedIds.has(a._key));
     const ids = toResolve.map((a) => a._resolveId).filter(Boolean);
+    const keys = toResolve.map((a) => a._key);
 
-    const resolved = await resolveBulk(ids);
+    const resolved = await resolveBulk(ids, keys);
 
     setResolving(false);
     setResolvingIds(new Set());
@@ -236,8 +245,9 @@ export function ResolveAlertsModal({
     if (allAlerts.length === 0) return;
     setResolving(true);
     const ids = allAlerts.map((a) => a._resolveId).filter(Boolean);
+    const keys = allAlerts.map((a) => a._key);
 
-    const resolved = await resolveBulk(ids);
+    const resolved = await resolveBulk(ids, keys);
 
     setResolving(false);
     setResolvingIds(new Set());
@@ -408,6 +418,18 @@ export function ResolveAlertsModal({
                             </div>
                           </div>
                         </Card>
+                        {isSelected && (
+                          <div className="ml-7 mt-1">
+                            <textarea
+                              className="w-full rounded border border-slate-200 bg-white px-2 py-1 text-[11px] text-slate-700 placeholder:text-slate-400 focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-400 resize-none"
+                              rows={2}
+                              placeholder="Add a note for this alert (optional)..."
+                              value={notesMap[alert._key] || ""}
+                              onChange={(e) => setNotesMap((prev) => ({ ...prev, [alert._key]: e.target.value }))}
+                              onClick={(e) => e.stopPropagation()}
+                            />
+                          </div>
+                        )}
                       );
                     })}
                   </div>
