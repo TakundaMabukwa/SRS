@@ -4,6 +4,7 @@ import React, { useEffect, useState, useRef, useMemo, useCallback } from 'react'
 import { Search, MapPin, AlertTriangle, Gauge, Clock, Zap, EyeOff, Filter, ChevronDown, ChevronLeft } from 'lucide-react';
 import { useGoogleMaps } from '@/hooks/use-google-maps';
 import { useCostCenters } from '@/context/cost-centers-context';
+import { getGeotabWsUrl } from '@/lib/utils';
 
 type VehicleStatus = {
   device_id: string;
@@ -292,7 +293,7 @@ export function FleetMapTab() {
   }, []);
 
   useEffect(() => {
-    const wsUrl = process.env.NEXT_PUBLIC_GEOTAB_WS_URL || `ws://${window.location.hostname}:3004`;
+    const wsUrl = getGeotabWsUrl();
     let ws: WebSocket | null = null;
     let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
 

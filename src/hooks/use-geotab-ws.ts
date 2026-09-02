@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
+import { getGeotabWsUrl } from '@/lib/utils';
 
 type ZoneBreach = {
   id: number;
@@ -21,9 +22,7 @@ type WsMessage = {
   timestamp: string;
 };
 
-const WS_URL = typeof window !== 'undefined'
-  ? (process.env.NEXT_PUBLIC_GEOTAB_WS_URL || `ws://${window.location.hostname}:3004`)
-  : 'ws://localhost:3004';
+const WS_URL = typeof window !== 'undefined' ? getGeotabWsUrl() : '';
 
 export function useGeotabWs() {
   const [zoneBreaches, setZoneBreaches] = useState<ZoneBreach[]>([]);
