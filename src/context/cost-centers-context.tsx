@@ -4,6 +4,8 @@ import React, { createContext, useContext, useState, useEffect, useCallback, use
 import { createClient } from "@/lib/supabase/client";
 import { useUser } from "@/context/contexts/UserContext";
 
+const SELECTION_STORAGE_KEY = "costCenterSelection-v1";
+
 interface CostCenter {
   id: number;
   name: string;
@@ -37,7 +39,7 @@ export function CostCentersProvider({ children }: { children: React.ReactNode })
   const [loading, setLoading] = useState(false);
   const [selectedCostCenterIds, setSelectedCostCenterIds] = useState<number[]>([]);
   const fetchedRef = useRef(false);
-  const { user, isAdmin, userCostCenterIds } = useUser();
+  const { userCostCenterIds } = useUser();
 
   const fetchCostCenters = useCallback(async () => {
     if (fetchedRef.current) return;
@@ -63,8 +65,9 @@ export function CostCentersProvider({ children }: { children: React.ReactNode })
         return true;
       });
 
-      // Filter by user assignment (non-admin users only see their assigned cost centers)
-      if (!isAdmin && userCostCenterIds.length > 0) {
+      // ALWAYS limit to the user's assigned cost centers from the users table,
+      // for both admins and non-admins. Admins with no assignment see all.
+      if (userCostCenterIds.length > 0) {
         const filtered = deduped.filter(cc => userCostCenterIds.includes(cc.id));
         setCostCenters(filtered);
       } else {
@@ -75,11 +78,38 @@ export function CostCentersProvider({ children }: { children: React.ReactNode })
     } finally {
       setLoading(false);
     }
-  }, [isAdmin, userCostCenterIds]);
+  }, [userCostCenterIds]);
 
   useEffect(() => {
     fetchCostCenters();
   }, [fetchCostCenters]);
+
+  // Load saved selection from localStorage once the user's cost centers are known
+  useEffect(() => {
+    if (costCenters.length === 0) return;
+    try {
+      const saved = localStorage.getItem(SELECTION_STORAGE_KEY);
+      if (saved) {
+        const parsed: number[] = JSON.parse(saved);
+        // Only keep selections that are in the user's available cost centers
+        const valid = parsed.filter(id => costCenters.some(cc => cc.id === id));
+        if (valid.length > 0) {
+          setSelectedCostCenterIds(valid);
+        }
+      }
+    } catch (e) {
+      console.error("Error reading cost center selection:", e);
+    }
+  }, [costCenters]);
+
+  // Persist selection so it is remembered across tab changes and reloads
+  useEffect(() => {
+    try {
+      localStorage.setItem(SELECTION_STORAGE_KEY, JSON.stringify(selectedCostCenterIds));
+    } catch (e) {
+      console.error("Error saving cost center selection:", e);
+    }
+  }, [selectedCostCenterIds]);
 
   const costCenterMap = React.useMemo(() => {
     const map = new Map<number, string>();

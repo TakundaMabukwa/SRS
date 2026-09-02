@@ -32,6 +32,8 @@ import {
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { useCostCenters } from "@/context/cost-centers-context";
+import { BellRing } from "lucide-react";
+import { EscalationSection } from "@/components/settings/escalation-section";
 
 const ALERT_CONFIG_API = "/api/video-server/alert-config";
 const DRIVER_CONFIG_API = "/api/video-server/driver-config";
@@ -131,6 +133,10 @@ export default function SettingsPage() {
               <Clock className="w-4 h-4" />
               RTMS
             </TabsTrigger>
+            <TabsTrigger value="escalation" className="flex items-center gap-2">
+              <BellRing className="w-4 h-4" />
+              Escalation
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="alert-config">
@@ -147,6 +153,10 @@ export default function SettingsPage() {
 
           <TabsContent value="rtms-config">
             <RTMSConfigSection />
+          </TabsContent>
+
+          <TabsContent value="escalation">
+            <EscalationSection />
           </TabsContent>
         </Tabs>
       </div>
