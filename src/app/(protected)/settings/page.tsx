@@ -27,6 +27,7 @@ import {
   Settings,
   Users,
   Clock,
+  Copy,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -53,6 +54,7 @@ type AlertDefinition = {
   signal_code: string;
   severity: Severity;
   is_active: boolean;
+  cost_center_id: number | null;
   created_at: string;
   updated_at: string;
 };
@@ -63,6 +65,7 @@ type AlertGroupConfig = {
   severity: Severity;
   description: string;
   is_active: boolean;
+  cost_center_id: number | null;
   members: AlertDefinition[];
   created_at: string;
   updated_at: string;
@@ -85,6 +88,7 @@ type DriverConfigCriterion = {
   deduction_with_ncr: number;
   ncr_threshold: number;
   cost_center_id: number | null;
+  config_group_id: number | null;
 };
 
 export default function SettingsPage() {
@@ -109,6 +113,10 @@ export default function SettingsPage() {
               <Users className="w-4 h-4" />
               Driver Config
             </TabsTrigger>
+            <TabsTrigger value="config-groups" className="flex items-center gap-2">
+              <Settings className="w-4 h-4" />
+              Config Groups
+            </TabsTrigger>
             <TabsTrigger value="rtms-config" className="flex items-center gap-2">
               <Clock className="w-4 h-4" />
               RTMS
@@ -123,6 +131,10 @@ export default function SettingsPage() {
             <DriverConfigSection />
           </TabsContent>
 
+          <TabsContent value="config-groups">
+            <ConfigGroupsSection />
+          </TabsContent>
+
           <TabsContent value="rtms-config">
             <RTMSConfigSection />
           </TabsContent>
@@ -133,6 +145,7 @@ export default function SettingsPage() {
 }
 
 function AlertConfigSection() {
+  const { costCenters, selectedCostCenterIds } = useCostCenters();
   const [activeSection, setActiveSection] = useState<"definitions" | "groups">("definitions");
   const [definitions, setDefinitions] = useState<AlertDefinition[]>([]);
   const [groups, setGroups] = useState<AlertGroupConfig[]>([]);
@@ -147,25 +160,37 @@ function AlertConfigSection() {
   const [groupForm, setGroupForm] = useState({ name: "", severity: "MEDIUM" as Severity, description: "", memberIds: [] as number[] });
   const [showMemberPicker, setShowMemberPicker] = useState(false);
 
+  const [showOverrideDefConfirm, setShowOverrideDefConfirm] = useState(false);
+  const [showOverrideGroupConfirm, setShowOverrideGroupConfirm] = useState(false);
+  const [overrideLoading, setOverrideLoading] = useState(false);
+
+  const activeCcId = selectedCostCenterIds.length === 1 ? selectedCostCenterIds[0] : null;
+
   const fetchDefinitions = useCallback(async () => {
     try {
-      const res = await fetch(`${ALERT_CONFIG_API}/definitions`, { cache: "no-store" });
+      const url = activeCcId
+        ? `${ALERT_CONFIG_API}/definitions?cost_center_id=${activeCcId}`
+        : `${ALERT_CONFIG_API}/definitions`;
+      const res = await fetch(url, { cache: "no-store" });
       const data = await res.json();
       setDefinitions(data?.data || []);
     } catch {
       setDefinitions([]);
     }
-  }, []);
+  }, [activeCcId]);
 
   const fetchGroups = useCallback(async () => {
     try {
-      const res = await fetch(`${ALERT_CONFIG_API}/groups`, { cache: "no-store" });
+      const url = activeCcId
+        ? `${ALERT_CONFIG_API}/groups?cost_center_id=${activeCcId}`
+        : `${ALERT_CONFIG_API}/groups`;
+      const res = await fetch(url, { cache: "no-store" });
       const data = await res.json();
       setGroups(data?.data || []);
     } catch {
       setGroups([]);
     }
-  }, []);
+  }, [activeCcId]);
 
   useEffect(() => {
     setLoading(true);
@@ -174,29 +199,57 @@ function AlertConfigSection() {
   }, [fetchDefinitions, fetchGroups]);
 
   const handleSaveDef = async () => {
-    const url = editingDef ? `${ALERT_CONFIG_API}/definitions/${editingDef.id}` : `${ALERT_CONFIG_API}/definitions`;
-    const method = editingDef ? "PUT" : "POST";
+    const isEditingGlobal = activeCcId && editingDef?.cost_center_id === null;
     try {
-      await fetch(url, {
-        method,
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(defForm),
-      });
-      toast.success(editingDef ? "Alert type updated" : "Alert type created");
+      if (isEditingGlobal) {
+        const existingOverride = definitions.find(d => d.name === editingDef?.name && d.cost_center_id === activeCcId);
+        const payload = { ...defForm, cost_center_id: activeCcId };
+        if (existingOverride) {
+          await fetch(`${ALERT_CONFIG_API}/definitions/${existingOverride.id}`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
+          toast.success("Override updated");
+        } else {
+          const res = await fetch(`${ALERT_CONFIG_API}/definitions`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
+          const body = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(body?.message || "Failed to create override");
+          toast.success("Override created");
+        }
+      } else {
+        const url = editingDef ? `${ALERT_CONFIG_API}/definitions/${editingDef.id}` : `${ALERT_CONFIG_API}/definitions`;
+        const method = editingDef ? "PUT" : "POST";
+        const payload = activeCcId ? { ...defForm, cost_center_id: activeCcId } : defForm;
+        await fetch(url, {
+          method,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        toast.success(editingDef ? "Alert type updated" : "Alert type created");
+      }
       setShowDefForm(false);
       setEditingDef(null);
       setDefForm({ name: "", category: "telematics", description: "", signal_code: "", severity: "MEDIUM" });
       fetchDefinitions();
       fetchGroups();
-    } catch {
-      toast.error("Failed to save");
+    } catch (e: any) {
+      toast.error(e?.message || "Failed to save");
     }
   };
 
-  const handleDeleteDef = async (id: number) => {
+  const handleDeleteDef = async (def: AlertDefinition) => {
+    if (activeCcId && def.cost_center_id === null) {
+      toast.error("Can't delete a global default from here. Go to Global Defaults to remove it.");
+      return;
+    }
     if (!confirm("Delete this alert type?")) return;
     try {
-      await fetch(`${ALERT_CONFIG_API}/definitions/${id}`, { method: "DELETE" });
+      await fetch(`${ALERT_CONFIG_API}/definitions/${def.id}`, { method: "DELETE" });
       toast.success("Deleted");
       fetchDefinitions();
       fetchGroups();
@@ -206,28 +259,56 @@ function AlertConfigSection() {
   };
 
   const handleSaveGroup = async () => {
-    const url = editingGroup ? `${ALERT_CONFIG_API}/groups/${editingGroup.id}` : `${ALERT_CONFIG_API}/groups`;
-    const method = editingGroup ? "PUT" : "POST";
+    const isEditingGlobal = activeCcId && editingGroup?.cost_center_id === null;
     try {
-      await fetch(url, {
-        method,
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...groupForm, member_ids: groupForm.memberIds }),
-      });
-      toast.success(editingGroup ? "Alert group updated" : "Alert group created");
+      if (isEditingGlobal) {
+        const existingOverride = groups.find(g => g.name === editingGroup?.name && g.cost_center_id === activeCcId);
+        const payload = { ...groupForm, member_ids: groupForm.memberIds, cost_center_id: activeCcId };
+        if (existingOverride) {
+          await fetch(`${ALERT_CONFIG_API}/groups/${existingOverride.id}`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
+          toast.success("Override updated");
+        } else {
+          const res = await fetch(`${ALERT_CONFIG_API}/groups`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
+          const body = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(body?.message || "Failed to create override");
+          toast.success("Override created");
+        }
+      } else {
+        const url = editingGroup ? `${ALERT_CONFIG_API}/groups/${editingGroup.id}` : `${ALERT_CONFIG_API}/groups`;
+        const method = editingGroup ? "PUT" : "POST";
+        const payload = activeCcId ? { ...groupForm, member_ids: groupForm.memberIds, cost_center_id: activeCcId } : { ...groupForm, member_ids: groupForm.memberIds };
+        await fetch(url, {
+          method,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        toast.success(editingGroup ? "Alert group updated" : "Alert group created");
+      }
       setShowGroupForm(false);
       setEditingGroup(null);
       setGroupForm({ name: "", severity: "MEDIUM", description: "", memberIds: [] });
       fetchGroups();
-    } catch {
-      toast.error("Failed to save");
+    } catch (e: any) {
+      toast.error(e?.message || "Failed to save");
     }
   };
 
-  const handleDeleteGroup = async (id: number) => {
+  const handleDeleteGroup = async (group: AlertGroupConfig) => {
+    if (activeCcId && group.cost_center_id === null) {
+      toast.error("Can't delete a global default from here. Go to Global Defaults to remove it.");
+      return;
+    }
     if (!confirm("Delete this alert group?")) return;
     try {
-      await fetch(`${ALERT_CONFIG_API}/groups/${id}`, { method: "DELETE" });
+      await fetch(`${ALERT_CONFIG_API}/groups/${group.id}`, { method: "DELETE" });
       toast.success("Deleted");
       fetchGroups();
     } catch {
@@ -235,13 +316,169 @@ function AlertConfigSection() {
     }
   };
 
+  const handleOverrideDefsFromGlobal = async () => {
+    if (!activeCcId) return;
+    setOverrideLoading(true);
+    try {
+      const globalDefs = definitions.filter(d => d.cost_center_id === null);
+      for (const def of globalDefs) {
+        const existingOverride = definitions.find(d => d.name === def.name && d.cost_center_id === activeCcId);
+        if (!existingOverride) {
+          await fetch(`${ALERT_CONFIG_API}/definitions`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ ...def, cost_center_id: activeCcId, id: undefined }),
+          });
+        }
+      }
+      toast.success(`Override created: ${globalDefs.length} alert types copied from global`);
+      setShowOverrideDefConfirm(false);
+      fetchDefinitions();
+    } catch (e: any) {
+      toast.error(e?.message || "Failed to override");
+    } finally {
+      setOverrideLoading(false);
+    }
+  };
+
+  const handleOverrideGroupsFromGlobal = async () => {
+    if (!activeCcId) return;
+    setOverrideLoading(true);
+    try {
+      const globalGroups = groups.filter(g => g.cost_center_id === null);
+      for (const group of globalGroups) {
+        const existingOverride = groups.find(g => g.name === group.name && g.cost_center_id === activeCcId);
+        if (!existingOverride) {
+          await fetch(`${ALERT_CONFIG_API}/groups`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              name: group.name,
+              severity: group.severity,
+              description: group.description,
+              member_ids: (group.members || []).map(m => m.id),
+              cost_center_id: activeCcId,
+            }),
+          });
+        }
+      }
+      toast.success(`Override created: ${globalGroups.length} alert groups copied from global`);
+      setShowOverrideGroupConfirm(false);
+      fetchGroups();
+    } catch (e: any) {
+      toast.error(e?.message || "Failed to override");
+    } finally {
+      setOverrideLoading(false);
+    }
+  };
+
+  if (selectedCostCenterIds.length === 0) {
+    return (
+      <div className="space-y-4">
+        <div>
+          <h2 className="text-lg font-semibold">Alert Types & Groups</h2>
+          <p className="text-sm text-gray-500">Global Defaults — baseline alert config inherited by all cost centers</p>
+        </div>
+        <AlertConfigPanel
+          activeSection={activeSection}
+          setActiveSection={setActiveSection}
+          definitions={definitions}
+          groups={groups}
+          loading={loading}
+          activeCcId={null}
+          onEditDef={(def: AlertDefinition) => { setEditingDef(def); setDefForm({ name: def.name, category: def.category, description: def.description, signal_code: def.signal_code, severity: def.severity || "MEDIUM" }); setShowDefForm(true); }}
+          onDeleteDef={handleDeleteDef}
+          onEditGroup={(group: AlertGroupConfig) => { setEditingGroup(group); setGroupForm({ name: group.name, severity: group.severity || "MEDIUM", description: group.description, memberIds: (group.members || []).map((m: AlertDefinition) => m.id) }); setShowGroupForm(true); }}
+          onDeleteGroup={handleDeleteGroup}
+          showDefForm={showDefForm}
+          setShowDefForm={setShowDefForm}
+          editingDef={editingDef}
+          setEditingDef={setEditingDef}
+          defForm={defForm}
+          setDefForm={setDefForm}
+          handleSaveDef={handleSaveDef}
+          showGroupForm={showGroupForm}
+          setShowGroupForm={setShowGroupForm}
+          editingGroup={editingGroup}
+          setEditingGroup={setEditingGroup}
+          groupForm={groupForm}
+          setGroupForm={setGroupForm}
+          handleSaveGroup={handleSaveGroup}
+          showOverrideDefConfirm={showOverrideDefConfirm}
+          setShowOverrideDefConfirm={setShowOverrideDefConfirm}
+          showOverrideGroupConfirm={showOverrideGroupConfirm}
+          setShowOverrideGroupConfirm={setShowOverrideGroupConfirm}
+          overrideLoading={overrideLoading}
+          handleOverrideDefsFromGlobal={handleOverrideDefsFromGlobal}
+          handleOverrideGroupsFromGlobal={handleOverrideGroupsFromGlobal}
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h2 className="text-lg font-semibold">Alert Types & Groups</h2>
+        <p className="text-sm text-gray-500">
+          {selectedCostCenterIds.length === 1
+            ? `Configuring: ${costCenters.find(cc => cc.id === selectedCostCenterIds[0])?.name}`
+            : `${selectedCostCenterIds.length} Cost Centers Selected — select one to configure`
+          }
+        </p>
+      </div>
+      {selectedCostCenterIds.length === 1 && (
+        <AlertConfigPanel
+          activeSection={activeSection}
+          setActiveSection={setActiveSection}
+          definitions={definitions}
+          groups={groups}
+          loading={loading}
+          activeCcId={activeCcId}
+          onEditDef={(def: AlertDefinition) => { setEditingDef(def); setDefForm({ name: def.name, category: def.category, description: def.description, signal_code: def.signal_code, severity: def.severity || "MEDIUM" }); setShowDefForm(true); }}
+          onDeleteDef={handleDeleteDef}
+          onEditGroup={(group: AlertGroupConfig) => { setEditingGroup(group); setGroupForm({ name: group.name, severity: group.severity || "MEDIUM", description: group.description, memberIds: (group.members || []).map((m: AlertDefinition) => m.id) }); setShowGroupForm(true); }}
+          onDeleteGroup={handleDeleteGroup}
+          showDefForm={showDefForm}
+          setShowDefForm={setShowDefForm}
+          editingDef={editingDef}
+          setEditingDef={setEditingDef}
+          defForm={defForm}
+          setDefForm={setDefForm}
+          handleSaveDef={handleSaveDef}
+          showGroupForm={showGroupForm}
+          setShowGroupForm={setShowGroupForm}
+          editingGroup={editingGroup}
+          setEditingGroup={setEditingGroup}
+          groupForm={groupForm}
+          setGroupForm={setGroupForm}
+          handleSaveGroup={handleSaveGroup}
+          showOverrideDefConfirm={showOverrideDefConfirm}
+          setShowOverrideDefConfirm={setShowOverrideDefConfirm}
+          showOverrideGroupConfirm={showOverrideGroupConfirm}
+          setShowOverrideGroupConfirm={setShowOverrideGroupConfirm}
+          overrideLoading={overrideLoading}
+          handleOverrideDefsFromGlobal={handleOverrideDefsFromGlobal}
+          handleOverrideGroupsFromGlobal={handleOverrideGroupsFromGlobal}
+        />
+      )}
+    </div>
+  );
+}
+
+function AlertConfigPanel({
+  activeSection, setActiveSection, definitions, groups, loading, activeCcId,
+  onEditDef, onDeleteDef, onEditGroup, onDeleteGroup,
+  showDefForm, setShowDefForm, editingDef, setEditingDef, defForm, setDefForm, handleSaveDef,
+  showGroupForm, setShowGroupForm, editingGroup, setEditingGroup, groupForm, setGroupForm, handleSaveGroup,
+  showOverrideDefConfirm, setShowOverrideDefConfirm, showOverrideGroupConfirm, setShowOverrideGroupConfirm,
+  overrideLoading, handleOverrideDefsFromGlobal, handleOverrideGroupsFromGlobal,
+}: any) {
+  if (loading) return <div className="text-sm text-gray-500 py-4">Loading...</div>;
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-lg font-semibold">Alert Types & Groups</h2>
-          <p className="text-sm text-gray-500">Configure alert definitions and grouping rules</p>
-        </div>
         <div className="flex gap-2">
           <Button
             variant={activeSection === "definitions" ? "default" : "outline"}
@@ -262,12 +499,26 @@ function AlertConfigSection() {
             Alert Groups
           </Button>
         </div>
+        {activeCcId && (
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => activeSection === "definitions" ? setShowOverrideDefConfirm(true) : setShowOverrideGroupConfirm(true)}
+          >
+            <Copy className="w-4 h-4 mr-1" /> Override from Global
+          </Button>
+        )}
       </div>
 
       {activeSection === "definitions" && (
         <Card>
           <CardHeader className="flex flex-row items-center justify-between">
-            <CardTitle>Alert Types</CardTitle>
+            <CardTitle className="text-sm font-semibold flex items-center gap-2">
+              {activeCcId ? <Badge>Alert Types</Badge> : <Badge variant="outline">Global</Badge>}
+              <span className="text-gray-400 font-normal">
+                ({definitions.length} definitions{activeCcId ? ` — ${definitions.filter((d: AlertDefinition) => d.cost_center_id === null).length} inherited, ${definitions.filter((d: AlertDefinition) => d.cost_center_id === activeCcId).length} customized` : ""})
+              </span>
+            </CardTitle>
             <Button size="sm" onClick={() => { setShowDefForm(true); setEditingDef(null); setDefForm({ name: "", category: "telematics", description: "", signal_code: "", severity: "MEDIUM" }); }}>
               <Plus className="w-4 h-4 mr-1" /> Add Alert Type
             </Button>
@@ -330,20 +581,26 @@ function AlertConfigSection() {
                 </tr>
               </thead>
               <tbody>
-                {definitions.map((def) => (
+                {definitions.map((def: AlertDefinition) => (
                   <tr key={def.id} className="border-b">
-                    <td className="py-2 font-medium">{def.name}</td>
+                    <td className="py-2 font-medium">
+                      <div className="flex items-center gap-2">
+                        {def.name}
+                        {activeCcId && def.cost_center_id === activeCcId && <Badge variant="default" className="text-[10px]">Custom</Badge>}
+                        {activeCcId && def.cost_center_id === null && <Badge variant="outline" className="text-[10px] text-gray-400 border-gray-200">Global</Badge>}
+                      </div>
+                    </td>
                     <td><Badge variant={def.category === "telematics" ? "default" : "secondary"}>{def.category}</Badge></td>
                     <td><Badge className={SEVERITY_COLORS[def.severity || "MEDIUM"]}>{def.severity || "MEDIUM"}</Badge></td>
                     <td className="text-gray-500">{def.description || "—"}</td>
                     <td><Badge variant={def.is_active ? "default" : "outline"}>{def.is_active ? "Active" : "Inactive"}</Badge></td>
                     <td>
                       <div className="flex gap-1">
-                        <Button variant="ghost" size="sm" onClick={() => { setEditingDef(def); setDefForm({ name: def.name, category: def.category, description: def.description, signal_code: def.signal_code, severity: def.severity || "MEDIUM" }); setShowDefForm(true); }}>
+                        <Button variant="ghost" size="sm" onClick={() => onEditDef(def)}>
                           <Pencil className="w-3 h-3" />
                         </Button>
-                        <Button variant="ghost" size="sm" onClick={() => handleDeleteDef(def.id)}>
-                          <Trash2 className="w-3 h-3 text-red-500" />
+                        <Button variant="ghost" size="sm" disabled={activeCcId !== null && def.cost_center_id === null} onClick={() => onDeleteDef(def)}>
+                          <Trash2 className={`w-3 h-3 ${activeCcId !== null && def.cost_center_id === null ? 'text-gray-300' : 'text-red-500'}`} />
                         </Button>
                       </div>
                     </td>
@@ -358,7 +615,12 @@ function AlertConfigSection() {
       {activeSection === "groups" && (
         <Card>
           <CardHeader className="flex flex-row items-center justify-between">
-            <CardTitle>Alert Groups</CardTitle>
+            <CardTitle className="text-sm font-semibold flex items-center gap-2">
+              {activeCcId ? <Badge>Alert Groups</Badge> : <Badge variant="outline">Global</Badge>}
+              <span className="text-gray-400 font-normal">
+                ({groups.length} groups{activeCcId ? ` — ${groups.filter((g: AlertGroupConfig) => g.cost_center_id === null).length} inherited, ${groups.filter((g: AlertGroupConfig) => g.cost_center_id === activeCcId).length} customized` : ""})
+              </span>
+            </CardTitle>
             <Button size="sm" onClick={() => { setShowGroupForm(true); setEditingGroup(null); setGroupForm({ name: "", severity: "MEDIUM", description: "", memberIds: [] }); }}>
               <Plus className="w-4 h-4 mr-1" /> Add Alert Group
             </Button>
@@ -390,7 +652,7 @@ function AlertConfigSection() {
                 <div>
                   <label className="text-sm font-medium">Member Alert Types</label>
                   <div className="flex flex-wrap gap-2 mt-1">
-                    {definitions.map((def) => (
+                    {definitions.map((def: AlertDefinition) => (
                       <Badge
                         key={def.id}
                         variant={groupForm.memberIds.includes(def.id) ? "default" : "outline"}
@@ -399,7 +661,7 @@ function AlertConfigSection() {
                           setGroupForm({
                             ...groupForm,
                             memberIds: groupForm.memberIds.includes(def.id)
-                              ? groupForm.memberIds.filter((id) => id !== def.id)
+                              ? groupForm.memberIds.filter((id: number) => id !== def.id)
                               : [...groupForm.memberIds, def.id],
                           });
                         }}
@@ -428,14 +690,20 @@ function AlertConfigSection() {
                 </tr>
               </thead>
               <tbody>
-                {groups.map((group) => (
+                {groups.map((group: AlertGroupConfig) => (
                   <tr key={group.id} className="border-b">
-                    <td className="py-2 font-medium">{group.name}</td>
+                    <td className="py-2 font-medium">
+                      <div className="flex items-center gap-2">
+                        {group.name}
+                        {activeCcId && group.cost_center_id === activeCcId && <Badge variant="default" className="text-[10px]">Custom</Badge>}
+                        {activeCcId && group.cost_center_id === null && <Badge variant="outline" className="text-[10px] text-gray-400 border-gray-200">Global</Badge>}
+                      </div>
+                    </td>
                     <td><Badge className={SEVERITY_COLORS[group.severity || "MEDIUM"]}>{group.severity || "MEDIUM"}</Badge></td>
                     <td className="text-gray-500">{group.description || "—"}</td>
                     <td>
                       <div className="flex flex-wrap gap-1">
-                        {(group.members || []).slice(0, 3).map((m) => (
+                        {(group.members || []).slice(0, 3).map((m: AlertDefinition) => (
                           <Badge key={m.id} variant="outline" className="text-xs">{m.name}</Badge>
                         ))}
                         {(group.members || []).length > 3 && (
@@ -446,15 +714,11 @@ function AlertConfigSection() {
                     <td><Badge variant={group.is_active ? "default" : "outline"}>{group.is_active ? "Active" : "Inactive"}</Badge></td>
                     <td>
                       <div className="flex gap-1">
-                        <Button variant="ghost" size="sm" onClick={() => {
-                          setEditingGroup(group);
-                          setGroupForm({ name: group.name, severity: group.severity || "MEDIUM", description: group.description, memberIds: (group.members || []).map((m) => m.id) });
-                          setShowGroupForm(true);
-                        }}>
+                        <Button variant="ghost" size="sm" onClick={() => onEditGroup(group)}>
                           <Pencil className="w-3 h-3" />
                         </Button>
-                        <Button variant="ghost" size="sm" onClick={() => handleDeleteGroup(group.id)}>
-                          <Trash2 className="w-3 h-3 text-red-500" />
+                        <Button variant="ghost" size="sm" disabled={activeCcId !== null && group.cost_center_id === null} onClick={() => onDeleteGroup(group)}>
+                          <Trash2 className={`w-3 h-3 ${activeCcId !== null && group.cost_center_id === null ? 'text-gray-300' : 'text-red-500'}`} />
                         </Button>
                       </div>
                     </td>
@@ -465,6 +729,51 @@ function AlertConfigSection() {
           </CardContent>
         </Card>
       )}
+
+      {/* Override from Global Confirmation Dialogs */}
+      <Dialog open={showOverrideDefConfirm} onOpenChange={setShowOverrideDefConfirm}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Override Alert Types from Global</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <p className="text-sm text-gray-600">
+              This will copy all global alert type definitions as custom overrides for this cost center.
+            </p>
+            <p className="text-sm text-gray-500">
+              Existing custom alert types will not be affected.
+            </p>
+            <div className="flex gap-2 justify-end">
+              <Button variant="outline" size="sm" onClick={() => setShowOverrideDefConfirm(false)}>Cancel</Button>
+              <Button size="sm" disabled={overrideLoading} onClick={handleOverrideDefsFromGlobal}>
+                {overrideLoading ? "Copying..." : "Confirm Override"}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={showOverrideGroupConfirm} onOpenChange={setShowOverrideGroupConfirm}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Override Alert Groups from Global</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <p className="text-sm text-gray-600">
+              This will copy all global alert groups as custom overrides for this cost center.
+            </p>
+            <p className="text-sm text-gray-500">
+              Existing custom alert groups will not be affected.
+            </p>
+            <div className="flex gap-2 justify-end">
+              <Button variant="outline" size="sm" onClick={() => setShowOverrideGroupConfirm(false)}>Cancel</Button>
+              <Button size="sm" disabled={overrideLoading} onClick={handleOverrideGroupsFromGlobal}>
+                {overrideLoading ? "Copying..." : "Confirm Override"}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -532,13 +841,22 @@ function AlertSearchDropdown({ selected, onAdd, onRemove, alertDefinitions }: { 
 function DriverConfigSection() {
   const { costCenters, selectedCostCenterIds } = useCostCenters();
   const [alertDefinitions, setAlertDefinitions] = useState<AlertDefinition[]>([]);
+  const [configGroups, setConfigGroups] = useState<any[]>([]);
 
   useEffect(() => {
     fetch(`${ALERT_CONFIG_API}/definitions`, { cache: "no-store" })
       .then(r => r.json())
       .then(d => setAlertDefinitions(d?.data || []))
       .catch(() => {});
+    fetch(`${DRIVER_CONFIG_API}/config-groups`, { cache: "no-store" })
+      .then(r => r.json())
+      .then(d => setConfigGroups(d?.data || []))
+      .catch(() => {});
   }, []);
+
+  const getGroupForCC = (ccId: number) => {
+    return configGroups.find(g => (g.members || []).includes(ccId));
+  };
 
   if (selectedCostCenterIds.length === 0) {
     return (
@@ -547,7 +865,7 @@ function DriverConfigSection() {
           <h2 className="text-lg font-semibold">Driver Monitoring Config</h2>
           <p className="text-sm text-gray-500">Global Defaults — baseline criteria inherited by all cost centers</p>
         </div>
-        <CostCenterTable costCenterId={null} costCenterName="Global Defaults" alertDefinitions={alertDefinitions} />
+        <CostCenterTable costCenterId={null} costCenterName="Global Defaults" alertDefinitions={alertDefinitions} configGroups={configGroups} />
       </div>
     );
   }
@@ -565,12 +883,15 @@ function DriverConfigSection() {
       </div>
       {selectedCostCenterIds.map(ccId => {
         const cc = costCenters.find(c => c.id === ccId);
+        const group = getGroupForCC(ccId);
         return (
           <CostCenterTable
             key={ccId}
             costCenterId={ccId}
             costCenterName={cc?.name || `Cost Center #${ccId}`}
             alertDefinitions={alertDefinitions}
+            configGroups={configGroups}
+            groupName={group?.name}
           />
         );
       })}
@@ -578,12 +899,14 @@ function DriverConfigSection() {
   );
 }
 
-function CostCenterTable({ costCenterId, costCenterName, alertDefinitions }: { costCenterId: number | null; costCenterName: string; alertDefinitions: AlertDefinition[] }) {
+function CostCenterTable({ costCenterId, costCenterName, alertDefinitions, configGroups = [], groupName }: { costCenterId: number | null; costCenterName: string; alertDefinitions: AlertDefinition[]; configGroups?: any[]; groupName?: string }) {
   const [criteria, setCriteria] = useState<DriverConfigCriterion[]>([]);
   const [loading, setLoading] = useState(true);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editForm, setEditForm] = useState<Partial<DriverConfigCriterion>>({});
   const [showAddForm, setShowAddForm] = useState(false);
+  const [showOverrideConfirm, setShowOverrideConfirm] = useState(false);
+  const [overrideLoading, setOverrideLoading] = useState(false);
   const [addForm, setAddForm] = useState({
     name: "",
     deduction_per_alert: 10,
@@ -594,12 +917,15 @@ function CostCenterTable({ costCenterId, costCenterName, alertDefinitions }: { c
 
   const fetchCriteria = useCallback(async () => {
     try {
-      const url = costCenterId === null
-        ? `${DRIVER_CONFIG_API}/criteria/global`
-        : `${DRIVER_CONFIG_API}/criteria/for-cc/${costCenterId}`;
-      const res = await fetch(url, { cache: "no-store" });
-      const data = await res.json();
-      setCriteria(data?.data || []);
+      if (costCenterId === null) {
+        const res = await fetch(`${DRIVER_CONFIG_API}/criteria/global`, { cache: "no-store" });
+        const data = await res.json();
+        setCriteria(data?.data || []);
+      } else {
+        const res = await fetch(`${DRIVER_CONFIG_API}/criteria/for-cc/${costCenterId}`, { cache: "no-store" });
+        const data = await res.json();
+        setCriteria(data?.data || []);
+      }
     } catch {
       setCriteria([]);
     }
@@ -612,18 +938,52 @@ function CostCenterTable({ costCenterId, costCenterName, alertDefinitions }: { c
 
   const handleSaveEdit = async () => {
     if (!editingId) return;
+    const editingCriterion = criteria.find(c => c.id === editingId);
+    const isGlobalBeingEditedInCCContext = costCenterId !== null && editingCriterion?.cost_center_id === null && editingCriterion?.config_group_id == null;
     try {
-      await fetch(`${DRIVER_CONFIG_API}/criteria/${editingId}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(editForm),
-      });
-      toast.success("Criterion updated");
+      if (isGlobalBeingEditedInCCContext) {
+        // Check if a CC override already exists for this name
+        const existingOverride = criteria.find(c => c.name === editingCriterion?.name && c.cost_center_id === costCenterId && c.config_group_id == null);
+        const payload = {
+          name: editForm.name || editingCriterion?.name,
+          deduction_per_alert: editForm.deduction_per_alert ?? editingCriterion?.deduction_per_alert ?? editingCriterion?.selected_weighting ?? 10,
+          deduction_with_ncr: editForm.deduction_with_ncr ?? editingCriterion?.deduction_with_ncr ?? 0,
+          ncr_threshold: editForm.ncr_threshold ?? editingCriterion?.ncr_threshold ?? 3,
+          statuses: editForm.statuses || editingCriterion?.statuses || [],
+          cost_center_id: costCenterId,
+        };
+        if (existingOverride) {
+          // Update existing override
+          await fetch(`${DRIVER_CONFIG_API}/criteria/${existingOverride.id}`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
+          toast.success("Override updated");
+        } else {
+          // Create new override
+          const res = await fetch(`${DRIVER_CONFIG_API}/criteria`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
+          const body = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(body?.message || "Failed to create override");
+          toast.success("Override created for this cost center");
+        }
+      } else {
+        await fetch(`${DRIVER_CONFIG_API}/criteria/${editingId}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(editForm),
+        });
+        toast.success("Criterion updated");
+      }
       setEditingId(null);
       setEditForm({});
       fetchCriteria();
-    } catch {
-      toast.error("Failed to update");
+    } catch (e: any) {
+      toast.error(e?.message || "Failed to update");
     }
   };
 
@@ -650,14 +1010,41 @@ function CostCenterTable({ costCenterId, costCenterName, alertDefinitions }: { c
     }
   };
 
-  const handleDelete = async (id: number) => {
+  const handleDelete = async (criterion: DriverConfigCriterion) => {
+    if (costCenterId !== null && criterion.config_group_id != null) {
+      toast.error("Can't delete a group criterion from here. Edit the Config Group instead.");
+      return;
+    }
+    if (costCenterId !== null && criterion.cost_center_id === null && criterion.config_group_id == null) {
+      toast.error("Can't delete a global default from here. Go to Global Defaults to remove it.");
+      return;
+    }
     if (!confirm("Delete this criterion?")) return;
     try {
-      await fetch(`${DRIVER_CONFIG_API}/criteria/${id}`, { method: "DELETE" });
+      await fetch(`${DRIVER_CONFIG_API}/criteria/${criterion.id}`, { method: "DELETE" });
       toast.success("Deleted");
       fetchCriteria();
     } catch {
       toast.error("Failed to delete");
+    }
+  };
+
+  const handleOverrideFromGlobal = async () => {
+    if (!costCenterId) return;
+    setOverrideLoading(true);
+    try {
+      const res = await fetch(`${DRIVER_CONFIG_API}/criteria/reset-to-global/${costCenterId}`, {
+        method: "POST",
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body?.message || "Failed to reset");
+      toast.success(`Override created: ${body.data?.created || 0} criteria copied from global defaults`);
+      setShowOverrideConfirm(false);
+      fetchCriteria();
+    } catch (e: any) {
+      toast.error(e?.message || "Failed to reset");
+    } finally {
+      setOverrideLoading(false);
     }
   };
 
@@ -670,11 +1057,26 @@ function CostCenterTable({ costCenterId, costCenterName, alertDefinitions }: { c
           ) : (
             <Badge>{costCenterName}</Badge>
           )}
-          <span className="text-gray-400 font-normal">({criteria.length} criteria)</span>
+          {groupName && (
+            <Badge variant="secondary" className="text-xs">
+              <Settings className="w-3 h-3 mr-1" />
+              {groupName}
+            </Badge>
+          )}
+          <span className="text-gray-400 font-normal">
+            ({criteria.length} criteria{costCenterId !== null ? ` — ${criteria.filter(c => c.config_group_id != null).length} from group, ${criteria.filter(c => c.cost_center_id === costCenterId).length} customized, ${criteria.filter(c => c.cost_center_id === null && c.config_group_id == null).length} inherited` : ""})
+          </span>
         </CardTitle>
-        <Button size="sm" onClick={() => setShowAddForm(true)}>
-          <Plus className="w-4 h-4 mr-1" /> Add
-        </Button>
+        <div className="flex items-center gap-2">
+          {costCenterId !== null && (
+            <Button size="sm" variant="outline" onClick={() => setShowOverrideConfirm(true)}>
+              <Copy className="w-4 h-4 mr-1" /> Override from Global
+            </Button>
+          )}
+          <Button size="sm" onClick={() => setShowAddForm(true)}>
+            <Plus className="w-4 h-4 mr-1" /> Add
+          </Button>
+        </div>
       </CardHeader>
       <CardContent className="p-0">
         {showAddForm && (
@@ -734,7 +1136,23 @@ function CostCenterTable({ costCenterId, costCenterName, alertDefinitions }: { c
                   <td className="py-3 px-4 font-medium">
                     {editingId === c.id ? (
                       <Input value={editForm.name || ""} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} className="h-8" />
-                    ) : c.name}
+                    ) : (
+                      <div className="flex items-center gap-2">
+                        {c.name}
+                        {costCenterId !== null && c.config_group_id != null && (
+                          <Badge variant="secondary" className="text-[10px]">
+                            <Settings className="w-2.5 h-2.5 mr-0.5" />
+                            Group
+                          </Badge>
+                        )}
+                        {costCenterId !== null && c.cost_center_id === costCenterId && c.config_group_id == null && (
+                          <Badge variant="default" className="text-[10px]">Custom</Badge>
+                        )}
+                        {costCenterId !== null && c.cost_center_id === null && c.config_group_id == null && (
+                          <Badge variant="outline" className="text-[10px] text-gray-400 border-gray-200">Global</Badge>
+                        )}
+                      </div>
+                    )}
                   </td>
                   <td>
                     {editingId === c.id ? (
@@ -782,8 +1200,8 @@ function CostCenterTable({ costCenterId, costCenterName, alertDefinitions }: { c
                           <Button variant="ghost" size="sm" onClick={() => { setEditingId(c.id); setEditForm({ name: c.name, deduction_per_alert: c.deduction_per_alert ?? c.selected_weighting, deduction_with_ncr: c.deduction_with_ncr, ncr_threshold: c.ncr_threshold, statuses: c.statuses }); }}>
                             <Pencil className="w-3 h-3" />
                           </Button>
-                          <Button variant="ghost" size="sm" onClick={() => handleDelete(c.id)}>
-                            <Trash2 className="w-3 h-3 text-red-500" />
+                          <Button variant="ghost" size="sm" disabled={costCenterId !== null && (c.cost_center_id === null || c.config_group_id != null)} onClick={() => handleDelete(c)}>
+                            <Trash2 className={`w-3 h-3 ${costCenterId !== null && (c.cost_center_id === null || c.config_group_id != null) ? 'text-gray-300' : 'text-red-500'}`} />
                           </Button>
                         </>
                       )}
@@ -795,7 +1213,248 @@ function CostCenterTable({ costCenterId, costCenterName, alertDefinitions }: { c
           </table>
         )}
       </CardContent>
+
+      <Dialog open={showOverrideConfirm} onOpenChange={setShowOverrideConfirm}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Override from Global Defaults</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <p className="text-sm text-gray-600">
+              This will <strong>delete all existing custom criteria</strong> for <strong>{costCenterName}</strong> and replace them with copies from the global defaults table.
+            </p>
+            <p className="text-sm text-gray-500">
+              This action breaks the inheritance relationship — future changes to global defaults will NOT automatically apply to this cost center.
+            </p>
+            <div className="flex gap-2 justify-end">
+              <Button variant="outline" size="sm" onClick={() => setShowOverrideConfirm(false)}>Cancel</Button>
+              <Button size="sm" disabled={overrideLoading} onClick={handleOverrideFromGlobal}>
+                {overrideLoading ? "Resetting..." : "Confirm Override"}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </Card>
+  );
+}
+
+function ConfigGroupsSection() {
+  const { costCenters } = useCostCenters();
+  const [groups, setGroups] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showCreateForm, setShowCreateForm] = useState(false);
+  const [createForm, setCreateForm] = useState({ name: "", cost_center_ids: [] as number[] });
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editForm, setEditForm] = useState({ name: "", cost_center_ids: [] as number[] });
+
+  const fetchGroups = useCallback(async () => {
+    try {
+      const res = await fetch(`${DRIVER_CONFIG_API}/config-groups`, { cache: "no-store" });
+      const data = await res.json();
+      setGroups(data?.data || []);
+    } catch {
+      setGroups([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    setLoading(true);
+    fetchGroups().finally(() => setLoading(false));
+  }, [fetchGroups]);
+
+  const handleCreate = async () => {
+    if (!createForm.name.trim()) return toast.error("Name is required");
+    try {
+      const res = await fetch(`${DRIVER_CONFIG_API}/config-groups`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(createForm),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body?.message || "Failed to create");
+      toast.success("Group created");
+      setShowCreateForm(false);
+      setCreateForm({ name: "", cost_center_ids: [] });
+      fetchGroups();
+    } catch (e: any) {
+      toast.error(e?.message || "Failed to create");
+    }
+  };
+
+  const handleUpdate = async (id: number) => {
+    try {
+      const res = await fetch(`${DRIVER_CONFIG_API}/config-groups/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(editForm),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body?.message || "Failed to update");
+      toast.success("Group updated");
+      setEditingId(null);
+      fetchGroups();
+    } catch (e: any) {
+      toast.error(e?.message || "Failed to update");
+    }
+  };
+
+  const handleDelete = async (id: number) => {
+    if (!confirm("Delete this group? Criteria assigned to it will become global.")) return;
+    try {
+      await fetch(`${DRIVER_CONFIG_API}/config-groups/${id}`, { method: "DELETE" });
+      toast.success("Deleted");
+      fetchGroups();
+    } catch {
+      toast.error("Failed to delete");
+    }
+  };
+
+  const toggleCc = (ccId: number, target: "create" | "edit") => {
+    if (target === "create") {
+      setCreateForm(prev => ({
+        ...prev,
+        cost_center_ids: prev.cost_center_ids.includes(ccId)
+          ? prev.cost_center_ids.filter(id => id !== ccId)
+          : [...prev.cost_center_ids, ccId],
+      }));
+    } else {
+      setEditForm(prev => ({
+        ...prev,
+        cost_center_ids: prev.cost_center_ids.includes(ccId)
+          ? prev.cost_center_ids.filter(id => id !== ccId)
+          : [...prev.cost_center_ids, ccId],
+      }));
+    }
+  };
+
+  if (loading) return <div className="text-sm text-gray-500 py-4">Loading...</div>;
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="text-lg font-semibold">Config Groups</h3>
+          <p className="text-sm text-gray-500">Groups of cost centers that share the same driver config criteria</p>
+        </div>
+        <Button size="sm" onClick={() => setShowCreateForm(true)}>
+          <Plus className="w-4 h-4 mr-1" /> New Group
+        </Button>
+      </div>
+
+      {showCreateForm && (
+        <Card>
+          <CardHeader className="py-3">
+            <CardTitle className="text-sm font-semibold">Create Config Group</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <Input
+              placeholder="Group name (e.g. Fleet A)"
+              value={createForm.name}
+              onChange={e => setCreateForm({ ...createForm, name: e.target.value })}
+            />
+            <div>
+              <p className="text-xs text-gray-500 mb-2">Cost Centers in this group:</p>
+              <div className="flex flex-wrap gap-2">
+                {costCenters.map(cc => (
+                  <Badge
+                    key={cc.id}
+                    variant={createForm.cost_center_ids.includes(cc.id) ? "default" : "outline"}
+                    className="cursor-pointer"
+                    onClick={() => toggleCc(cc.id, "create")}
+                  >
+                    {cc.name}
+                  </Badge>
+                ))}
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <Button size="sm" onClick={handleCreate}>Create</Button>
+              <Button size="sm" variant="outline" onClick={() => setShowCreateForm(false)}>Cancel</Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {groups.length === 0 ? (
+        <p className="text-sm text-gray-500">No config groups yet. Create one to share config across cost centers.</p>
+      ) : (
+        groups.map(group => (
+          <Card key={group.id}>
+            <CardHeader className="flex flex-row items-center justify-between py-3">
+              <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                <Badge variant="outline">Group</Badge>
+                {editingId === group.id ? (
+                  <Input
+                    value={editForm.name}
+                    onChange={e => setEditForm({ ...editForm, name: e.target.value })}
+                    className="h-7 w-48"
+                  />
+                ) : (
+                  group.name
+                )}
+                <span className="text-gray-400 font-normal">
+                  ({group.member_count} cost center{group.member_count !== 1 ? "s" : ""})
+                </span>
+              </CardTitle>
+              <div className="flex items-center gap-1">
+                {editingId === group.id ? (
+                  <>
+                    <Button variant="ghost" size="sm" onClick={() => handleUpdate(group.id)}>
+                      <Save className="w-3 h-3 text-green-500" />
+                    </Button>
+                    <Button variant="ghost" size="sm" onClick={() => setEditingId(null)}>
+                      <X className="w-3 h-3 text-gray-400" />
+                    </Button>
+                  </>
+                ) : (
+                  <>
+                    <Button variant="ghost" size="sm" onClick={() => {
+                      setEditingId(group.id);
+                      setEditForm({ name: group.name, cost_center_ids: group.members || [] });
+                    }}>
+                      <Pencil className="w-3 h-3 text-blue-500" />
+                    </Button>
+                    <Button variant="ghost" size="sm" onClick={() => handleDelete(group.id)}>
+                      <Trash2 className="w-3 h-3 text-red-500" />
+                    </Button>
+                  </>
+                )}
+              </div>
+            </CardHeader>
+            <CardContent>
+              {editingId === group.id ? (
+                <div className="space-y-2">
+                  <p className="text-xs text-gray-500">Cost Centers in this group:</p>
+                  <div className="flex flex-wrap gap-2">
+                    {costCenters.map(cc => (
+                      <Badge
+                        key={cc.id}
+                        variant={editForm.cost_center_ids.includes(cc.id) ? "default" : "outline"}
+                        className="cursor-pointer"
+                        onClick={() => toggleCc(cc.id, "edit")}
+                      >
+                        {cc.name}
+                      </Badge>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="flex flex-wrap gap-1">
+                  {(group.members || []).map((ccId: number) => {
+                    const cc = costCenters.find(c => c.id === ccId);
+                    return <Badge key={ccId} variant="secondary">{cc?.name || `#${ccId}`}</Badge>;
+                  })}
+                  {(!group.members || group.members.length === 0) && (
+                    <span className="text-xs text-gray-400">No cost centers assigned</span>
+                  )}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        ))
+      )}
+    </div>
   );
 }
 
