@@ -241,7 +241,8 @@ function AlertConfigSection() {
         await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(defForm) });
         toast.success(editingDef ? "Alert type updated" : "Alert type created");
       } else {
-        // Apply to all selected CCs
+        // Apply to all selected CCs — strip signal_code (global-only Geotab mapping)
+        const ccPayload = { ...defForm, signal_code: "", cost_center_id: undefined };
         let created = 0;
         let updated = 0;
         for (const ccId of selectedCostCenterIds) {
@@ -249,16 +250,17 @@ function AlertConfigSection() {
           if (editingDef && existingOverride) {
             await fetch(`${ALERT_CONFIG_API}/definitions/${existingOverride.id}`, {
               method: "PUT", headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ ...defForm, cost_center_id: ccId }),
+              body: JSON.stringify({ ...ccPayload, cost_center_id: ccId }),
             });
             updated++;
           } else {
             await fetch(`${ALERT_CONFIG_API}/definitions`, {
               method: "POST", headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ ...defForm, cost_center_id: ccId }),
+              body: JSON.stringify({ ...ccPayload, cost_center_id: ccId }),
             });
             created++;
           }
+        }
         }
         toast.success(`Saved to ${selectedCostCenterIds.length} cost center(s): ${created} created, ${updated} updated`);
       }
@@ -381,7 +383,7 @@ function AlertConfigSection() {
           if (!existing) {
             await fetch(`${ALERT_CONFIG_API}/definitions`, {
               method: "POST", headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ ...def, cost_center_id: ccId, id: undefined }),
+              body: JSON.stringify({ ...def, signal_code: "", cost_center_id: ccId, id: undefined }),
             });
             total++;
           }
