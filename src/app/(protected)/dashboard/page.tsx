@@ -1183,8 +1183,14 @@ function RoutingSection({ userRole, handleViewMap, setCurrentTripForNote, setNot
       type === "alert-media-updated"
     ) {
       if (payloadAlert) {
-        const normalized = await buildDashboardAlert(payloadAlert);
-        setGroupedAlerts((prev) => dedupeAndSortAlerts([normalized, ...prev]));
+        const isResolved = String(payloadAlert?.status || "").toLowerCase() === "resolved" || payloadAlert?.resolved === true;
+        if (isResolved) {
+          const resolvedId = String(payloadAlert?.id || payloadAlert?.alert_id || "").trim();
+          setGroupedAlerts((prev) => dedupeAndSortAlerts(prev.filter((a: any) => String(a?.id || a?.alert_id || "") !== resolvedId)));
+        } else {
+          const normalized = await buildDashboardAlert(payloadAlert);
+          setGroupedAlerts((prev) => dedupeAndSortAlerts([normalized, ...prev]));
+        }
         return;
       }
       await fetchGroupedAlerts();
@@ -2368,6 +2374,21 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
   }, []);
 
   useEffect(() => {
+    if (!alertDetailModalOpen) return;
+    let active = true;
+    (async () => {
+      try {
+        const res = await fetch('/api/drivers', { cache: 'no-store' });
+        const json = await res.json();
+        if (active && json.success && Array.isArray(json.drivers)) {
+          setAvailableDrivers(json.drivers);
+        }
+      } catch {}
+    })();
+    return () => { active = false; };
+  }, [alertDetailModalOpen]);
+
+  useEffect(() => {
     let active = true;
     const loadCostCenters = async () => {
       try {
@@ -2868,7 +2889,26 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
               closureType,
               notes,
               userId: actor,
+              reported_by: actor,
               documents,
+              incident: {
+                controller: actor,
+                driver_name:
+                  String(
+                    activeAlert?.driver_name ||
+                      activeAlert?.driverName ||
+                      activeAlert?.metadata?.driver_name ||
+                      ""
+                  ).trim() || null,
+                fleet_number:
+                  String(
+                    activeAlert?.fleet_number ||
+                      activeAlert?.fleetNumber ||
+                      activeAlert?.vehicle_registration ||
+                      activeAlert?.vehicleRegistration ||
+                      ""
+                  ).trim() || null,
+              },
             }
           );
         }
@@ -2887,6 +2927,7 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
             alerts: remainingAlerts,
           };
         });
+        setGroupedAlerts((prev) => dedupeAndSortAlerts(prev.filter((a: any) => String(a?.id || a?.alert_id || "") !== closingAlertId)));
         if (typeof window !== "undefined") {
           window.dispatchEvent(
             new CustomEvent("video-alert-closed", {
@@ -6196,6 +6237,13 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
         onResolve={async () => {
           setShowResolveModal(true);
         }}
+        onResolveActive={async () => {
+          if (!selectedAlert) return;
+          const alertId = String(selectedAlert?.id || "").trim();
+          if (!alertId) return;
+          if (!confirm(`Resolve this ${selectedAlert?.alert_type || 'alert'}?`)) return;
+          await closeSelectedAlert("resolved");
+        }}
         onFollowUp={async (originalSeverity: string) => {
           const alertId = String(selectedAlert?.id || "").trim();
           if (!alertId) return;
@@ -6233,6 +6281,12 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
         }}
         onRefreshTrigger={() => setRefreshTrigger((prev) => prev + 1)}
         triggerRealtimeLoad={() => setAlertRealtimeLoading(true)}
+        drivers={availableDrivers}
+        onDriverAssign={(driverId, driverName, fleetNum) => {
+          if (selectedAlert) {
+            setSelectedAlert((prev: any) => prev ? { ...prev, driver_name: driverName, fleet_number: fleetNum || prev.fleet_number } : prev);
+          }
+        }}
       />
       )}
 
@@ -6309,11 +6363,19 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
             setSelectedReportForm('');
             setAlertNotesDraft("");
             setPendingDocuments([]);
+            setGroupedAlerts([]);
             setRefreshTrigger((prev) => prev + 1);
           }}
           deviceId={String(selectedAlert?.device_id || selectedAlert?.deviceId || selectedAlert?.vehicleId || "").trim()}
           fleetNumber={String(selectedAlert?.fleet_number || selectedAlert?.fleetNumber || "").trim()}
           registration={String(selectedAlert?.vehicle_registration || selectedAlert?.plate || selectedAlert?.registration || "").trim()}
+          currentAlertId={String(selectedAlert?.id || "").trim()}
+          drivers={availableDrivers}
+          onDriverAssign={(driverId, driverName, fleetNum) => {
+            if (selectedAlert && fleetNum) {
+              setSelectedAlert((prev: any) => prev ? { ...prev, driver_name: driverName, fleet_number: fleetNum } : prev);
+            }
+          }}
         />
       )}
       {showReportModal && selectedAlert && selectedReportForm === 'incident-report' && (

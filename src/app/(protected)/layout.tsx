@@ -28,6 +28,7 @@ import {
   Fuel,
   Video,
   AlertTriangle,
+  FileText,
 } from "lucide-react";
 import GlobalProvider from "@/context/global-context/provider";
 import { PAGES, Permission, hasPermission } from "@/lib/permissions/permissions";
@@ -260,6 +261,7 @@ export default function ProtectedLayout({ children }: ProtectedLayoutProps) {
         costCenters: { name: "Cost Centers", href: "/ccenter", Icon: <DollarSign /> },
         financials: { name: "Financials", href: "/audit", Icon: <Settings2Icon /> },
         inspections: { name: "Inspections", href: "/fleetManager/inspections", Icon: <QrCode /> },
+        reports: { name: "Reports", href: "/reports", Icon: <FileText /> },
         userManagement: { name: "User Management", href: "/userManagement", Icon: <PlusSquare /> },
         systemSettings: { name: "System Settings", href: "/settings", Icon: <Settings /> }
       };

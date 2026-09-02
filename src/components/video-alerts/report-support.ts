@@ -314,6 +314,8 @@ export async function saveAlertArtifactBundle({
   alertDetails,
   priority = 'High',
   extraPayload,
+  contentType = 'application/msword',
+  fileExtension = '.doc',
 }: {
   supabase: any
   storageBucket?: string
@@ -324,23 +326,30 @@ export async function saveAlertArtifactBundle({
   alertDetails?: ReportAlertDetails
   priority?: string
   extraPayload?: Record<string, any>
+  contentType?: string
+  fileExtension?: string
 }): Promise<SavedAlertArtifact> {
   const originalFileName = sanitizePathSegment(fileName.replace(/\\/g, '/').split('/').pop() || fileName)
-  const baseName = originalFileName.replace(/\.pdf$/i, '')
+  const baseName = originalFileName.replace(/\.(pdf|doc|docx)$/i, '')
   const safeBaseName = sanitizePathSegment(baseName)
   const alertFolder = sanitizePathSegment(alertDetails?.id || driverInfo.fleetNumber || 'unlinked-alert')
   const typeFolder = sanitizePathSegment(String(reportType || 'report').toLowerCase())
   const timestampFolder = new Date().toISOString().replace(/[:.]/g, '-')
   const storagePrefix = `video-alerts/${alertFolder}/${typeFolder}/${timestampFolder}`
-  const storageFileName = `${storagePrefix}/${safeBaseName}.pdf`
+  const storageFileName = `${storagePrefix}/${safeBaseName}${fileExtension}`
 
-  const { error: uploadError } = await supabase.storage
-    .from(storageBucket)
-    .upload(storageFileName, pdfBlob, { contentType: 'application/pdf', upsert: true })
-  if (uploadError) throw uploadError
+  const uploadFile = async (): Promise<string> => {
+    const { error } = await supabase.storage
+      .from(storageBucket)
+      .upload(storageFileName, pdfBlob, { contentType, upsert: true })
+    if (error) throw error
+    return (supabase.storage.from(storageBucket).getPublicUrl(storageFileName)?.data?.publicUrl) || ''
+  }
 
-  const { data: publicData } = supabase.storage.from(storageBucket).getPublicUrl(storageFileName)
-  const documentUrl = publicData?.publicUrl || ''
+  const documentUrl = await Promise.race([
+    uploadFile(),
+    new Promise<string>((resolve) => setTimeout(() => resolve(''), 10000)),
+  ]).catch(() => '')
 
   const closurePayload: Record<string, any> = buildAlertEvidencePayload(driverInfo, alertDetails, {
     reportType,
@@ -394,177 +403,186 @@ export function formatReportDateTime(timestamp?: string): string {
   return date.toLocaleString('en-GB')
 }
 
-function sanitizeOklchStyles(doc: Document) {
-  const fallbackMap: Record<string, string> = {
-    color: '#000000',
-    backgroundColor: '#ffffff',
-    borderColor: '#000000',
-    outlineColor: '#000000',
-    textDecorationColor: '#000000',
-    columnRuleColor: '#000000',
-  }
+function yieldToMain(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0))
+}
 
-  doc.querySelectorAll('style').forEach((styleEl) => {
-    const cssText = styleEl.textContent || ''
-    if (cssText.includes('oklch(')) {
-      styleEl.textContent = cssText.replace(/oklch\([^)]+\)/g, '#000000')
-    }
+function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result || ''))
+    reader.onerror = () => reject(reader.error || new Error('read failed'))
+    reader.readAsDataURL(blob)
   })
+}
 
-  doc.querySelectorAll<HTMLElement>('*').forEach((el) => {
-    const computed = window.getComputedStyle(el)
-    for (const [prop, fallback] of Object.entries(fallbackMap)) {
-      const value = computed[prop as keyof CSSStyleDeclaration]
-      if (typeof value === 'string' && value.includes('oklch(')) {
-        ;(el.style as any)[prop] = fallback
+const TRANSPARENT_GIF = 'data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs='
+
+// Same-origin proxy to fetch cross-origin images as data URLs.
+function toSameOriginProxy(url: string): string {
+  if (!/^https?:\/\//i.test(url)) return url
+  const base = typeof window !== 'undefined' ? window.location.origin : ''
+  return `${base}/api/video-server/playback/image-proxy?url=${encodeURIComponent(url)}`
+}
+
+// Replace every <img> in the element with a data URL fetched through the
+// same-origin proxy. Cross-origin images (e.g. Skycam) need proxying for
+// any canvas-based or fetch-based rendering. Returns the list
+// of (img, originalSrc) pairs so the DOM can be restored afterwards.
+async function hydrateImagesToDataUrls(
+  element: HTMLElement
+): Promise<Array<{ img: HTMLImageElement; original: string }>> {
+  const images = Array.from(element.querySelectorAll<HTMLImageElement>('img'))
+  const tracked: Array<{ img: HTMLImageElement; original: string }> = []
+  let cursor = 0
+  const worker = async () => {
+    while (cursor < images.length) {
+      const img = images[cursor++]
+      const original = img.src || ''
+      tracked.push({ img, original })
+      if (!original || /^data:/i.test(original)) continue
+      try {
+        const res = await fetch(toSameOriginProxy(original), { signal: AbortSignal.timeout(8000) })
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        img.src = await blobToDataUrl(await res.blob())
+      } catch {
+        // Keep generation moving: blank the failed image instead of stalling.
+        img.src = TRANSPARENT_GIF
+        img.style.width = '1px'
+        img.style.height = '1px'
       }
     }
-    if (typeof computed.boxShadow === 'string' && computed.boxShadow.includes('oklch(')) {
-      el.style.boxShadow = 'none'
-    }
-    if (typeof computed.textShadow === 'string' && computed.textShadow.includes('oklch(')) {
-      el.style.textShadow = 'none'
-    }
-  })
-}
-
-function injectDocumentStyles(srcDoc: Document, targetDoc: Document) {
-  const styleCache = new Set<string>()
-  srcDoc.querySelectorAll<HTMLLinkElement>('link[rel="stylesheet"]').forEach((link) => {
-    const href = link.getAttribute('href')
-    if (!href || styleCache.has(href)) return
-    styleCache.add(href)
-    const clone = targetDoc.createElement('link')
-    clone.setAttribute('rel', 'stylesheet')
-    clone.setAttribute('href', href)
-    targetDoc.head.appendChild(clone)
-  })
-  srcDoc.querySelectorAll<HTMLStyleElement>('style').forEach((style) => {
-    const text = style.textContent || ''
-    if (styleCache.has(text)) return
-    styleCache.add(text)
-    const clone = targetDoc.createElement('style')
-    clone.textContent = text
-    targetDoc.head.appendChild(clone)
-  })
-}
-
-function inlineElementStyles(element: HTMLElement) {
-  element.querySelectorAll<HTMLElement>('*').forEach((el) => {
-    const s = window.getComputedStyle(el)
-    const cs = el.style
-    cs.borderTopWidth = s.borderTopWidth
-    cs.borderRightWidth = s.borderRightWidth
-    cs.borderBottomWidth = s.borderBottomWidth
-    cs.borderLeftWidth = s.borderLeftWidth
-    cs.borderTopStyle = s.borderTopStyle
-    cs.borderRightStyle = s.borderRightStyle
-    cs.borderBottomStyle = s.borderBottomStyle
-    cs.borderLeftStyle = s.borderLeftStyle
-    cs.borderTopColor = s.borderTopColor
-    cs.borderRightColor = s.borderRightColor
-    cs.borderBottomColor = s.borderBottomColor
-    cs.borderLeftColor = s.borderLeftColor
-    cs.backgroundColor = s.backgroundColor
-    cs.color = s.color
-    cs.fontSize = s.fontSize
-    cs.fontWeight = s.fontWeight
-    cs.fontFamily = s.fontFamily
-    cs.textAlign = s.textAlign
-    cs.paddingTop = s.paddingTop
-    cs.paddingRight = s.paddingRight
-    cs.paddingBottom = s.paddingBottom
-    cs.paddingLeft = s.paddingLeft
-    cs.marginTop = s.marginTop
-    cs.marginRight = s.marginRight
-    cs.marginBottom = s.marginBottom
-    cs.marginLeft = s.marginLeft
-    cs.display = s.display
-    cs.gridColumn = s.gridColumn
-    cs.gridRow = s.gridRow
-    cs.width = s.width
-    cs.height = s.height
-    cs.minHeight = s.minHeight
-    cs.flex = s.flex
-    cs.alignItems = s.alignItems
-    cs.justifyContent = s.justifyContent
-    cs.gap = s.gap
-    cs.lineHeight = s.lineHeight
-    cs.letterSpacing = s.letterSpacing
-    cs.textTransform = s.textTransform
-    cs.whiteSpace = s.whiteSpace
-    cs.overflow = s.overflow
-    cs.overflowX = s.overflowX
-    cs.overflowY = s.overflowY
-    cs.borderRadius = s.borderRadius
-    cs.boxShadow = 'none'
-    cs.textShadow = 'none'
-    if (cs.position === 'fixed' || cs.position === 'sticky') {
-      cs.position = 'static'
-    }
-  })
-}
-
-export function getSafeHtml2CanvasOptions(element: HTMLElement) {
-  return {
-    scale: 1,
-    useCORS: true,
-    allowTaint: true,
-    logging: false,
-    backgroundColor: '#ffffff',
-    width: element.scrollWidth,
-    height: element.scrollHeight,
-    windowWidth: element.scrollWidth,
-    windowHeight: element.scrollHeight,
-    onclone: async (clonedDoc: Document, clonedElement: HTMLElement) => {
-      injectDocumentStyles(document, clonedDoc)
-      inlineElementStyles(clonedElement)
-      sanitizeOklchStyles(clonedDoc)
-      // Convert textarea/input to visible text so html2canvas captures values
-      clonedElement.querySelectorAll<HTMLTextAreaElement>('textarea').forEach((ta) => {
-        const div = clonedDoc.createElement('div')
-        div.textContent = ta.value || ta.defaultValue || ''
-        div.style.cssText = ta.style.cssText || ''
-        const cs = window.getComputedStyle(ta)
-        div.style.width = cs.width
-        div.style.minHeight = cs.minHeight || '60px'
-        div.style.padding = cs.padding
-        div.style.fontSize = cs.fontSize
-        div.style.fontFamily = cs.fontFamily
-        div.style.lineHeight = cs.lineHeight
-        div.style.whiteSpace = 'pre-wrap'
-        div.style.wordBreak = 'break-word'
-        div.style.border = cs.border
-        div.style.borderRadius = cs.borderRadius
-        div.style.backgroundColor = cs.backgroundColor
-        div.style.color = cs.color
-        ta.parentElement?.replaceChild(div, ta)
-      })
-      clonedElement.querySelectorAll<HTMLInputElement>('input[type="text"]').forEach((inp) => {
-        const div = clonedDoc.createElement('div')
-        div.textContent = inp.value || inp.defaultValue || ''
-        const cs = window.getComputedStyle(inp)
-        div.style.width = cs.width
-        div.style.padding = cs.padding
-        div.style.fontSize = cs.fontSize
-        div.style.fontFamily = cs.fontFamily
-        div.style.lineHeight = cs.lineHeight
-        div.style.border = cs.border
-        div.style.borderRadius = cs.borderRadius
-        div.style.backgroundColor = cs.backgroundColor
-        div.style.color = cs.color
-        inp.parentElement?.replaceChild(div, inp)
-      })
-    },
   }
+  await Promise.all(Array.from({ length: Math.min(6, images.length) }, () => worker()))
+  return tracked
 }
 
-export async function renderElementToPdfBlob(element: HTMLElement): Promise<Blob> {
-  const html2canvas = (await import('html2canvas')).default
-  const jsPDF = (await import('jspdf')).default
+const TAILWIND_SPACING: Record<string, string> = {
+  'p-1': '4px', 'p-2': '8px', 'p-3': '12px', 'p-4': '16px', 'p-5': '20px', 'p-6': '24px',
+  'px-1': '4px', 'px-2': '8px', 'px-3': '12px', 'px-4': '16px',
+  'py-1': '4px', 'py-2': '8px', 'py-3': '12px', 'py-4': '16px',
+  'm-1': '4px', 'm-2': '8px', 'm-3': '12px', 'm-4': '16px',
+  'mt-1': '4px', 'mt-2': '8px', 'mt-3': '12px', 'mt-4': '16px',
+  'mb-1': '4px', 'mb-2': '8px', 'mb-3': '12px', 'mb-4': '16px',
+  'ml-1': '4px', 'ml-2': '8px', 'ml-3': '12px',
+  'mr-1': '4px', 'mr-2': '8px', 'mr-3': '12px',
+  'gap-1': '4px', 'gap-2': '8px', 'gap-3': '12px', 'gap-4': '16px',
+}
 
-  // Temporarily replace form elements with text divs for proper rendering
-  const replacements: Array<{ el: HTMLElement; parent: Node; next: Node | null; html: string }> = []
+function prepareForWord(root: HTMLElement): HTMLElement {
+  const clone = root.cloneNode(true) as HTMLElement
+
+  // Convert grid → table (bottom-up so nested grids are handled first)
+  const gridEls = clone.querySelectorAll('[class*="grid-cols"]')
+  gridEls.forEach((el) => {
+    const classes = el.getAttribute('class') || ''
+    const colsMatch = classes.match(/grid-cols-(\d+)/)
+    if (!colsMatch) return
+    const totalCols = parseInt(colsMatch[1])
+
+    const table = document.createElement('table')
+    table.setAttribute('cellpadding', '0')
+    table.setAttribute('cellspacing', '0')
+    table.style.cssText = 'width:100%;border-collapse:collapse;border:1px solid black;'
+
+    const tr = document.createElement('tr')
+    const children = Array.from(el.children) as HTMLElement[]
+
+    children.forEach((child) => {
+      const childClasses = child.getAttribute('class') || ''
+      const spanMatch = childClasses.match(/col-span-(\d+)/)
+      const colspan = spanMatch ? parseInt(spanMatch[1]) : 1
+
+      const td = document.createElement('td')
+      td.setAttribute('colspan', String(colspan))
+      td.style.cssText = 'vertical-align:top;padding:0;'
+      td.innerHTML = child.innerHTML
+
+      // Copy relevant inline styles from child
+      const s = child.style
+      if (s.textAlign) td.style.textAlign = s.textAlign
+      if (s.fontWeight) td.style.fontWeight = s.fontWeight
+      if (s.fontSize) td.style.fontSize = s.fontSize
+      if (s.backgroundColor) td.style.backgroundColor = s.backgroundColor
+
+      // Inline border classes
+      if (childClasses.includes('border-r')) td.style.borderRight = '1px solid black'
+      if (childClasses.includes('border-b')) td.style.borderBottom = '1px solid black'
+      if (childClasses.includes('border-l')) td.style.borderLeft = '1px solid black'
+      if (childClasses.includes('border-t')) td.style.borderTop = '1px solid black'
+
+      // Inline padding
+      for (const [tw, css] of Object.entries(TAILWIND_SPACING)) {
+        if (childClasses.includes(tw)) {
+          const prop = tw.startsWith('p') ? 'padding' : tw.startsWith('m') ? 'margin' : 'gap'
+          if (tw.startsWith('px')) td.style.paddingLeft = td.style.paddingRight = css
+          else if (tw.startsWith('py')) td.style.paddingTop = td.style.paddingBottom = css
+          else if (tw.startsWith('pt')) td.style.paddingTop = css
+          else if (tw.startsWith('pb')) td.style.paddingBottom = css
+          else if (tw.startsWith('pl')) td.style.paddingLeft = css
+          else if (tw.startsWith('pr')) td.style.paddingRight = css
+          else td.style.padding = css
+        }
+      }
+
+      tr.appendChild(td)
+    })
+
+    table.appendChild(tr)
+    el.parentNode?.replaceChild(table, el)
+  })
+
+  // Convert flex → block
+  clone.querySelectorAll('[class*="flex"]').forEach((el) => {
+    const htmlEl = el as HTMLElement
+    const classes = htmlEl.getAttribute('class') || ''
+    htmlEl.style.display = 'block'
+    if (classes.includes('items-center')) htmlEl.style.textAlign = 'center'
+  })
+
+  // Inline text classes
+  clone.querySelectorAll('[class*="text-"]').forEach((el) => {
+    const classes = (el as HTMLElement).getAttribute('class') || ''
+    const htmlEl = el as HTMLElement
+    if (classes.includes('text-center')) htmlEl.style.textAlign = 'center'
+    if (classes.includes('text-right')) htmlEl.style.textAlign = 'right'
+    if (classes.includes('text-sm')) htmlEl.style.fontSize = '12px'
+    if (classes.includes('text-xs')) htmlEl.style.fontSize = '10px'
+    if (classes.includes('text-lg')) htmlEl.style.fontSize = '18px'
+    if (classes.includes('text-xl')) htmlEl.style.fontSize = '20px'
+    if (classes.includes('text-2xl')) htmlEl.style.fontSize = '24px'
+    if (classes.includes('text-3xl')) htmlEl.style.fontSize = '30px'
+    if (classes.includes('font-bold')) htmlEl.style.fontWeight = 'bold'
+  })
+
+  // Inline border classes on remaining elements
+  clone.querySelectorAll('[class*="border"]').forEach((el) => {
+    const classes = (el as HTMLElement).getAttribute('class') || ''
+    const htmlEl = el as HTMLElement
+    if (classes.includes('border-b-2')) htmlEl.style.borderBottom = '2px solid black'
+    else if (classes.includes('border-b')) htmlEl.style.borderBottom = htmlEl.style.borderBottom || '1px solid black'
+    if (classes.includes('border-r')) htmlEl.style.borderRight = htmlEl.style.borderRight || '1px solid black'
+    if (classes.includes('border-l')) htmlEl.style.borderLeft = htmlEl.style.borderLeft || '1px solid black'
+    if (classes.includes('border-t')) htmlEl.style.borderTop = htmlEl.style.borderTop || '1px solid black'
+    if (classes.includes('border-black')) {
+      if (!htmlEl.style.borderBottom) htmlEl.style.borderBottom = '1px solid black'
+      if (!htmlEl.style.borderRight) htmlEl.style.borderRight = '1px solid black'
+    }
+  })
+
+  // Remove hidden inputs/selects that may have been missed
+  clone.querySelectorAll('input, select, button').forEach((el) => el.remove())
+
+  return clone
+}
+
+export async function renderElementToDocBlob(element: HTMLElement): Promise<Blob> {
+  const t = (msg: string) => console.log(`[DOC] ${msg}`, performance.now().toFixed(0) + 'ms')
+  t('START')
+
+  await yieldToMain()
+
+  const replacements: Array<{ el: HTMLElement; parent: Node; next: Node | null }> = []
   const inputs = element.querySelectorAll('input, textarea, select')
   inputs.forEach((input) => {
     const parent = input.parentNode
@@ -577,72 +595,70 @@ export async function renderElementToPdfBlob(element: HTMLElement): Promise<Blob
     textDiv.textContent = displayText
     textDiv.style.cssText = 'border: 1px solid #999; padding: 6px 8px; background: white; min-height: 24px; font-size: 12px; line-height: 1.5; color: #000; word-wrap: break-word;'
     parent.insertBefore(textDiv, next)
-    replacements.push({ el: input as HTMLElement, parent, next, html: textDiv.outerHTML })
+    replacements.push({ el: input as HTMLElement, parent, next })
     parent.removeChild(input)
   })
+  t('replaced form elements with text')
 
+  let trackedImgs: Array<{ img: HTMLImageElement; original: string }> = []
   try {
-    // Save original styles
     const originalWidth = element.style.width
-    const originalMaxWidth = element.style.maxWidth
-    const originalMargin = element.style.margin
-    
-    // Set wider width to prevent overlapping
     element.style.width = '850px'
     element.style.maxWidth = '850px'
     element.style.margin = '0 auto'
     element.style.padding = '20px'
     element.style.boxSizing = 'border-box'
-    
-    const canvas = await html2canvas(element, {
-      ...getSafeHtml2CanvasOptions(element),
-      width: 850,
-      windowWidth: 850,
-      scale: 2,
-      useCORS: true,
-      allowTaint: true,
-      backgroundColor: '#ffffff',
-    })
-    
-    // Restore original styles
+
+    trackedImgs = await hydrateImagesToDataUrls(element)
+    t(`hydrated ${trackedImgs.length} images`)
+
+    const wordReady = prepareForWord(element)
+    t('prepared for Word (grid→table, flex→block, inlined styles)')
+
+    const stylesheets = Array.from(document.querySelectorAll('link[rel="stylesheet"]'))
+      .map((link) => `<link rel="stylesheet" href="${(link as HTMLLinkElement).href}">`)
+      .join('\n')
+
+    const inlineStyles = Array.from(document.querySelectorAll('style'))
+      .map((s) => `<style>${s.textContent || ''}</style>`)
+      .join('\n')
+
+    const htmlContent = `<!DOCTYPE html>
+<html xmlns:o="urn:schemas-microsoft-com:office:office"
+      xmlns:w="urn:schemas-microsoft-com:office:word"
+      xmlns="http://www.w3.org/TR/REC-html40">
+<head>
+<meta charset="utf-8">
+<title>NCR Report</title>
+${stylesheets}
+${inlineStyles}
+<style>
+  @page { size: A4 portrait; margin: 15mm; }
+  body { font-family: Arial, sans-serif; font-size: 10pt; }
+  table { border-collapse: collapse; width: 100%; }
+  td, th { border: 1px solid black; padding: 4px 6px; font-size: 10pt; }
+</style>
+</head>
+<body>
+${wordReady.innerHTML}
+</body>
+</html>`
+
     element.style.width = originalWidth
-    element.style.maxWidth = originalMaxWidth
-    element.style.margin = originalMargin
+    element.style.maxWidth = ''
+    element.style.margin = ''
 
-    const imgData = canvas.toDataURL('image/png')
-    const pdf = new jsPDF('p', 'mm', 'a4')
-    const pageWidth = pdf.internal.pageSize.getWidth()
-    const pageHeight = pdf.internal.pageSize.getHeight()
-    
-    // Margins
-    const marginTop = 15
-    const marginBottom = 15
-    const marginLeft = 15
-    const marginRight = 15
-    const contentWidth = pageWidth - marginLeft - marginRight
-    const contentHeight = pageHeight - marginTop - marginBottom
-    
-    const imgWidth = contentWidth
-    const imgHeight = (canvas.height * imgWidth) / canvas.width
-
-    let heightLeft = imgHeight
-    let position = marginTop
-
-    // First page
-    pdf.addImage(imgData, 'PNG', marginLeft, position, imgWidth, imgHeight)
-    heightLeft -= contentHeight
-
-    // Additional pages
-    while (heightLeft > 0) {
-      pdf.addPage()
-      position = -(imgHeight - heightLeft) - marginTop
-      pdf.addImage(imgData, 'PNG', marginLeft, position, imgWidth, imgHeight)
-      heightLeft -= contentHeight
-    }
-
-    return pdf.output('blob')
+    t(`html length: ${htmlContent.length}`)
+    const blob = new Blob([htmlContent], { type: 'application/msword' })
+    t(`done, blob size: ${blob.size}`)
+    return blob
   } finally {
-    // Restore original form elements
+    trackedImgs.forEach(({ img, original }) => {
+      img.src = original
+      img.style.width = ''
+      img.style.height = ''
+      img.style.visibility = ''
+    })
     replacements.forEach(({ el, parent, next }) => {
       if (next && parent.contains(next)) {
         parent.insertBefore(el, next)
@@ -651,6 +667,10 @@ export async function renderElementToPdfBlob(element: HTMLElement): Promise<Blob
       }
     })
   }
+}
+
+export async function renderElementToPdfBlob(element: HTMLElement): Promise<Blob> {
+  return renderElementToDocBlob(element)
 }
 
 export async function renderElementToWordBlob(element: HTMLElement): Promise<Blob> {

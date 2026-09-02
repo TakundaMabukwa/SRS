@@ -5,9 +5,11 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { ArrowLeft, AlertTriangle, Video, Download, XCircle, CheckCircle, X, FileText, MapPin, ExternalLink, Copy, Gauge, Navigation, Clock, Timer, ShieldAlert } from "lucide-react";
+import { ArrowLeft, AlertTriangle, Video, Download, XCircle, CheckCircle, X, FileText, MapPin, ExternalLink, Copy, Gauge, Navigation, Clock, Timer, ShieldAlert, ChevronDown, Shield } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toSAST } from "@/lib/utils/date-formatter";
+import { useCostCenters } from "@/context/cost-centers-context";
+import { DriverDropdown } from "@/components/ui/driver-dropdown";
 import { UniversalVideoPlayer } from "@/components/dashboard/universal-video-player";
 import { RealTimeMapInline } from "@/components/dashboard/real-time-map-inline";
 import { SafeImage } from "@/components/ui/safe-image";
@@ -46,6 +48,7 @@ interface AlertDetailModalProps {
   onClose: () => void;
   onFalseAlert: () => Promise<void>;
   onResolve: () => Promise<void>;
+  onResolveActive?: () => Promise<void>;
   onNcrFormSelect: (formType: string) => void;
   onReportFormSelect: (formType: string) => void;
   onOpenAlertDetail: (alert: any, trip: any, opts?: { silent?: boolean }) => void;
@@ -60,6 +63,8 @@ interface AlertDetailModalProps {
     fleetNumber: string;
     costCenterId: number | null;
   }>;
+  drivers?: Array<{ id: string; first_name: string; surname: string; fleet_number?: string | null; cell_number?: string | null; assigned_vehicle?: { registration_number?: string } | null }>;
+  onDriverAssign?: (driverId: string, driverName: string, fleetNumber?: string) => void;
 }
 
 const toFiniteNumber = (value: any): number | null => {
@@ -172,6 +177,7 @@ export function AlertDetailModal({
   onClose,
   onFalseAlert,
   onResolve,
+  onResolveActive,
   onNcrFormSelect,
   onReportFormSelect,
   onOpenAlertDetail,
@@ -180,7 +186,10 @@ export function AlertDetailModal({
   triggerRealtimeLoad,
   onFollowUp,
   driversByFleetNumber,
+  drivers = [],
+  onDriverAssign,
 }: AlertDetailModalProps) {
+  const { costCenterMap } = useCostCenters();
   const { coordinates: selectedAlertCoordinates, placeName: selectedAlertPlaceName, placeLoading: selectedAlertPlaceLoading } = useReverseGeocode(selectedAlert, isOpen);
 
   const cleanAlertLocationText = useCallback((value: unknown) => String(value || "").trim(), []);
@@ -288,7 +297,7 @@ export function AlertDetailModal({
   }, [getDashboardStructuredAlertMapping, selectedAlert]);
 
   const preservedVehicleRef = useRef("");
-  const [vehicleLookup, setVehicleLookup] = useState<Record<string, { fleetNumber: string; registration: string; driverName: string | null }>>({});
+  const [vehicleLookup, setVehicleLookup] = useState<Record<string, { fleetNumber: string; registration: string; driverName: string | null; costCenter: string; costCenterId: number | null }>>({});
   const [geotabDeviceId, setGeotabDeviceId] = useState<string | null>(null);
 
   const selectedAlertVehicleDisplay = useMemo(() => {
@@ -324,16 +333,27 @@ export function AlertDetailModal({
     const driverInfo = selectedAlert?.driverInfo || selectedAlert?.driver_info || selectedAlert?.metadata?.driver || {};
     const deviceId = String(selectedAlert?.device_id || selectedAlert?.deviceId || selectedAlert?.vehicleId || "").trim();
     const fleetNum = String(selectedAlert?.fleet_number || selectedAlert?.fleetNumber || "").trim().toUpperCase();
-    const lookupDriver = vehicleLookup[deviceId]?.driverName;
+    const regPlate = String(selectedAlert?.vehicle_registration || selectedAlert?.plate || selectedAlert?.registration || "").trim().toUpperCase();
+    const lookupByDevice = vehicleLookup[deviceId];
+    const lookupByFleet = fleetNum ? vehicleLookup[fleetNum] : undefined;
+    const lookupByReg = regPlate ? vehicleLookup[regPlate] : undefined;
+    const lookup = lookupByDevice || lookupByFleet || lookupByReg;
+    const lookupDriver = lookup?.driverName;
+    const lookupCostCenter = lookup?.costCenter || "";
+    const lookupCostCenterId = lookup?.costCenterId ?? null;
     const driverFromMap = fleetNum && driversByFleetNumber ? driversByFleetNumber.get(fleetNum) : null;
     const name = lookupDriver || (driverFromMap ? `${driverFromMap.firstName} ${driverFromMap.surname}`.trim() : String(driverInfo?.name || driverInfo?.driver_name || driverInfo?.full_name || selectedAlert?.driver_name || selectedAlert?.driverName || "Unknown").trim());
     const phone = driverFromMap?.cellNumber || String(driverInfo?.phone || driverInfo?.phone_number || driverInfo?.mobile || "").trim();
+    const rawDepartment = String(driverInfo?.department || driverInfo?.dept || driverInfo?.cost_center || selectedAlert?.department || "").trim();
+    const costCenterFromMap = driverFromMap?.costCenterId != null ? costCenterMap.get(driverFromMap.costCenterId) : null;
+    const department = lookupCostCenter || rawDepartment || costCenterFromMap || "";
     return {
       name,
       phone,
-      department: String(driverInfo?.department || driverInfo?.dept || driverInfo?.cost_center || selectedAlert?.department || "").trim(),
+      department,
+      costCenterId: lookupCostCenterId ?? driverFromMap?.costCenterId ?? null,
     };
-  }, [selectedAlert, vehicleLookup, driversByFleetNumber]);
+  }, [selectedAlert, vehicleLookup, driversByFleetNumber, costCenterMap]);
 
   const selectedAlertSpeedDisplay = useMemo(() => {
     // Try multiple paths where speed might be stored
@@ -377,6 +397,8 @@ export function AlertDetailModal({
   }, [selectedAlert, selectedAlertVehicleDisplay, selectedAlertDriverInfo, selectedAlertTitle, selectedAlertSeverity, selectedAlertDisplayTs, selectedAlertLocationText, selectedAlertSpeedDisplay]);
 
   const [activeTab, setActiveTab] = useState("screenshots");
+  const [resolveDropdownOpen, setResolveDropdownOpen] = useState(false);
+  const [selectedDriverId, setSelectedDriverId] = useState<string>("");
   const videoLoadInitiatedRef = useRef(false);
   const [videoPreview, setVideoPreview] = useState<{ url: string; label: string } | null>(null);
   const [selectedAlertPlaybackVideos, setSelectedAlertPlaybackVideos] = useState<Array<{ key: string; label: string; url: string; isFlv?: boolean }>>([]);
@@ -404,6 +426,19 @@ export function AlertDetailModal({
   const [followUpLoading, setFollowUpLoading] = useState(false);
   const [followUpCountdown, setFollowUpCountdown] = useState<string | null>(null);
   const followUpTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const resolveDropdownRef = useRef<HTMLDivElement>(null);
+
+  // Close resolve dropdown on outside click
+  useEffect(() => {
+    if (!resolveDropdownOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (resolveDropdownRef.current && !resolveDropdownRef.current.contains(e.target as Node)) {
+        setResolveDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [resolveDropdownOpen]);
 
   // Compute follow-up state from alert data
   const isFollowUpActive = useMemo(() => {
@@ -703,16 +738,19 @@ export function AlertDetailModal({
       .then((res) => res.json())
       .then((data) => {
         const vehicles = Array.isArray(data?.vehicles) ? data.vehicles : [];
-        const lookup: Record<string, { fleetNumber: string; registration: string; driverName: string | null }> = {};
+        const lookup: Record<string, { fleetNumber: string; registration: string; driverName: string | null; costCenter: string; costCenterId: number | null }> = {};
         for (const v of vehicles) {
-          const id = String(v?.deviceId || v?.device_id || v?.vehicleId || "").trim();
-          if (id) {
-            lookup[id] = {
-              fleetNumber: String(v?.fleetNumber || v?.fleet_number || "").trim(),
-              registration: String(v?.registration || v?.plate || v?.plateNumber || "").trim(),
-              driverName: String(v?.driverName || "").trim() || null,
-            };
-          }
+          const entry = {
+            fleetNumber: String(v?.fleetNumber || v?.fleet_number || "").trim(),
+            registration: String(v?.registration || v?.plate || v?.plateNumber || "").trim(),
+            driverName: String(v?.driverName || "").trim() || null,
+            costCenter: String(v?.costCenter || v?.cost_centres || "").trim(),
+            costCenterId: v?.costCenterId ?? v?.cost_center_id ?? null,
+          };
+          const deviceId = String(v?.deviceId || v?.device_id || v?.vehicleId || "").trim();
+          if (deviceId) lookup[deviceId] = entry;
+          if (entry.fleetNumber) lookup[entry.fleetNumber.toUpperCase()] = entry;
+          if (entry.registration) lookup[entry.registration.toUpperCase()] = entry;
         }
         setVehicleLookup(lookup);
       })
@@ -773,7 +811,7 @@ export function AlertDetailModal({
                   Follow-up {followUpCountdown || ""}
                 </Badge>
               )}
-              <span className="text-[10px] font-semibold text-slate-100">{selectedAlertTitle}</span>
+              <span className="text-sm font-semibold text-white md:text-base">{selectedAlertTitle}</span>
             </div>
             <div className="flex items-center gap-2 shrink-0">
               <select
@@ -811,9 +849,41 @@ export function AlertDetailModal({
                     <XCircle className="w-2.5 h-2.5 mr-0.5" />
                     False Alert
                   </Button>
-                  <Button variant="outline" className="h-5 border-emerald-300/70 bg-white px-1.5 text-[9px] text-emerald-700 hover:bg-emerald-50" disabled={alertActionLoading} onClick={onResolve}>
-                    Resolve
-                  </Button>
+                  <div className="relative" ref={resolveDropdownRef}>
+                    <Button
+                      variant="outline"
+                      className="h-5 border-emerald-300/70 bg-white px-1.5 text-[9px] text-emerald-700 hover:bg-emerald-50"
+                      disabled={alertActionLoading}
+                      onClick={() => setResolveDropdownOpen(!resolveDropdownOpen)}
+                    >
+                      Resolve
+                      <ChevronDown className="w-2.5 h-2.5 ml-0.5" />
+                    </Button>
+                    {resolveDropdownOpen && (
+                      <div className="absolute top-full left-0 mt-1 z-50 bg-white border border-slate-200 rounded-md shadow-lg py-1 min-w-[140px]">
+                        <button
+                          className="w-full px-3 py-1.5 text-left text-[10px] text-slate-700 hover:bg-emerald-50 flex items-center gap-2"
+                          onClick={async () => {
+                            setResolveDropdownOpen(false);
+                            if (onResolveActive) await onResolveActive();
+                          }}
+                        >
+                          <CheckCircle className="w-3 h-3 text-emerald-600" />
+                          Resolve Active
+                        </button>
+                        <button
+                          className="w-full px-3 py-1.5 text-left text-[10px] text-slate-700 hover:bg-emerald-50 flex items-center gap-2"
+                          onClick={async () => {
+                            setResolveDropdownOpen(false);
+                            await onResolve();
+                          }}
+                        >
+                          <Shield className="w-3 h-3 text-emerald-600" />
+                          Resolve All
+                        </button>
+                      </div>
+                    )}
+                  </div>
                   <select className="h-5 min-w-[100px] rounded border border-slate-300 bg-white px-1.5 text-[10px] text-slate-900 outline-none" onChange={(e) => { if (e.target.value) { onNcrFormSelect(e.target.value); e.target.value = ""; } }} defaultValue="">
                     <option value="">NCR FORM</option>
                     {ncrFormOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
@@ -1420,10 +1490,31 @@ export function AlertDetailModal({
                 <div className="space-y-1.5 text-[11px]">
                   <div className="flex items-start gap-2">
                     <span className="text-slate-500 w-20 shrink-0">Driver:</span>
-                    <span className="text-slate-800 font-medium">
-                      {selectedAlertDriverInfo.name && selectedAlertDriverInfo.name !== "Unknown" ? selectedAlertDriverInfo.name : "—"}
-                      {selectedAlertDriverInfo.phone ? ` · ${selectedAlertDriverInfo.phone}` : ""}
-                    </span>
+                    {selectedAlertDriverInfo.name && selectedAlertDriverInfo.name !== "Unknown" ? (
+                      <span className="text-slate-800 font-medium">
+                        {selectedAlertDriverInfo.name}
+                        {selectedAlertDriverInfo.phone ? ` · ${selectedAlertDriverInfo.phone}` : ""}
+                      </span>
+                    ) : onDriverAssign ? (
+                      <div className="flex-1 max-w-[220px]">
+                        <DriverDropdown
+                          value={selectedDriverId}
+                          onChange={(driverId: string) => {
+                            setSelectedDriverId(driverId);
+                            const driver = drivers.find(d => d.id === driverId);
+                            if (driver) {
+                              const name = `${driver.first_name} ${driver.surname}`.trim();
+                              onDriverAssign(driverId, name, driver.fleet_number || undefined);
+                            }
+                          }}
+                          drivers={drivers as any}
+                          placeholder="Select driver"
+                          onOpen={() => {}}
+                        />
+                      </div>
+                    ) : (
+                      <span className="text-slate-400 italic">Unknown</span>
+                    )}
                   </div>
                   <div className="flex items-start gap-2">
                     <span className="text-slate-500 w-20 shrink-0">Vehicle:</span>

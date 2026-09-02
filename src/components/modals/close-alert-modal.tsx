@@ -28,6 +28,13 @@ interface CloseAlertModalProps {
     ncr_classification?: string;
     close_reason?: string;
     reported_by?: string;
+    resolveScope?: "this_alert" | "all_group";
+    incident?: {
+      driver_name?: string;
+      contact_number?: string;
+      id_number?: string;
+      division?: string;
+    };
   }) => Promise<boolean>;
 }
 
@@ -61,6 +68,11 @@ export default function CloseAlertModal({
   const [closingNotes, setClosingNotes] = useState("");
   const [actionTaken, setActionTaken] = useState("");
   const [reportedBy, setReportedBy] = useState("");
+  const [resolveScope, setResolveScope] = useState<"this_alert" | "all_group">("this_alert");
+  const [driverName, setDriverName] = useState("");
+  const [contactNumber, setContactNumber] = useState("");
+  const [idNumber, setIdNumber] = useState("");
+  const [division, setDivision] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState("");
 
@@ -95,6 +107,13 @@ export default function CloseAlertModal({
         ncr_classification: ncrClassification || undefined,
         close_reason: closeReason || undefined,
         reported_by: reportedBy.trim() || currentUser.name,
+        resolveScope,
+        incident: {
+          driver_name: driverName.trim() || undefined,
+          contact_number: contactNumber.trim() || undefined,
+          id_number: idNumber.trim() || undefined,
+          division: division.trim() || undefined,
+        },
       };
 
       let success = false;
@@ -115,6 +134,11 @@ export default function CloseAlertModal({
         setClosingNotes("");
         setActionTaken("");
         setReportedBy("");
+        setResolveScope("this_alert");
+        setDriverName("");
+        setContactNumber("");
+        setIdNumber("");
+        setDivision("");
         onClose();
       }
     } catch (err) {
@@ -130,6 +154,11 @@ export default function CloseAlertModal({
     setClosingNotes("");
     setActionTaken("");
     setReportedBy("");
+    setResolveScope("this_alert");
+    setDriverName("");
+    setContactNumber("");
+    setIdNumber("");
+    setDivision("");
     setError("");
     onClose();
   };
@@ -154,6 +183,86 @@ export default function CloseAlertModal({
               Complete this Non-Conformance Report (NCR) to document the incident for record keeping and reporting.
             </AlertDescription>
           </Alert>
+
+          {/* Resolve Scope */}
+          <div className="space-y-2">
+            <Label className="text-base font-semibold">Resolution Scope</Label>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setResolveScope("this_alert")}
+                className={cn(
+                  "rounded-md border px-3 py-2 text-sm text-left transition-colors",
+                  resolveScope === "this_alert"
+                    ? "border-blue-500 bg-blue-50 text-blue-800 font-medium"
+                    : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
+                )}
+              >
+                Resolve Active Alert
+                <span className="block text-xs font-normal text-slate-500">Close just this alert</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setResolveScope("all_group")}
+                className={cn(
+                  "rounded-md border px-3 py-2 text-sm text-left transition-colors",
+                  resolveScope === "all_group"
+                    ? "border-blue-500 bg-blue-50 text-blue-800 font-medium"
+                    : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
+                )}
+              >
+                Resolve All With Note
+                <span className="block text-xs font-normal text-slate-500">Close the whole alert group + children</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Driver / Incident Details (register fields) */}
+          <div className="space-y-2">
+            <Label className="text-base font-semibold">Driver / Incident Details</Label>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <Label htmlFor="driver-name" className="text-xs text-slate-500">Name &amp; Surname</Label>
+                <Input
+                  id="driver-name"
+                  placeholder="Driver name & surname"
+                  value={driverName}
+                  onChange={(e) => setDriverName(e.target.value)}
+                  disabled={isSubmitting}
+                />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="contact-number" className="text-xs text-slate-500">Contact Number</Label>
+                <Input
+                  id="contact-number"
+                  placeholder="Contact number"
+                  value={contactNumber}
+                  onChange={(e) => setContactNumber(e.target.value)}
+                  disabled={isSubmitting}
+                />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="id-number" className="text-xs text-slate-500">ID Number</Label>
+                <Input
+                  id="id-number"
+                  placeholder="ID number"
+                  value={idNumber}
+                  onChange={(e) => setIdNumber(e.target.value)}
+                  disabled={isSubmitting}
+                />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="division" className="text-xs text-slate-500">Division</Label>
+                <Input
+                  id="division"
+                  placeholder="Division"
+                  value={division}
+                  onChange={(e) => setDivision(e.target.value)}
+                  disabled={isSubmitting}
+                />
+              </div>
+            </div>
+          </div>
 
           {/* NCR Classification */}
           <div className="space-y-2">

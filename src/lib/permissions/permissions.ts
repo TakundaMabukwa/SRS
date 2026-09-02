@@ -9,6 +9,7 @@ export const PAGES = {
   costCenters: { name: 'Cost Centers', path: '/ccenter', description: 'Manage cost center allocations and budgets' },
   financials: { name: 'Financials', path: '/audit', description: 'View financial reports and audit trails' },
   inspections: { name: 'Inspections', path: '/fleetManager/inspections', description: 'Manage vehicle inspections and compliance' },
+  reports: { name: 'Reports', path: '/reports', description: 'NCR / incident register' },
   userManagement: { name: 'User Management', path: '/userManagement', description: 'Manage user accounts and permissions' },
   systemSettings: { name: 'System Settings', path: '/settings', description: 'Configure system-wide settings and preferences' }
 } as const;
@@ -40,6 +41,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, Permission[]> = {
     { page: 'costCenters', actions: ['view', 'create', 'edit', 'delete'] },
     { page: 'financials', actions: ['view', 'create', 'edit', 'delete'] },
     { page: 'inspections', actions: ['view', 'create', 'edit', 'delete'] },
+    { page: 'reports', actions: ['view', 'create', 'edit', 'delete'] },
     { page: 'userManagement', actions: ['view', 'create', 'edit', 'delete'] },
     { page: 'systemSettings', actions: ['view', 'create', 'edit', 'delete'] }
   ],
@@ -49,6 +51,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, Permission[]> = {
     { page: 'drivers', actions: ['view', 'create', 'edit'] },
     { page: 'vehicles', actions: ['view', 'create', 'edit'] },
     { page: 'inspections', actions: ['view', 'create', 'edit'] },
+    { page: 'reports', actions: ['view', 'create', 'edit'] },
     { page: 'fuel', actions: ['view', 'create', 'edit'] },
     { page: 'financials', actions: ['view'] },
     { page: 'systemSettings', actions: ['view'] }

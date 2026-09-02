@@ -4,9 +4,10 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from "react"
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
-import { X, CheckCircle, Loader2, Shield, Square, CheckSquare, ArrowLeft, Clock, Video, Radio } from "lucide-react";
+import { X, CheckCircle, Loader2, Shield, Square, CheckSquare, ArrowLeft, Clock, Video, Radio, Star } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+import { DriverDropdown } from "@/components/ui/driver-dropdown";
 
 interface ResolveAlertsModalProps {
   isOpen: boolean;
@@ -16,6 +17,9 @@ interface ResolveAlertsModalProps {
   fleetNumber: string;
   registration: string;
   baseUrl?: string;
+  currentAlertId?: string;
+  drivers?: Array<{ id: string; first_name: string; surname: string; fleet_number?: string | null; cell_number?: string | null; assigned_vehicle?: { registration_number?: string } | null }>;
+  onDriverAssign?: (driverId: string, driverName: string, fleetNumber?: string) => void;
 }
 
 export function ResolveAlertsModal({
@@ -26,6 +30,9 @@ export function ResolveAlertsModal({
   fleetNumber,
   registration,
   baseUrl = "/api/video-server",
+  currentAlertId,
+  drivers = [],
+  onDriverAssign,
 }: ResolveAlertsModalProps) {
   const [telematicsAlerts, setTelematicsAlerts] = useState<any[]>([]);
   const [videoAlerts, setVideoAlerts] = useState<any[]>([]);
@@ -33,6 +40,8 @@ export function ResolveAlertsModal({
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [resolving, setResolving] = useState(false);
   const [resolvingIds, setResolvingIds] = useState<Set<string>>(new Set());
+  const [selectedDriverId, setSelectedDriverId] = useState<string>("");
+  const [selectedDriverName, setSelectedDriverName] = useState<string>("");
   const fetchActiveRef = useRef(0);
 
   const alertTypeName = (type: string) => {
@@ -264,7 +273,7 @@ export function ResolveAlertsModal({
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
-      <div className="flex w-full max-w-2xl max-h-[85vh] flex-col overflow-hidden rounded-2xl border border-slate-300 bg-white shadow-2xl">
+      <div className="flex w-full max-w-2xl max-h-[85vh] flex-col rounded-2xl border border-slate-300 bg-white shadow-2xl">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-slate-200 bg-gradient-to-r from-slate-950 via-slate-900 to-red-950 px-4 py-3">
           <div className="flex items-center gap-3">
@@ -353,12 +362,13 @@ export function ResolveAlertsModal({
                     {sourceAlerts.map((alert: any) => {
                       const isSelected = selectedIds.has(alert._key);
                       const isResolvingThis = resolvingIds.has(alert._key);
+                      const isCurrent = String(alert._resolveId) === String(currentAlertId);
                       return (
                         <Card
                           key={alert._key}
                           className={cn(
                             "flex items-start gap-2.5 px-3 py-2 transition-all cursor-pointer",
-                            isSelected ? "border-blue-300 bg-blue-50/50 ring-1 ring-blue-200" : "border-slate-200 bg-white hover:bg-slate-50",
+                            isCurrent ? "border-emerald-400 bg-emerald-50/80 ring-2 ring-emerald-300 shadow-sm" : isSelected ? "border-blue-300 bg-blue-50/50 ring-1 ring-blue-200" : "border-slate-200 bg-white hover:bg-slate-50",
                             isResolvingThis && "opacity-60"
                           )}
                           onClick={() => !isResolvingThis && toggleSelect(alert._key)}
@@ -374,6 +384,8 @@ export function ResolveAlertsModal({
                           </div>
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2 flex-wrap">
+                              {isCurrent && <Star className="w-3 h-3 text-emerald-600 fill-emerald-500" />}
+                              {isCurrent && <span className="text-[9px] font-bold text-emerald-700 bg-emerald-100 px-1.5 py-0.5 rounded">ACTIVE</span>}
                               <span className="text-[11px] font-semibold text-slate-900">{alert._displayName}</span>
                               <Badge className={cn("text-[9px] px-1 py-0 border", severityColor(alert._severity))}>
                                 {alert._severity?.toUpperCase()}
@@ -406,7 +418,27 @@ export function ResolveAlertsModal({
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-end border-t border-slate-200 bg-slate-50 px-4 py-2.5">
+        <div className="flex items-center justify-between border-t border-slate-200 bg-slate-50 px-4 py-2.5">
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] text-slate-500">Assign Driver:</span>
+            <div className="w-48">
+              <DriverDropdown
+                value={selectedDriverId}
+                onChange={(driverId: string) => {
+                  setSelectedDriverId(driverId);
+                  const driver = drivers.find(d => d.id === driverId);
+                  if (driver) {
+                    const name = `${driver.first_name} ${driver.surname}`.trim();
+                    setSelectedDriverName(name);
+                    if (onDriverAssign) onDriverAssign(driverId, name, driver.fleet_number || undefined);
+                  }
+                }}
+                drivers={drivers as any}
+                placeholder="Select driver (optional)"
+                onOpen={() => {}}
+              />
+            </div>
+          </div>
           <Button variant="outline" size="sm" className="h-7 text-xs" onClick={onClose}>Close</Button>
         </div>
       </div>
