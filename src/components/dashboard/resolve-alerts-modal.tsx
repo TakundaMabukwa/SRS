@@ -374,6 +374,7 @@ export function ResolveAlertsModal({
                       const isResolvingThis = resolvingIds.has(alert._key);
                       const isCurrent = String(alert._resolveId) === String(currentAlertId);
                       return (
+                        <>
                         <Card
                           key={alert._key}
                           className={cn(
@@ -430,6 +431,7 @@ export function ResolveAlertsModal({
                             />
                           </div>
                         )}
+                        </>
                       );
                     })}
                   </div>
