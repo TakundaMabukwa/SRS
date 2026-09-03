@@ -10,6 +10,7 @@ import { cn } from "@/lib/utils";
 import { toSAST } from "@/lib/utils/date-formatter";
 import { useCostCenters } from "@/context/cost-centers-context";
 import { DriverDropdown } from "@/components/ui/driver-dropdown";
+import { RequestRepairDialog } from "@/components/dashboard/request-repair-dialog";
 import { UniversalVideoPlayer } from "@/components/dashboard/universal-video-player";
 import { RealTimeMapInline } from "@/components/dashboard/real-time-map-inline";
 import { SafeImage } from "@/components/ui/safe-image";
@@ -341,6 +342,28 @@ export function AlertDetailModal({
     return preservedVehicleRef.current || "Unknown Vehicle";
   }, [selectedAlert, vehicleLookup]);
 
+  const repairFleetNumber = useMemo(() => {
+    if (!selectedAlert) return "";
+    const deviceId = String(selectedAlert?.device_id || selectedAlert?.deviceId || selectedAlert?.vehicleId || "").trim();
+    const lookup = vehicleLookup[deviceId];
+    let fleet = String(lookup?.fleetNumber || selectedAlert?.fleet_number || selectedAlert?.fleetNumber || "").trim();
+    if (fleet && /^\d+$/.test(fleet)) {
+      const reg = String(lookup?.registration || selectedAlert?.vehicle_registration || selectedAlert?.plate || "").trim();
+      const deviceName = String(selectedAlert?.device_name || selectedAlert?.deviceName || "").trim();
+      for (const candidate of [reg, deviceName].filter(Boolean)) {
+        const better = candidate.split(/\s*-\s*/).find((p: string) => /^[A-Za-z]{2,}\d*$/.test(p));
+        if (better) { fleet = better; break; }
+      }
+    }
+    return fleet;
+  }, [selectedAlert, vehicleLookup]);
+
+  const repairRegistration = useMemo(() => {
+    if (!selectedAlert) return "";
+    const deviceId = String(selectedAlert?.device_id || selectedAlert?.deviceId || selectedAlert?.vehicleId || "").trim();
+    return String(vehicleLookup[deviceId]?.registration || selectedAlert?.vehicle_registration || selectedAlert?.plate || selectedAlert?.registration || "").trim();
+  }, [selectedAlert, vehicleLookup]);
+
   const selectedAlertDriverInfo = useMemo(() => {
     if (!selectedAlert) return { name: "Unknown", phone: "", department: "" };
     const driverInfo = selectedAlert?.driverInfo || selectedAlert?.driver_info || selectedAlert?.metadata?.driver || {};
@@ -422,6 +445,13 @@ export function AlertDetailModal({
 
   const [activeTab, setActiveTab] = useState("screenshots");
   const [resolveDropdownOpen, setResolveDropdownOpen] = useState(false);
+  const [repairDialogOpen, setRepairDialogOpen] = useState(false);
+  const [repairJobNumber, setRepairJobNumber] = useState<string | null>(null);
+
+  useEffect(() => {
+    setRepairJobNumber(null);
+    setRepairDialogOpen(false);
+  }, [selectedAlert?.id]);
   const [selectedDriverId, setSelectedDriverId] = useState<string>("");
   const videoLoadInitiatedRef = useRef(false);
   const [videoPreview, setVideoPreview] = useState<{ url: string; label: string } | null>(null);
@@ -1584,37 +1614,27 @@ export function AlertDetailModal({
                     size="sm"
                     variant="outline"
                     className="h-7 text-[11px] border-amber-300 text-amber-700 hover:bg-amber-50"
-                    onClick={async () => {
+                    onClick={() => {
                       if (!selectedAlert) return;
-                      try {
-                        const res = await fetch("/api/video-server/repair-requests", {
-                          method: "POST",
-                          headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify({
-                            alert_id: selectedAlert.id,
-                            fleet_number: selectedAlert.fleet_number || selectedAlert.fleetNumber || "",
-                            registration: selectedAlert.vehicle_registration || selectedAlert.plate || "",
-                            device_id: selectedAlert.device_id || selectedAlert.deviceId || "",
-                            cost_center_id: null,
-                            notes: "Repair requested from alert detail",
-                          }),
-                        });
-                        const data = await res.json();
-                        if (data.success) {
-                          toast.success("Repair request logged. Awaiting email finalization.");
-                        } else {
-                          toast.error("Failed to log repair request.");
-                        }
-                      } catch {
-                        toast.error("Failed to log repair request.");
-                      }
+                      setRepairDialogOpen(true);
                     }}
                   >
                     Request Repair
                   </Button>
                 </div>
-                <p className="mt-1.5 text-[11px] text-slate-500">Awaiting Email Finalization</p>
+                <p className="mt-1.5 text-[11px] text-slate-500">
+                  {repairJobNumber ? `Logged – ${repairJobNumber}` : "Awaiting Email Finalization"}
+                </p>
               </Card>
+              <RequestRepairDialog
+                open={repairDialogOpen}
+                onOpenChange={setRepairDialogOpen}
+                alert={selectedAlert}
+                fleetNumber={repairFleetNumber}
+                registration={repairRegistration}
+                alarmType={selectedAlertTitle}
+                onSuccess={(jobNo) => { if (jobNo) setRepairJobNumber(jobNo); }}
+              />
 
               {/* Map Section */}
               <Card className="hidden p-4 border-slate-200 bg-white shadow-sm">
