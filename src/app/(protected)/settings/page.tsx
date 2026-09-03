@@ -234,14 +234,14 @@ function AlertConfigSection() {
         // CC mode — upsert overrides for all selected CCs
         const defId = editingDef?.id;
         if (!defId) {
-          toast.error("Select an alert type to edit");
+          toast.error("Click the pencil icon on an Available alert below to add it to this cost center's set");
           return;
         }
         await fetch(`${ALERT_CONFIG_API}/definitions/${defId}/overrides/bulk`, {
           method: "PUT", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ cost_center_ids: selectedCostCenterIds, severity: defForm.severity, description: defForm.description }),
         });
-        toast.success(`Override saved for ${selectedCostCenterIds.length} cost center(s)`);
+        toast.success(`Alert added to ${selectedCostCenterIds.length} cost center set(s)`);
       }
       setShowDefForm(false);
       setEditingDef(null);
@@ -256,13 +256,13 @@ function AlertConfigSection() {
   const handleDeleteDef = async (def: AlertDefinition) => {
     const hasOverride = def.override_id != null;
     if (selectedCostCenterIds.length > 0 && hasOverride) {
-      // Delete override only
-      if (!confirm("Remove this cost center's override? The global default will apply.")) return;
+      // Remove from this cost center's set — no global fallback applies to CC vehicles
+      if (!confirm("Remove this alert from the cost center's set? Vehicles in this cost center will stop generating it.")) return;
       try {
         for (const ccId of selectedCostCenterIds) {
           await fetch(`${ALERT_CONFIG_API}/definitions/${def.id}/overrides/${ccId}`, { method: "DELETE" });
         }
-        toast.success("Override removed");
+        toast.success("Removed from cost center");
         fetchDefinitions();
       } catch { toast.error("Failed to delete override"); }
     } else if (selectedCostCenterIds.length === 0) {
@@ -274,7 +274,7 @@ function AlertConfigSection() {
         fetchDefinitions();
       } catch { toast.error("Failed to delete"); }
     } else {
-      toast.error("No override to remove for this cost center");
+      toast.error("Not in this cost center's alert set — nothing to remove");
     }
   };
 
@@ -374,8 +374,8 @@ function AlertConfigSection() {
         <h2 className="text-lg font-semibold">Alert Types & Groups</h2>
         <p className="text-sm text-gray-500">
           {selectedCostCenterIds.length === 0
-            ? "Global Defaults — baseline alert config inherited by all cost centers"
-            : `Configuring ${selectedCostCenterIds.length} cost center(s): ${ccNames.join(", ")}`
+            ? "Global Defaults — applies ONLY to vehicles with no cost center. Vehicles in a cost center use ONLY that cost center's alert set."
+            : `Configuring ${selectedCostCenterIds.length} cost center(s): ${ccNames.join(", ")} — only alerts in this set will come in for these vehicles`
           }
         </p>
       </div>
@@ -493,7 +493,7 @@ function AlertConfigPanel({
             <CardTitle className="text-sm font-semibold flex items-center gap-2">
               {hasCcSelected ? <Badge>Alert Types</Badge> : <Badge variant="outline">Global</Badge>}
               <span className="text-gray-400 font-normal">
-                ({definitions.length} definitions{hasCcSelected ? ` — ${inheritedDefs.length} inherited, ${customizedDefs.length} customized` : ""})
+                ({definitions.length} definitions{hasCcSelected ? ` — ${customizedDefs.length} in set, ${inheritedDefs.length} available` : ""})
               </span>
             </CardTitle>
             <Button size="sm" onClick={() => { setShowDefForm(true); setEditingDef(null); setDefForm({ name: "", category: "telematics", description: "", signal_code: "", severity: "MEDIUM" }); }}>
@@ -568,8 +568,8 @@ function AlertConfigPanel({
                     <td className="py-2 font-medium">
                       <div className="flex items-center gap-2">
                         {def.name}
-                        {hasCcSelected && def.override_id != null && <Badge variant="default" className="text-[10px]">Custom</Badge>}
-                        {hasCcSelected && def.override_id == null && <Badge variant="outline" className="text-[10px] text-gray-400 border-gray-200">Global</Badge>}
+                        {hasCcSelected && def.override_id != null && <Badge variant="default" className="text-[10px]">In set</Badge>}
+                        {hasCcSelected && def.override_id == null && <Badge variant="outline" className="text-[10px] text-gray-400 border-gray-200">Available</Badge>}
                       </div>
                     </td>
                     <td><Badge variant={def.category === "telematics" ? "default" : "secondary"}>{def.category}</Badge></td>
@@ -725,7 +725,7 @@ function AlertConfigPanel({
           </DialogHeader>
           <div className="space-y-3">
             <p className="text-sm text-gray-600">
-              This will copy all global alert type definitions as custom overrides for {isMultiCc ? `all ${selectedCcIds.length} selected cost centers` : "this cost center"}.
+              This will add all global alert types to {isMultiCc ? `all ${selectedCcIds.length} selected cost centers` : "this cost center"}'s alert set. Only alerts in the set will come in for its vehicles.
             </p>
             <p className="text-sm text-gray-500">
               Existing custom alert types will not be affected.
