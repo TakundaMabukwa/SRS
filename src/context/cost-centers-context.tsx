@@ -1,6 +1,6 @@
 "use client";
 
-import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from "react";
+import React, { createContext, useContext, useState, useEffect, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useUser } from "@/context/contexts/UserContext";
 
@@ -38,12 +38,11 @@ export function CostCentersProvider({ children }: { children: React.ReactNode })
   const [costCenters, setCostCenters] = useState<CostCenter[]>([]);
   const [loading, setLoading] = useState(false);
   const [selectedCostCenterIds, setSelectedCostCenterIds] = useState<number[]>([]);
-  const fetchedRef = useRef(false);
-  const { userCostCenterIds } = useUser();
+  const { userCostCenterIds, loading: userLoading } = useUser();
 
   const fetchCostCenters = useCallback(async () => {
-    if (fetchedRef.current) return;
-    fetchedRef.current = true;
+    // Wait for user context to finish loading before fetching
+    if (userLoading) return;
     setLoading(true);
     try {
       const supabase = createClient();
@@ -78,7 +77,7 @@ export function CostCentersProvider({ children }: { children: React.ReactNode })
     } finally {
       setLoading(false);
     }
-  }, [userCostCenterIds]);
+  }, [userCostCenterIds, userLoading]);
 
   useEffect(() => {
     fetchCostCenters();
