@@ -3996,6 +3996,12 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
       setSelectedAlert(baseAlert);
       setAlertDetailModalOpen(true);
       setAlertRealtimeLoading(true);
+      const openedAlertType = String(
+        baseAlert?.alarm_type || baseAlert?.alert_type || baseAlert?.type || ""
+      );
+      if (openedAlertType.startsWith("NCR:")) {
+        setShowResolveModal(true);
+      }
     }
 
     try {
@@ -4353,7 +4359,7 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
         setAlertRealtimeLoading(false);
       }
     }
-  }, [getAlertCoordinates, toAbsoluteVideoUrl]);
+  }, [getAlertCoordinates, setShowResolveModal, toAbsoluteVideoUrl]);
 
   const runTimelineAlertAction = async (
     rowSeed: any,
