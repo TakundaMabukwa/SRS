@@ -4,7 +4,7 @@ import type React from "react"
 
 import { useState, useEffect, useCallback } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Button } from "@/components/ui/button"
+import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -30,7 +30,7 @@ import { createClient } from "@/lib/supabase/client"
 import { createClient as createServerClient } from "@supabase/supabase-js"
 import { PagePermissionSelector } from "@/components/ui/page-permission-selector"
 import { DEFAULT_ROLE_PERMISSIONS, Permission, PAGES, ACTIONS } from "@/lib/permissions/permissions"
-import { SecureButton } from "@/components/SecureButton"
+import { Button } from "@/components/ui/button";
 import { resetUserPassword } from "@/lib/action/resetPassword"
 import { disableUser } from "@/lib/action/disableUser"
 import { enableUser } from "@/lib/action/enableUser"
@@ -542,10 +542,10 @@ export default function SettingsPage() {
                                     }
                                 }}>
                                 <DialogTrigger asChild>
-                                    <SecureButton page="userManagement" action="create">
+                                    <Button>
                                         <Plus className="h-4 w-4 mr-2" />
                                         Add User
-                                    </SecureButton>
+                                    </Button>
                                 </DialogTrigger>
                                 <DialogContent className="!max-w-none w-[80vw] max-h-[90vh] overflow-y-auto sm:!max-w-none">
                                     <DialogHeader className="pb-6">
@@ -1044,28 +1044,28 @@ export default function SettingsPage() {
                                                 </TableCell>
                                                 <TableCell className="py-2">
                                                     <div className="flex gap-1">
-                                                        <SecureButton 
-                                                            page="userManagement"
-                                                            action="edit"
+                                                        <Button 
+                                                            
+                                                            
                                                             variant="outline" 
                                                             size="sm" 
                                                             onClick={() => openEditDialog(user)}
                                                         >
                                                             <Edit className="h-4 w-4" />
-                                                        </SecureButton>
-                                                        <SecureButton 
-                                                            page="userManagement"
-                                                            action="edit"
+                                                        </Button>
+                                                        <Button 
+                                                            
+                                                            
                                                             variant="outline" 
                                                             size="sm" 
                                                             onClick={() => openResetPasswordDialog(user.id, user.email)}
                                                         >
                                                             <RotateCcw className="h-4 w-4" />
-                                                        </SecureButton>
+                                                        </Button>
                                                         {user.is_active !== false ? (
-                                                            <SecureButton 
-                                                                page="userManagement"
-                                                                action="delete"
+                                                            <Button 
+                                                                
+                                                                
                                                                 variant="outline" 
                                                                 size="sm" 
                                                                 onClick={() => {
@@ -1087,11 +1087,11 @@ export default function SettingsPage() {
                                                                 }}
                                                             >
                                                                 <Ban className="h-4 w-4" />
-                                                            </SecureButton>
+                                                            </Button>
                                                         ) : (
-                                                            <SecureButton 
-                                                                page="userManagement"
-                                                                action="delete"
+                                                            <Button 
+                                                                
+                                                                
                                                                 variant="outline" 
                                                                 size="sm" 
                                                                 onClick={() => {
@@ -1113,17 +1113,17 @@ export default function SettingsPage() {
                                                                 }}
                                                             >
                                                                 <CheckCircle className="h-4 w-4" />
-                                                            </SecureButton>
+                                                            </Button>
                                                         )}
-                                                        <SecureButton 
-                                                            page="userManagement"
-                                                            action="delete"
+                                                        <Button 
+                                                            
+                                                            
                                                             variant="outline" 
                                                             size="sm" 
                                                             onClick={() => handleDeleteUser(user.id, user.email)}
                                                         >
                                                             <Trash2 className="h-4 w-4" />
-                                                        </SecureButton>
+                                                        </Button>
                                                     </div>
                                                 </TableCell>
                                             </TableRow>
