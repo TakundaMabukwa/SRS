@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { ArrowLeft, AlertTriangle, Video, Download, XCircle, CheckCircle, X, FileText, MapPin, ExternalLink, Copy, Gauge, Navigation, Clock, Timer, ShieldAlert, ChevronDown, Shield } from "lucide-react";
+import { ArrowLeft, AlertTriangle, Video, Download, XCircle, CheckCircle, X, FileText, MapPin, ExternalLink, Copy, Gauge, Navigation, Clock, Timer, ShieldAlert, ChevronDown, Shield, Wrench } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toSAST } from "@/lib/utils/date-formatter";
 import { useCostCenters } from "@/context/cost-centers-context";
@@ -13,6 +13,7 @@ import { DriverDropdown } from "@/components/ui/driver-dropdown";
 import { UniversalVideoPlayer } from "@/components/dashboard/universal-video-player";
 import { RealTimeMapInline } from "@/components/dashboard/real-time-map-inline";
 import { SafeImage } from "@/components/ui/safe-image";
+import { toast } from "sonner";
 import {
   formatRawAlertTimestamp,
   resolveMediaUrlForCurrentOrigin,
@@ -1570,6 +1571,25 @@ export function AlertDetailModal({
                     </span>
                   </div>
                 </div>
+              </Card>
+
+              {/* Request Repair */}
+              <Card className="border-slate-200 bg-white p-4 shadow-sm">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Wrench className="w-4 h-4 text-amber-600" />
+                    <h3 className="font-semibold text-slate-900">Request Repair</h3>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 text-[11px] border-amber-300 text-amber-700 hover:bg-amber-50"
+                    onClick={() => toast.info("Repair request email will be sent once finalized.")}
+                  >
+                    Request Repair
+                  </Button>
+                </div>
+                <p className="mt-1.5 text-[11px] text-slate-500">Awaiting Email Finalization</p>
               </Card>
 
               {/* Map Section */}
