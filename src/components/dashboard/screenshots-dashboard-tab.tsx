@@ -51,9 +51,8 @@ function normalizeCostCenter(value: unknown): string {
 function matchesCostCenterFilter(costCenter: string, selectedCostCenters: Set<string>) {
   if (selectedCostCenters.size === 0) return true;
   const normalized = normalizeCostCenter(costCenter);
-  if (!normalized) return selectedCostCenters.has("unassigned");
+  if (!normalized) return true;
   if (selectedCostCenters.has(normalized)) return true;
-  // Substring match: check if any selected cost center name/code is contained in the vehicle's cost_centres text
   for (const sc of selectedCostCenters) {
     if (normalized.includes(sc) || sc.includes(normalized)) return true;
   }
