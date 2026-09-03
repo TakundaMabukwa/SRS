@@ -15,6 +15,7 @@ type DbVehicle = {
   registration_number: string;
   fleet_number: string;
   cost_centres: string;
+  cost_center_id: number | null;
 };
 
 type PlaybackVehicle = {
@@ -151,7 +152,7 @@ export default function PlaybackDashboardTab({}: PlaybackDashboardTabProps) {
   const fetchVehicles = useCallback(async (): Promise<PlaybackVehicle[]> => {
     const { data: vehicleRows, error: vehiclesError } = await supabase
       .from("vehiclesc")
-      .select("registration_number, fleet_number, cost_centres");
+      .select("registration_number, fleet_number, cost_centres, cost_center_id");
 
     if (vehiclesError) throw new Error(vehiclesError.message || "Failed to load vehicles");
 
@@ -162,11 +163,12 @@ export default function PlaybackDashboardTab({}: PlaybackDashboardTabProps) {
       const reg = String((row as any).registration_number || "").trim().toUpperCase();
       if (!reg || seen.has(reg)) continue;
       seen.add(reg);
+      const ccId = (row as any).cost_center_id ?? null;
       catalogVehicles.push({
         vehicleId: reg,
         registration: reg,
         fleetNumber: String((row as any).fleet_number || "").trim(),
-        costCenter: String((row as any).cost_centres || "").trim(),
+        costCenter: (ccId && costCenterMap.get(ccId)) || String((row as any).cost_centres || "").trim(),
         deviceId: "",
         online: false,
       });

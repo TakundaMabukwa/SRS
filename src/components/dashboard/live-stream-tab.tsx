@@ -33,6 +33,7 @@ type DbVehicle = {
   registration_number: string;
   fleet_number: string;
   cost_centres: string;
+  cost_center_id: number | null;
   camera_sim_id: string;
 };
 
@@ -100,14 +101,14 @@ export default function LiveStreamTab({}: LiveStreamTabProps) {
     try {
       const { data } = await supabase
         .from("vehiclesc")
-        .select("registration_number, fleet_number, cost_centres, camera_sim_id");
+        .select("registration_number, fleet_number, cost_centres, cost_center_id, camera_sim_id");
       const rows = (data || []) as DbVehicle[];
       const unique = new Map<string, DbVehicle>();
       for (const r of rows) {
         const reg = (r.registration_number || "").trim().toUpperCase();
         if (!reg) continue;
         if (!unique.has(reg)) {
-          unique.set(reg, { registration_number: reg, fleet_number: r.fleet_number || "", cost_centres: r.cost_centres || "", camera_sim_id: (r.camera_sim_id || "").trim() });
+          unique.set(reg, { registration_number: reg, fleet_number: r.fleet_number || "", cost_centres: r.cost_centres || "", cost_center_id: r.cost_center_id ?? null, camera_sim_id: (r.camera_sim_id || "").trim() });
         }
       }
       dbVehiclesRef.current = Array.from(unique.values());
@@ -129,7 +130,7 @@ export default function LiveStreamTab({}: LiveStreamTabProps) {
         const instant = dbVehicles.map((v) => ({
           registration: v.registration_number,
           fleetNumber: v.fleet_number,
-          costCenter: v.cost_centres,
+          costCenter: (v.cost_center_id && costCenterMap.get(v.cost_center_id)) || v.cost_centres || "",
           deviceId: null as string | null,
           online: false,
         }));
@@ -200,7 +201,7 @@ export default function LiveStreamTab({}: LiveStreamTabProps) {
         return {
           registration: v.registration_number,
           fleetNumber: v.fleet_number,
-          costCenter: v.cost_centres,
+          costCenter: (v.cost_center_id && costCenterMap.get(v.cost_center_id)) || v.cost_centres || "",
           deviceId: match ? match.deviceId : null,
           online: match ? match.online : false,
         };
