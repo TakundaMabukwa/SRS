@@ -31,7 +31,7 @@ const CostCentersContext = createContext<CostCentersContextType>({
   selectedCostCenterIds: [],
   setSelectedCostCenterIds: () => {},
   toggleCostCenterFilter: () => {},
-  selectedCostCenterSummary: "All Cost Centers",
+  selectedCostCenterSummary: "No Cost Centers",
 });
 
 export function CostCentersProvider({ children }: { children: React.ReactNode }) {
@@ -83,21 +83,24 @@ export function CostCentersProvider({ children }: { children: React.ReactNode })
     fetchCostCenters();
   }, [fetchCostCenters]);
 
-  // Load saved selection from localStorage once the user's cost centers are known
+  // Auto-select all user cost centers on first load; restore from localStorage if valid
   useEffect(() => {
     if (costCenters.length === 0) return;
     try {
       const saved = localStorage.getItem(SELECTION_STORAGE_KEY);
       if (saved) {
         const parsed: number[] = JSON.parse(saved);
-        // Only keep selections that are in the user's available cost centers
         const valid = parsed.filter(id => costCenters.some(cc => cc.id === id));
         if (valid.length > 0) {
           setSelectedCostCenterIds(valid);
+          return;
         }
       }
+      // No valid saved selection — auto-select all user cost centers
+      setSelectedCostCenterIds(costCenters.map(cc => cc.id));
     } catch (e) {
       console.error("Error reading cost center selection:", e);
+      setSelectedCostCenterIds(costCenters.map(cc => cc.id));
     }
   }, [costCenters]);
 
@@ -134,10 +137,11 @@ export function CostCentersProvider({ children }: { children: React.ReactNode })
   }, []);
 
   const selectedCostCenterSummary = React.useMemo(() => {
-    if (selectedCostCenterIds.length === 0) return "All Cost Centers";
+    if (selectedCostCenterIds.length === 0) return "No Cost Centers";
     if (selectedCostCenterIds.length === 1) return getCostCenterName(selectedCostCenterIds[0]) || `ID: ${selectedCostCenterIds[0]}`;
-    return `${selectedCostCenterIds.length} Cost Centers`;
-  }, [selectedCostCenterIds, getCostCenterName]);
+    if (selectedCostCenterIds.length === costCenters.length) return `${selectedCostCenterIds.length} Cost Centers`;
+    return `${selectedCostCenterIds.length} of ${costCenters.length} Cost Centers`;
+  }, [selectedCostCenterIds, getCostCenterName, costCenters]);
 
   return (
     <CostCentersContext.Provider value={{ costCenters, costCenterMap, loading, getCostCenterName, selectedCostCenterIds, setSelectedCostCenterIds, toggleCostCenterFilter, selectedCostCenterSummary }}>

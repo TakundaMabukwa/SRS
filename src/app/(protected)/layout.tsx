@@ -110,11 +110,17 @@ function CostCenterDropdown() {
         <DropdownMenuLabel>Cost Center Filter</DropdownMenuLabel>
         <DropdownMenuSeparator />
         <DropdownMenuCheckboxItem
-          checked={selectedCostCenterIds.length === 0}
+          checked={selectedCostCenterIds.length === costCenters.length}
           onSelect={(e) => e.preventDefault()}
-          onCheckedChange={() => setSelectedCostCenterIds([])}
+          onCheckedChange={() => {
+            if (selectedCostCenterIds.length === costCenters.length) {
+              setSelectedCostCenterIds([]);
+            } else {
+              setSelectedCostCenterIds(costCenters.map(cc => cc.id));
+            }
+          }}
         >
-          All Cost Centers
+          {selectedCostCenterIds.length === costCenters.length ? "Deselect All" : "Select All"}
         </DropdownMenuCheckboxItem>
         <DropdownMenuSeparator />
         {costCenters.map((cc) => (
