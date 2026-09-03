@@ -30,7 +30,6 @@ import { createClient } from "@/lib/supabase/client"
 import { createClient as createServerClient } from "@supabase/supabase-js"
 import { PagePermissionSelector } from "@/components/ui/page-permission-selector"
 import { DEFAULT_ROLE_PERMISSIONS, Permission, PAGES, ACTIONS } from "@/lib/permissions/permissions"
-import { Button } from "@/components/ui/button";
 import { resetUserPassword } from "@/lib/action/resetPassword"
 import { disableUser } from "@/lib/action/disableUser"
 import { enableUser } from "@/lib/action/enableUser"
