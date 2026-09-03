@@ -290,18 +290,19 @@ function AlertConfigSection() {
 
   // Delete definition
   const handleDeleteDef = async (def: AlertDefinition) => {
-    const hasOverride = def.override_id != null;
-    if (selectedCostCenterIds.length > 0 && hasOverride) {
-      // Remove from this cost center's set — no global fallback applies to CC vehicles
-      if (!confirm("Remove this alert from the cost center's set? Vehicles in this cost center will stop generating it.")) return;
+    if (selectedCostCenterIds.length > 0) {
+      // Purge from ALL cost center sets — the alert is not necessary anywhere.
+      // (Global definition is left intact for CC-less vehicles; use Global mode
+      // delete to remove the alert type entirely.)
+      if (!confirm(`Remove "${def.name}" from ALL cost center sets? It will stop coming in for every cost center.`)) return;
       try {
-        for (const ccId of selectedCostCenterIds) {
-          await fetch(`${ALERT_CONFIG_API}/definitions/${def.id}/overrides/${ccId}`, { method: "DELETE" });
-        }
-        toast.success("Removed from cost center");
+        const res = await fetch(`${ALERT_CONFIG_API}/definitions/${def.id}/overrides`, { method: "DELETE" });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.message || "Failed to delete");
+        toast.success(data.message || "Removed from all cost centers");
         fetchDefinitions();
         fetchSetState();
-      } catch { toast.error("Failed to delete override"); }
+      } catch (e: any) { toast.error(e?.message || "Failed to delete"); }
     } else if (selectedCostCenterIds.length === 0) {
       // Global mode — delete base definition
       if (!confirm("Delete this alert type entirely? This cannot be undone.")) return;
@@ -310,8 +311,6 @@ function AlertConfigSection() {
         toast.success("Deleted");
         fetchDefinitions();
       } catch { toast.error("Failed to delete"); }
-    } else {
-      toast.error("Not in this cost center's alert set — nothing to remove");
     }
   };
 
