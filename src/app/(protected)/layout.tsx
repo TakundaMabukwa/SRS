@@ -139,6 +139,7 @@ const roleNavigation = {
     { name: "Vehicles", href: "/vehicles", Icon: <Truck /> },
     { name: "Cost Centers", href: "/ccenter", Icon: <DollarSign /> },
     { name: "Financials", href: "/audit", Icon: <Settings2Icon /> },
+    { name: "Repairs", href: "/repairs", Icon: <Wrench /> },
     { name: "User Management", href: "/userManagement", Icon: <PlusSquare /> },
     { name: "System Settings", href: "/settings", Icon: <Settings /> },
   ],
@@ -146,6 +147,7 @@ const roleNavigation = {
     { name: "Dashboard", href: "/dashboard", Icon: <ChartBar /> },
     { name: "Fleet Manager", href: "/fleetManager", Icon: <Truck /> },
     { name: "Financials", href: "/audit", Icon: <Settings2Icon /> },
+    { name: "Repairs", href: "/repairs", Icon: <Wrench /> },
     { name: "Jobs", href: "/jobsFleet", Icon: <Briefcase /> },
     { name: "Drivers", href: "/drivers", Icon: <Users /> },
     { name: "Vehicles", href: "/vehicles", Icon: <Car /> },
@@ -254,6 +256,7 @@ export default function ProtectedLayout({ children }: ProtectedLayoutProps) {
         financials: { name: "Financials", href: "/audit", Icon: <Settings2Icon /> },
         inspections: { name: "Inspections", href: "/fleetManager/inspections", Icon: <QrCode /> },
         reports: { name: "Reports", href: "/reports", Icon: <FileText /> },
+        repairs: { name: "Repairs", href: "/repairs", Icon: <Wrench /> },
         userManagement: { name: "User Management", href: "/userManagement", Icon: <PlusSquare /> },
         systemSettings: { name: "System Settings", href: "/settings", Icon: <Settings /> }
       };
