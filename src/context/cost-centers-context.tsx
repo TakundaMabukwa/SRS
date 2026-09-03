@@ -15,6 +15,7 @@ interface CostCenter {
 interface CostCentersContextType {
   costCenters: CostCenter[];
   costCenterMap: Map<number, string>;
+  costCenterNames: Set<string>;
   loading: boolean;
   getCostCenterName: (id: number | null | undefined) => string;
   selectedCostCenterIds: number[];
@@ -26,6 +27,7 @@ interface CostCentersContextType {
 const CostCentersContext = createContext<CostCentersContextType>({
   costCenters: [],
   costCenterMap: new Map(),
+  costCenterNames: new Set(),
   loading: false,
   getCostCenterName: () => "",
   selectedCostCenterIds: [],
@@ -121,6 +123,16 @@ export function CostCentersProvider({ children }: { children: React.ReactNode })
     return map;
   }, [costCenters]);
 
+  // Set of all lowercase cost center names AND codes for fuzzy matching against vehiclesc.cost_centres
+  const costCenterNames = React.useMemo(() => {
+    const set = new Set<string>();
+    for (const cc of costCenters) {
+      if (cc.name) set.add(cc.name.trim().toLowerCase());
+      if (cc.code) set.add(cc.code.trim().toLowerCase());
+    }
+    return set;
+  }, [costCenters]);
+
   const getCostCenterName = useCallback(
     (id: number | null | undefined) => {
       if (!id) return "";
@@ -148,7 +160,7 @@ export function CostCentersProvider({ children }: { children: React.ReactNode })
   }, [selectedCostCenterIds, getCostCenterName, costCenters]);
 
   return (
-    <CostCentersContext.Provider value={{ costCenters, costCenterMap, loading, getCostCenterName, selectedCostCenterIds, setSelectedCostCenterIds, toggleCostCenterFilter, selectedCostCenterSummary }}>
+    <CostCentersContext.Provider value={{ costCenters, costCenterMap, costCenterNames, loading, getCostCenterName, selectedCostCenterIds, setSelectedCostCenterIds, toggleCostCenterFilter, selectedCostCenterSummary }}>
       {children}
     </CostCentersContext.Provider>
   );

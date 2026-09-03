@@ -12,7 +12,6 @@ type DbVehicle = {
   registration_number: string;
   fleet_number: string;
   cost_centres: string;
-  cost_center_id: number | null;
   camera_sim_id: string;
 };
 
@@ -53,7 +52,12 @@ function matchesCostCenterFilter(costCenter: string, selectedCostCenters: Set<st
   if (selectedCostCenters.size === 0) return true;
   const normalized = normalizeCostCenter(costCenter);
   if (!normalized) return selectedCostCenters.has("unassigned");
-  return selectedCostCenters.has(normalized);
+  if (selectedCostCenters.has(normalized)) return true;
+  // Substring match: check if any selected cost center name/code is contained in the vehicle's cost_centres text
+  for (const sc of selectedCostCenters) {
+    if (normalized.includes(sc) || sc.includes(normalized)) return true;
+  }
+  return false;
 }
 
 function parseDate(value?: string | null): number {
@@ -115,14 +119,14 @@ export default function ScreenshotsDashboardTab({
     try {
       const { data } = await supabase
         .from("vehiclesc")
-        .select("registration_number, fleet_number, cost_centres, cost_center_id, camera_sim_id");
+        .select("registration_number, fleet_number, cost_centres, camera_sim_id");
       const rows = (data || []) as DbVehicle[];
       const unique = new Map<string, DbVehicle>();
       for (const r of rows) {
         const reg = (r.registration_number || "").trim().toUpperCase();
         if (!reg) continue;
         if (!unique.has(reg)) {
-          unique.set(reg, { registration_number: reg, fleet_number: r.fleet_number || "", cost_centres: r.cost_centres || "", cost_center_id: r.cost_center_id ?? null, camera_sim_id: (r.camera_sim_id || "").trim() });
+          unique.set(reg, { registration_number: reg, fleet_number: r.fleet_number || "", cost_centres: r.cost_centres || "", camera_sim_id: (r.camera_sim_id || "").trim() });
         }
       }
       const result = Array.from(unique.values());
@@ -198,7 +202,7 @@ export default function ScreenshotsDashboardTab({
         );
 
         // Resolve cost center: prefer cost_center_id → costCenterMap, fallback to cost_centres text
-        const resolvedCostCenter = (v.cost_center_id && costCenterMap.get(v.cost_center_id)) || v.cost_centres || "";
+        const resolvedCostCenter = v.cost_centres || "";
 
         return {
           registration: v.registration_number,
@@ -379,11 +383,14 @@ export default function ScreenshotsDashboardTab({
   const selectedCostCenterSet = useMemo(() => {
     const set = new Set<string>();
     for (const id of selectedCostCenterIds) {
-      const name = costCenterMap.get(id);
-      if (name) set.add(name.toLowerCase());
+      const cc = costCenters.find(c => c.id === id);
+      if (cc) {
+        if (cc.name) set.add(cc.name.trim().toLowerCase());
+        if (cc.code) set.add(cc.code.trim().toLowerCase());
+      }
     }
     return set;
-  }, [selectedCostCenterIds, costCenterMap]);
+  }, [selectedCostCenterIds, costCenters]);
 
   const scopedCards = useMemo(
     () => cards

@@ -33,7 +33,6 @@ type DbVehicle = {
   registration_number: string;
   fleet_number: string;
   cost_centres: string;
-  cost_center_id: number | null;
   camera_sim_id: string;
 };
 
@@ -71,13 +70,17 @@ const EPS_API = "/api/video-server";
 
 function matchesCostCenterFilter(costCenter: string, selectedCostCenters: Set<string>) {
   if (selectedCostCenters.size === 0) return true;
-  const normalized = String(costCenter || "").trim().toLowerCase().replace(/\s+/g, " ");
+  const normalized = normalizeCostCenter(costCenter);
   if (!normalized) return selectedCostCenters.has("unassigned");
-  return selectedCostCenters.has(normalized);
+  if (selectedCostCenters.has(normalized)) return true;
+  for (const sc of selectedCostCenters) {
+    if (normalized.includes(sc) || sc.includes(normalized)) return true;
+  }
+  return false;
 }
 
 export default function LiveStreamTab({}: LiveStreamTabProps) {
-  const { costCenterMap, selectedCostCenterIds } = useCostCenters();
+  const { costCenters, costCenterMap, selectedCostCenterIds } = useCostCenters();
   const { supabase } = useSupabaseAuth();
   const [vehicles, setVehicles] = useState<{ registration: string; fleetNumber: string; costCenter: string; deviceId: string | null; online: boolean }[]>([]);
   const [selectedDevices, setSelectedDevices] = useState<Set<string>>(new Set());
@@ -101,14 +104,14 @@ export default function LiveStreamTab({}: LiveStreamTabProps) {
     try {
       const { data } = await supabase
         .from("vehiclesc")
-        .select("registration_number, fleet_number, cost_centres, cost_center_id, camera_sim_id");
+        .select("registration_number, fleet_number, cost_centres, camera_sim_id");
       const rows = (data || []) as DbVehicle[];
       const unique = new Map<string, DbVehicle>();
       for (const r of rows) {
         const reg = (r.registration_number || "").trim().toUpperCase();
         if (!reg) continue;
         if (!unique.has(reg)) {
-          unique.set(reg, { registration_number: reg, fleet_number: r.fleet_number || "", cost_centres: r.cost_centres || "", cost_center_id: r.cost_center_id ?? null, camera_sim_id: (r.camera_sim_id || "").trim() });
+          unique.set(reg, { registration_number: reg, fleet_number: r.fleet_number || "", cost_centres: r.cost_centres || "", camera_sim_id: (r.camera_sim_id || "").trim() });
         }
       }
       dbVehiclesRef.current = Array.from(unique.values());
@@ -130,7 +133,7 @@ export default function LiveStreamTab({}: LiveStreamTabProps) {
         const instant = dbVehicles.map((v) => ({
           registration: v.registration_number,
           fleetNumber: v.fleet_number,
-          costCenter: (v.cost_center_id && costCenterMap.get(v.cost_center_id)) || v.cost_centres || "",
+          costCenter: v.cost_centres,
           deviceId: null as string | null,
           online: false,
         }));
@@ -201,7 +204,7 @@ export default function LiveStreamTab({}: LiveStreamTabProps) {
         return {
           registration: v.registration_number,
           fleetNumber: v.fleet_number,
-          costCenter: (v.cost_center_id && costCenterMap.get(v.cost_center_id)) || v.cost_centres || "",
+          costCenter: v.cost_centres,
           deviceId: match ? match.deviceId : null,
           online: match ? match.online : false,
         };
@@ -226,11 +229,14 @@ export default function LiveStreamTab({}: LiveStreamTabProps) {
   const selectedCostCenterSet = useMemo(() => {
     const set = new Set<string>();
     for (const id of selectedCostCenterIds) {
-      const name = costCenterMap.get(id);
-      if (name) set.add(name.toLowerCase());
+      const cc = costCenters.find(c => c.id === id);
+      if (cc) {
+        if (cc.name) set.add(cc.name.trim().toLowerCase());
+        if (cc.code) set.add(cc.code.trim().toLowerCase());
+      }
     }
     return set;
-  }, [selectedCostCenterIds, costCenterMap]);
+  }, [selectedCostCenterIds, costCenters]);
 
   const filteredVehicles = useMemo(
     () => vehicles

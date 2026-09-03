@@ -15,7 +15,6 @@ type DbVehicle = {
   registration_number: string;
   fleet_number: string;
   cost_centres: string;
-  cost_center_id: number | null;
 };
 
 type PlaybackVehicle = {
@@ -64,7 +63,11 @@ function matchesCostCenterFilter(costCenter: string, selectedCostCenters: Set<st
   if (selectedCostCenters.size === 0) return true;
   const normalized = normalizeCostCenter(costCenter);
   if (!normalized) return selectedCostCenters.has("unassigned");
-  return selectedCostCenters.has(normalized);
+  if (selectedCostCenters.has(normalized)) return true;
+  for (const sc of selectedCostCenters) {
+    if (normalized.includes(sc) || sc.includes(normalized)) return true;
+  }
+  return false;
 }
 
 function getSouthAfricaDateParts(date: Date) {
@@ -125,7 +128,7 @@ function sastDateToRange(dateStr: string): { start: string; end: string } {
 type PlaybackDashboardTabProps = {};
 
 export default function PlaybackDashboardTab({}: PlaybackDashboardTabProps) {
-  const { costCenterMap, selectedCostCenterIds } = useCostCenters();
+  const { costCenters, costCenterMap, selectedCostCenterIds } = useCostCenters();
   const { supabase } = useSupabaseAuth();
   const [vehicles, setVehicles] = useState<PlaybackVehicle[]>([]);
   const [loading, setLoading] = useState(true);
@@ -152,7 +155,7 @@ export default function PlaybackDashboardTab({}: PlaybackDashboardTabProps) {
   const fetchVehicles = useCallback(async (): Promise<PlaybackVehicle[]> => {
     const { data: vehicleRows, error: vehiclesError } = await supabase
       .from("vehiclesc")
-      .select("registration_number, fleet_number, cost_centres, cost_center_id");
+      .select("registration_number, fleet_number, cost_centres");
 
     if (vehiclesError) throw new Error(vehiclesError.message || "Failed to load vehicles");
 
@@ -163,12 +166,11 @@ export default function PlaybackDashboardTab({}: PlaybackDashboardTabProps) {
       const reg = String((row as any).registration_number || "").trim().toUpperCase();
       if (!reg || seen.has(reg)) continue;
       seen.add(reg);
-      const ccId = (row as any).cost_center_id ?? null;
       catalogVehicles.push({
         vehicleId: reg,
         registration: reg,
         fleetNumber: String((row as any).fleet_number || "").trim(),
-        costCenter: (ccId && costCenterMap.get(ccId)) || String((row as any).cost_centres || "").trim(),
+        costCenter: String((row as any).cost_centres || "").trim(),
         deviceId: "",
         online: false,
       });
@@ -253,11 +255,14 @@ export default function PlaybackDashboardTab({}: PlaybackDashboardTabProps) {
   const selectedCostCenterSet = useMemo(() => {
     const set = new Set<string>();
     for (const id of selectedCostCenterIds) {
-      const name = costCenterMap.get(id);
-      if (name) set.add(name.toLowerCase());
+      const cc = costCenters.find(c => c.id === id);
+      if (cc) {
+        if (cc.name) set.add(cc.name.trim().toLowerCase());
+        if (cc.code) set.add(cc.code.trim().toLowerCase());
+      }
     }
     return set;
-  }, [selectedCostCenterIds, costCenterMap]);
+  }, [selectedCostCenterIds, costCenters]);
 
   const filteredVehicles = useMemo(() => {
     const needle = vehicleSearch.trim().toLowerCase();
