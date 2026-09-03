@@ -131,7 +131,11 @@ export function CostCentersProvider({ children }: { children: React.ReactNode })
 
   const toggleCostCenterFilter = useCallback((costCenterId: number) => {
     setSelectedCostCenterIds((prev) => {
-      if (prev.includes(costCenterId)) return prev.filter((id) => id !== costCenterId);
+      if (prev.includes(costCenterId)) {
+        // Don't allow deselecting the last cost center
+        if (prev.length <= 1) return prev;
+        return prev.filter((id) => id !== costCenterId);
+      }
       return [...prev, costCenterId];
     });
   }, []);
