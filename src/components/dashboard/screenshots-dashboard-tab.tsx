@@ -79,7 +79,7 @@ type ScreenshotsDashboardTabProps = {
 export default function ScreenshotsDashboardTab({
   detachable = true,
 }: ScreenshotsDashboardTabProps) {
-  const { costCenterMap, selectedCostCenterIds } = useCostCenters();
+  const { costCenters, costCenterMap, selectedCostCenterIds } = useCostCenters();
   const { supabase } = useSupabaseAuth();
   const dbVehiclesRef = useRef<DbVehicle[] | null>(null);
   const [cards, setCards] = useState<VehicleCard[]>([]);
