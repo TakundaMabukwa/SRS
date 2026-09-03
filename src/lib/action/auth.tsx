@@ -45,8 +45,6 @@ export async function login(formData: FormData) {
   cookieStore.set("role", role);
   cookieStore.set("userId", resData.user.id);
 
-  revalidatePath("/", "layout");
-
   return { success: true };
 }
 
