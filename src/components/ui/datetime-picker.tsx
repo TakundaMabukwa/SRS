@@ -22,7 +22,11 @@ export function DateTimePicker({ value, onChange, placeholder = "Pick a date and
 
   const handleDateSelect = (selectedDate: Date | undefined) => {
     setDate(selectedDate)
-    updateDateTime(selectedDate, time)
+    // If the user picks a date without setting a time yet, default to 08:00
+    // so the picker still yields a value instead of silently staying empty.
+    const effectiveTime = time || "08:00"
+    if (!time) setTime(effectiveTime)
+    updateDateTime(selectedDate, effectiveTime)
   }
 
   const handleTimeChange = (newTime: string) => {

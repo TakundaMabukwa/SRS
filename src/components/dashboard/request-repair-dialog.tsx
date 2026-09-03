@@ -21,6 +21,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { DateTimePicker } from "@/components/ui/datetime-picker";
+import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
 interface RequestRepairDialogProps {
@@ -46,20 +47,16 @@ export function RequestRepairDialog({
   const [contactPhone, setContactPhone] = useState("");
   const [contactEmail, setContactEmail] = useState("");
   const [availableAt, setAvailableAt] = useState("");
-  const [issue, setIssue] = useState(alarmType ? `${alarmType} fault` : "");
+  const [issue, setIssue] = useState("");
   const [priority, setPriority] = useState("medium");
   const [submitting, setSubmitting] = useState(false);
-
-  React.useEffect(() => {
-    if (open && alarmType) setIssue((prev) => prev || `${alarmType} fault`);
-  }, [open, alarmType]);
 
   const reset = () => {
     setContactName("");
     setContactPhone("");
     setContactEmail("");
     setAvailableAt("");
-    setIssue(alarmType ? `${alarmType} fault` : "");
+    setIssue("");
     setPriority("medium");
   };
 
@@ -112,7 +109,7 @@ export function RequestRepairDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>Request Repair – {fleetNumber}</DialogTitle>
           <DialogDescription>
@@ -137,6 +134,7 @@ export function RequestRepairDialog({
           <div>
             <Label>Vehicle available *</Label>
             <DateTimePicker value={availableAt} onChange={setAvailableAt} placeholder="Pick date and time" />
+            <p className="mt-1 text-[11px] text-slate-500">Pick a date, set a time, then press Confirm.</p>
           </div>
           <div>
             <Label htmlFor="rr-issue">Issue / fault description *</Label>
@@ -161,7 +159,14 @@ export function RequestRepairDialog({
             Cancel
           </Button>
           <Button onClick={handleSubmit} disabled={submitting} className="bg-amber-600 hover:bg-amber-700 text-white">
-            {submitting ? "Submitting…" : "Submit Repair"}
+            {submitting ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Submitting…
+              </>
+            ) : (
+              "Submit Repair"
+            )}
           </Button>
         </DialogFooter>
       </DialogContent>
