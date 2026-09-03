@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -215,7 +215,7 @@ export default function RepairsPage() {
               </TableRow>
             ) : (
               repairs.map((r) => (
-                <>
+                <Fragment key={r.id}>
                   <TableRow key={r.id}>
                     <TableCell>
                       <Button
@@ -286,7 +286,7 @@ export default function RepairsPage() {
                       </TableCell>
                     </TableRow>
                   )}
-                </>
+                </Fragment>
               ))
             )}
           </TableBody>
