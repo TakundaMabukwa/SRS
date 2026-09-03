@@ -1584,7 +1584,31 @@ export function AlertDetailModal({
                     size="sm"
                     variant="outline"
                     className="h-7 text-[11px] border-amber-300 text-amber-700 hover:bg-amber-50"
-                    onClick={() => toast.info("Repair request email will be sent once finalized.")}
+                    onClick={async () => {
+                      if (!selectedAlert) return;
+                      try {
+                        const res = await fetch("/api/video-server/repair-requests", {
+                          method: "POST",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({
+                            alert_id: selectedAlert.id,
+                            fleet_number: selectedAlert.fleet_number || selectedAlert.fleetNumber || "",
+                            registration: selectedAlert.vehicle_registration || selectedAlert.plate || "",
+                            device_id: selectedAlert.device_id || selectedAlert.deviceId || "",
+                            cost_center_id: null,
+                            notes: "Repair requested from alert detail",
+                          }),
+                        });
+                        const data = await res.json();
+                        if (data.success) {
+                          toast.success("Repair request logged. Awaiting email finalization.");
+                        } else {
+                          toast.error("Failed to log repair request.");
+                        }
+                      } catch {
+                        toast.error("Failed to log repair request.");
+                      }
+                    }}
                   >
                     Request Repair
                   </Button>

@@ -1559,7 +1559,7 @@ export async function GET(
   const isDriverConfigPath = firstSegment === 'driver-config'
   const isDriverScoringPath = firstSegment === 'driver-scoring'
   const isRtmsPath = firstSegment === 'rtms'
-  const isIncidentsPath = firstSegment === 'incidents'
+  const isIncidentsPath = firstSegment === 'incidents' || firstSegment === 'repair-requests'
   const getTarget = (isEpsStreamPath || firstSegment === 'alerts' || isAlertConfigPath || isEscalationPath || isStreamPath || isDriverConfigPath || isDriverScoringPath || isRtmsPath || isIncidentsPath) ? { name: 'epsStreaming', baseUrl: epsStreamingBase } : target
   const epsPath = firstSegment === 'eps' ? path.slice(4) : path
   const upstreamPath = (firstSegment === 'media' || firstSegment === 'captures') ? `/${path}` : (firstSegment === 'eps' || isStreamPath || isDriverConfigPath || isDriverScoringPath || isRtmsPath || isIncidentsPath) ? `/api/${epsPath}` : `/api/${path}`
@@ -1668,8 +1668,8 @@ export async function POST(
   const isDriverConfigPath = firstSegment === 'driver-config'
   const isDriverScoringPath = firstSegment === 'driver-scoring'
   const isRtmsPath = firstSegment === 'rtms'
-  const target = (isEpsStreamPath || firstSegment === 'alerts' || firstSegment === 'alert-config' || firstSegment === 'escalation' || isStreamPath || isDriverConfigPath || isDriverScoringPath || isRtmsPath || firstSegment === 'incidents') ? { name: 'epsStreaming', baseUrl: epsStreamingBase } : resolveVideoServerProxyBase(pathArray)
-  const epsPath = (firstSegment === 'alerts' || firstSegment === 'alert-config' || firstSegment === 'escalation' || isStreamPath || isDriverConfigPath || isDriverScoringPath || isRtmsPath || firstSegment === 'incidents') ? path : path.startsWith('eps/') ? path.slice(4) : path
+  const target = (isEpsStreamPath || firstSegment === 'alerts' || firstSegment === 'alert-config' || firstSegment === 'escalation' || isStreamPath || isDriverConfigPath || isDriverScoringPath || isRtmsPath || firstSegment === 'incidents' || firstSegment === 'repair-requests') ? { name: 'epsStreaming', baseUrl: epsStreamingBase } : resolveVideoServerProxyBase(pathArray)
+  const epsPath = (firstSegment === 'alerts' || firstSegment === 'alert-config' || firstSegment === 'escalation' || isStreamPath || isDriverConfigPath || isDriverScoringPath || isRtmsPath || firstSegment === 'incidents' || firstSegment === 'repair-requests') ? path : path.startsWith('eps/') ? path.slice(4) : path
   const url = `${target.baseUrl}/api/${epsPath}`
   const body = await request.json().catch(() => ({}))
 
@@ -1715,8 +1715,8 @@ export async function PUT(
   const isDriverConfigPath = firstSegment === 'driver-config'
   const isDriverScoringPath = firstSegment === 'driver-scoring'
   const isRtmsPath = firstSegment === 'rtms'
-  const target = (isEpsStreamPath || firstSegment === 'alerts' || firstSegment === 'alert-config' || firstSegment === 'escalation' || isStreamPath || isDriverConfigPath || isDriverScoringPath || isRtmsPath || firstSegment === 'incidents') ? { name: 'epsStreaming', baseUrl: epsStreamingBase } : resolveVideoServerProxyBase(pathArray)
-  const epsPath = (firstSegment === 'alerts' || firstSegment === 'alert-config' || firstSegment === 'escalation' || isStreamPath || isDriverConfigPath || isDriverScoringPath || isRtmsPath || firstSegment === 'incidents') ? path : path.startsWith('eps/') ? path.slice(4) : path
+  const target = (isEpsStreamPath || firstSegment === 'alerts' || firstSegment === 'alert-config' || firstSegment === 'escalation' || isStreamPath || isDriverConfigPath || isDriverScoringPath || isRtmsPath || firstSegment === 'incidents' || firstSegment === 'repair-requests') ? { name: 'epsStreaming', baseUrl: epsStreamingBase } : resolveVideoServerProxyBase(pathArray)
+  const epsPath = (firstSegment === 'alerts' || firstSegment === 'alert-config' || firstSegment === 'escalation' || isStreamPath || isDriverConfigPath || isDriverScoringPath || isRtmsPath || firstSegment === 'incidents' || firstSegment === 'repair-requests') ? path : path.startsWith('eps/') ? path.slice(4) : path
   const url = `${target.baseUrl}/api/${epsPath}`
   const body = await request.json().catch(() => ({}))
 
@@ -1761,8 +1761,8 @@ export async function PATCH(
   const isDriverConfigPath = firstSegment === 'driver-config'
   const isDriverScoringPath = firstSegment === 'driver-scoring'
   const isRtmsPath = firstSegment === 'rtms'
-  const target = (isEpsStreamPath || firstSegment === 'alerts' || firstSegment === 'alert-config' || firstSegment === 'escalation' || isStreamPath || isDriverConfigPath || isDriverScoringPath || isRtmsPath || firstSegment === 'incidents') ? { name: 'epsStreaming', baseUrl: epsStreamingBase } : resolveVideoServerProxyBase(pathArray)
-  const epsPath = (firstSegment === 'alerts' || firstSegment === 'alert-config' || firstSegment === 'escalation' || isStreamPath || isDriverConfigPath || isDriverScoringPath || isRtmsPath || firstSegment === 'incidents') ? path : path.startsWith('eps/') ? path.slice(4) : path
+  const target = (isEpsStreamPath || firstSegment === 'alerts' || firstSegment === 'alert-config' || firstSegment === 'escalation' || isStreamPath || isDriverConfigPath || isDriverScoringPath || isRtmsPath || firstSegment === 'incidents' || firstSegment === 'repair-requests') ? { name: 'epsStreaming', baseUrl: epsStreamingBase } : resolveVideoServerProxyBase(pathArray)
+  const epsPath = (firstSegment === 'alerts' || firstSegment === 'alert-config' || firstSegment === 'escalation' || isStreamPath || isDriverConfigPath || isDriverScoringPath || isRtmsPath || firstSegment === 'incidents' || firstSegment === 'repair-requests') ? path : path.startsWith('eps/') ? path.slice(4) : path
   const url = `${target.baseUrl}/api/${epsPath}`
   const body = await request.json().catch(() => ({}))
 
@@ -1807,8 +1807,8 @@ export async function DELETE(
   const isDriverConfigPath = firstSegment === 'driver-config'
   const isDriverScoringPath = firstSegment === 'driver-scoring'
   const isRtmsPath = firstSegment === 'rtms'
-  const target = (isEpsStreamPath || firstSegment === 'alerts' || firstSegment === 'alert-config' || firstSegment === 'escalation' || isStreamPath || isDriverConfigPath || isDriverScoringPath || isRtmsPath || firstSegment === 'incidents') ? { name: 'epsStreaming', baseUrl: epsStreamingBase } : resolveVideoServerProxyBase(pathArray)
-  const epsPath = (firstSegment === 'alerts' || firstSegment === 'alert-config' || firstSegment === 'escalation' || isStreamPath || isDriverConfigPath || isDriverScoringPath || isRtmsPath || firstSegment === 'incidents') ? path : path.startsWith('eps/') ? path.slice(4) : path
+  const target = (isEpsStreamPath || firstSegment === 'alerts' || firstSegment === 'alert-config' || firstSegment === 'escalation' || isStreamPath || isDriverConfigPath || isDriverScoringPath || isRtmsPath || firstSegment === 'incidents' || firstSegment === 'repair-requests') ? { name: 'epsStreaming', baseUrl: epsStreamingBase } : resolveVideoServerProxyBase(pathArray)
+  const epsPath = (firstSegment === 'alerts' || firstSegment === 'alert-config' || firstSegment === 'escalation' || isStreamPath || isDriverConfigPath || isDriverScoringPath || isRtmsPath || firstSegment === 'incidents' || firstSegment === 'repair-requests') ? path : path.startsWith('eps/') ? path.slice(4) : path
   const url = `${target.baseUrl}/api/${epsPath}`
 
   try {
