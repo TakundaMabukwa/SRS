@@ -186,6 +186,41 @@ function AlertConfigSection() {
   const isMultiCc = selectedCostCenterIds.length > 1;
   const firstCcId = selectedCostCenterIds[0] || null;
 
+  // Multi-CC clarity: for each definition, in how many selected CCs is it in
+  // set, and does its effective severity differ across those CCs? The table
+  // body always reflects the FIRST selected CC; these markers expose the rest.
+  const [setCounts, setSetCounts] = useState<Record<number, number>>({});
+  const [mixedSev, setMixedSev] = useState<Record<number, boolean>>({});
+
+  const fetchSetState = useCallback(async () => {
+    if (selectedCostCenterIds.length <= 1) { setSetCounts({}); setMixedSev({}); return; }
+    try {
+      const lists = await Promise.all(selectedCostCenterIds.map(async (ccId) => {
+        const res = await fetch(`${ALERT_CONFIG_API}/definitions?cost_center_id=${ccId}`, { cache: "no-store" });
+        const data = await res.json();
+        return (data?.data || []) as AlertDefinition[];
+      }));
+      const counts: Record<number, number> = {};
+      const sevSets: Record<number, Set<string>> = {};
+      for (const list of lists) {
+        for (const d of list) {
+          if (d.override_id != null) {
+            counts[d.id] = (counts[d.id] || 0) + 1;
+            const eff = String(d.override_severity || d.severity || "MEDIUM");
+            if (!sevSets[d.id]) sevSets[d.id] = new Set();
+            sevSets[d.id].add(eff);
+          }
+        }
+      }
+      const mixed: Record<number, boolean> = {};
+      for (const [id, s] of Object.entries(sevSets)) {
+        if (s.size > 1) mixed[Number(id)] = true;
+      }
+      setSetCounts(counts);
+      setMixedSev(mixed);
+    } catch { /* non-critical clarity layer */ }
+  }, [selectedCostCenterIds]);
+
   // Fetch definitions — server returns merged base + override rows
   const fetchDefinitions = useCallback(async () => {
     try {
@@ -216,9 +251,9 @@ function AlertConfigSection() {
 
   useEffect(() => {
     setLoading(true);
-    Promise.all([fetchDefinitions(), fetchGroups()])
+    Promise.all([fetchDefinitions(), fetchGroups(), fetchSetState()])
       .finally(() => setLoading(false));
-  }, [fetchDefinitions, fetchGroups]);
+  }, [fetchDefinitions, fetchGroups, fetchSetState]);
 
   // Save definition — global mode edits base; CC mode upserts override
   const handleSaveDef = async () => {
@@ -247,6 +282,7 @@ function AlertConfigSection() {
       setEditingDef(null);
       setDefForm({ name: "", category: "telematics", description: "", signal_code: "", severity: "MEDIUM" });
       fetchDefinitions();
+      fetchSetState();
     } catch (e: any) {
       toast.error(e?.message || "Failed to save");
     }
@@ -264,6 +300,7 @@ function AlertConfigSection() {
         }
         toast.success("Removed from cost center");
         fetchDefinitions();
+        fetchSetState();
       } catch { toast.error("Failed to delete override"); }
     } else if (selectedCostCenterIds.length === 0) {
       // Global mode — delete base definition
@@ -344,6 +381,7 @@ function AlertConfigSection() {
       toast.success(`Override created: ${defsToOverride.length} alert type(s) copied to ${selectedCostCenterIds.length} cost center(s)`);
       setShowOverrideDefConfirm(false);
       fetchDefinitions();
+      fetchSetState();
     } catch (e: any) { toast.error(e?.message || "Failed to override"); }
     finally { setOverrideLoading(false); }
   };
@@ -425,6 +463,8 @@ function AlertConfigSection() {
         overrideLoading={overrideLoading}
         handleOverrideDefsFromGlobal={handleOverrideDefsFromGlobal}
         handleOverrideGroupsFromGlobal={handleOverrideGroupsFromGlobal}
+        setCounts={setCounts}
+        mixedSev={mixedSev}
       />
     </div>
   );
@@ -437,6 +477,7 @@ function AlertConfigPanel({
   showGroupForm, setShowGroupForm, editingGroup, setEditingGroup, groupForm, setGroupForm, handleSaveGroup,
   showOverrideDefConfirm, setShowOverrideDefConfirm, showOverrideGroupConfirm, setShowOverrideGroupConfirm,
   overrideLoading, handleOverrideDefsFromGlobal, handleOverrideGroupsFromGlobal,
+  setCounts, mixedSev,
 }: any) {
   if (loading) return <div className="text-sm text-gray-500 py-4">Loading...</div>;
 
@@ -484,6 +525,13 @@ function AlertConfigPanel({
       {isMultiCc && (
         <div className="bg-blue-50 border border-blue-200 rounded-md px-3 py-2 text-sm text-blue-700">
           Applying changes to {selectedCcIds.length} cost centers: {costCenterNames.join(", ")}
+        </div>
+      )}
+      {/* Multi-CC clarity: values shown are for the first selected cost center */}
+      {isMultiCc && activeSection === "definitions" && (
+        <div className="bg-amber-50 border border-amber-200 rounded-md px-3 py-2 text-sm text-amber-800">
+          Showing values for <strong>{costCenterNames[0] || "first selected"}</strong> — bulk edits apply to all {selectedCcIds.length} selected cost centers.
+          Rows marked <strong>Mixed</strong> have different severities across cost centers.
         </div>
       )}
 
@@ -568,12 +616,22 @@ function AlertConfigPanel({
                     <td className="py-2 font-medium">
                       <div className="flex items-center gap-2">
                         {def.name}
-                        {hasCcSelected && def.override_id != null && <Badge variant="default" className="text-[10px]">In set</Badge>}
+                        {hasCcSelected && def.override_id != null && (
+                          <Badge variant="default" className="text-[10px]">
+                            In set{isMultiCc && setCounts?.[def.id] != null ? ` (${setCounts[def.id]}/${selectedCcIds.length})` : ""}
+                          </Badge>
+                        )}
                         {hasCcSelected && def.override_id == null && <Badge variant="outline" className="text-[10px] text-gray-400 border-gray-200">Available</Badge>}
                       </div>
                     </td>
                     <td><Badge variant={def.category === "telematics" ? "default" : "secondary"}>{def.category}</Badge></td>
-                    <td><Badge className={SEVERITY_COLORS[(def.override_severity || def.severity) as Severity]}>{(def.override_severity || def.severity) || "MEDIUM"}</Badge></td>
+                    <td>
+                      {isMultiCc && mixedSev?.[def.id] ? (
+                        <Badge variant="outline" className="text-[10px] border-amber-400 text-amber-700" title="Severity differs across the selected cost centers">Mixed</Badge>
+                      ) : (
+                        <Badge className={SEVERITY_COLORS[(def.override_severity || def.severity) as Severity]}>{(def.override_severity || def.severity) || "MEDIUM"}</Badge>
+                      )}
+                    </td>
                     <td className="text-gray-500">{(def.override_description ?? def.description) || "—"}</td>
                     <td><Badge variant={def.is_active ? "default" : "outline"}>{def.is_active ? "Active" : "Inactive"}</Badge></td>
                     <td>
