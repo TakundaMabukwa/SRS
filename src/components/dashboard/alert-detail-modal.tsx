@@ -637,8 +637,15 @@ export function AlertDetailModal({
     setDerivedAlertScreenshots([]);
     setSelectedAlertPlaybackVideos([]);
 
-    // Default to Screenshots tab for all alert types (no source_type separation)
-    setActiveTab("screenshots");
+    // Auto-open Map tab for telematics alerts and speed alerts (focus on location/speed)
+    const sourceType = String(selectedAlert?.source_type || "").trim().toLowerCase();
+    const alertType = String(selectedAlert?.type || selectedAlert?.alert_type || "").toLowerCase();
+    const isSpeedAlert = /speed/i.test(alertType) || (selectedAlert?.speed != null && selectedAlert?.speed > 0);
+    if (sourceType === "telematics" || isSpeedAlert) {
+      setActiveTab("map");
+    } else {
+      setActiveTab("screenshots");
+    }
 
     // If already on Event Video tab, fetch immediately
     const alertId = String(selectedAlert?.id || "").trim();
@@ -702,23 +709,43 @@ export function AlertDetailModal({
       selectedAlert?.metadata?.vehicle?.vehicleId ||
       ''
     ).trim();
-    if (!deviceId) return;
+    const fleetNum = String(
+      selectedAlert?.fleet_number ||
+      selectedAlert?.fleetNumber ||
+      ''
+    ).trim().toUpperCase();
+    const regPlate = String(
+      selectedAlert?.vehicle_registration ||
+      selectedAlert?.plate ||
+      selectedAlert?.registration ||
+      ''
+    ).trim().toUpperCase();
+    if (!deviceId && !fleetNum && !regPlate) return;
 
     fetch(`/api/video-server/eps/alerts/active?limit=2000`, { cache: "no-store" })
       .then((res) => res.json())
       .then((data) => {
         const all = Array.isArray(data?.alerts) ? data.alerts : [];
         const sameVehicle = all.filter((a: any) => {
+          if (String(a?.id || '') === String(selectedAlert?.id || '')) return false;
+          // Match by device_id (same camera or Geotab device)
           const aDevice = String(
             a?.device_id || a?.deviceId || a?.vehicleId ||
             a?.metadata?.vehicle?.vehicleId || ''
           ).trim();
-          return aDevice === deviceId && String(a?.id || '') !== String(selectedAlert?.id || '');
+          if (deviceId && aDevice === deviceId) return true;
+          // Match by fleet number (cross-source: telematics ↔ video)
+          const aFleet = String(a?.fleet_number || a?.fleetNumber || "").trim().toUpperCase();
+          if (fleetNum && aFleet && aFleet === fleetNum) return true;
+          // Match by registration plate
+          const aReg = String(a?.vehicle_registration || a?.plate || a?.registration || "").trim().toUpperCase();
+          if (regPlate && aReg && aReg === regPlate) return true;
+          return false;
         });
         setVehicleAlerts(sameVehicle);
       })
       .catch(() => {});
-  }, [selectedAlert?.id, selectedAlert?.device_id, selectedAlert?.vehicleId]);
+  }, [selectedAlert?.id, selectedAlert?.device_id, selectedAlert?.vehicleId, selectedAlert?.fleet_number, selectedAlert?.vehicle_registration]);
 
   // Fetch nearest police stations when coordinates are available
   const lastFetchedKeyRef = useRef<string>("");

@@ -1748,6 +1748,52 @@ export async function PUT(
   }
 }
 
+export async function PATCH(
+  request: NextRequest,
+  { params }: { params: Promise<{ path: string[] }> }
+) {
+  const { path: pathArray } = await params
+  const path = pathArray.join('/')
+  const epsStreamingBase = getEpsStreamingServerBaseUrl()
+  const isEpsStreamPath = path.startsWith('eps/')
+  const firstSegment = String(pathArray[0] || '').toLowerCase()
+  const isStreamPath = firstSegment === 'stream'
+  const isDriverConfigPath = firstSegment === 'driver-config'
+  const isDriverScoringPath = firstSegment === 'driver-scoring'
+  const isRtmsPath = firstSegment === 'rtms'
+  const target = (isEpsStreamPath || firstSegment === 'alerts' || firstSegment === 'alert-config' || firstSegment === 'escalation' || isStreamPath || isDriverConfigPath || isDriverScoringPath || isRtmsPath || firstSegment === 'incidents') ? { name: 'epsStreaming', baseUrl: epsStreamingBase } : resolveVideoServerProxyBase(pathArray)
+  const epsPath = (firstSegment === 'alerts' || firstSegment === 'alert-config' || firstSegment === 'escalation' || isStreamPath || isDriverConfigPath || isDriverScoringPath || isRtmsPath || firstSegment === 'incidents') ? path : path.startsWith('eps/') ? path.slice(4) : path
+  const url = `${target.baseUrl}/api/${epsPath}`
+  const body = await request.json().catch(() => ({}))
+
+  try {
+    const headers = backendHeaders(request)
+    headers['Content-Type'] = 'application/json'
+
+    const response = await fetch(url, {
+      method: 'PATCH',
+      headers,
+      body: JSON.stringify(body),
+    })
+
+    const data = await response.json()
+    const normalizedData = normalizeProxiedMediaUrls(data, target.baseUrl)
+    return Response.json(normalizedData, { status: response.status })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    return Response.json(
+      {
+        success: false,
+        message: `Failed to patch ${target.name}`,
+        error: message,
+        target: target.name,
+        targetUrl: url
+      },
+      { status: 500 }
+    )
+  }
+}
+
 export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ path: string[] }> }
