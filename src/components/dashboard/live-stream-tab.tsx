@@ -68,6 +68,10 @@ type LiveStreamTabProps = {};
 
 const EPS_API = "/api/video-server";
 
+function normalizeCostCenter(value: unknown): string {
+  return String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
+}
+
 function matchesCostCenterFilter(costCenter: string, selectedCostCenters: Set<string>) {
   if (selectedCostCenters.size === 0) return true;
   const normalized = normalizeCostCenter(costCenter);
