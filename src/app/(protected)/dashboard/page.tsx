@@ -2941,6 +2941,16 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
             })
           );
         }
+      } catch (error: any) {
+        let message = error?.message || "Failed to close alert.";
+        if (error?.name === "TimeoutError" || /aborted|timeout/i.test(String(error?.message || ""))) {
+          message = "Close request timed out. Please retry.";
+        } else if (/not found/i.test(String(error?.message || ""))) {
+          message = "This alert was not found on the server. It may already be closed or the board is stale. Refreshing alerts.";
+        }
+        setAlertActionError(message);
+        toast.error(message);
+      } finally {
         setAlertDetailModalOpen(false);
         setSelectedAlert(null);
         setAlertNotesDraft("");
@@ -2948,18 +2958,8 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
         setSelectedNcrForm("");
         setSelectedReportForm("");
         setPendingDocuments([]);
-        setRefreshTrigger((prev) => prev + 1);
-      } catch (error: any) {
-        let message = error?.message || "Failed to close alert.";
-        if (error?.name === "TimeoutError" || /aborted|timeout/i.test(String(error?.message || ""))) {
-          message = "Close request timed out. Please retry.";
-        } else if (/not found/i.test(String(error?.message || ""))) {
-          message = "This alert was not found on the server. It may already be closed or the board is stale. Refresh alerts and try again.";
-        }
-        setAlertActionError(message);
-        toast.error(message);
-      } finally {
         setAlertActionLoading(false);
+        setRefreshTrigger((prev) => prev + 1);
       }
     };
   const toAbsoluteVideoUrl = useCallback((raw?: string) => {
