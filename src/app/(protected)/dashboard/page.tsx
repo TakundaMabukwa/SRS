@@ -6257,6 +6257,7 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
               throw new Error(body?.message || `Failed to mark false (${res.status})`);
             }
             toast.success("Alert marked as false alarm.");
+            setGroupedAlerts((prev) => prev.filter((a: any) => String(a?.id || a?.alert_id || "") !== closingAlertId));
             if (typeof window !== "undefined") {
               window.dispatchEvent(new CustomEvent("video-alert-closed", { detail: { id: closingAlertId } }));
             }
@@ -6421,7 +6422,7 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
         <ResolveAlertsModal
           isOpen={showResolveModal}
           onClose={() => setShowResolveModal(false)}
-          onResolved={() => {
+          onResolved={(resolvedIds: string[]) => {
             setShowResolveModal(false);
             setAlertDetailModalOpen(false);
             setSelectedAlert(null);
@@ -6430,6 +6431,9 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
             setSelectedReportForm('');
             setAlertNotesDraft("");
             setPendingDocuments([]);
+            if (Array.isArray(resolvedIds) && resolvedIds.length > 0) {
+              setGroupedAlerts((prev) => prev.filter((a: any) => !resolvedIds.includes(String(a?.id || a?.alert_id || ""))));
+            }
             setRefreshTrigger((prev) => prev + 1);
           }}
           deviceId={String(selectedAlert?.device_id || selectedAlert?.deviceId || selectedAlert?.vehicleId || "").trim()}
@@ -6555,6 +6559,9 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
             const groupedIds = Array.isArray((selectedAlertForIncidentTemplate || selectedAlert)?.groupedIds)
               ? (selectedAlertForIncidentTemplate || selectedAlert).groupedIds
               : [];
+            if (closingAlertId) {
+              setGroupedAlerts((prev) => prev.filter((a: any) => String(a?.id || a?.alert_id || "") !== closingAlertId));
+            }
             if (typeof window !== "undefined" && closingAlertId) {
               window.dispatchEvent(
                 new CustomEvent("video-alert-closed", {

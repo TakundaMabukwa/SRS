@@ -12,7 +12,7 @@ import { DriverDropdown } from "@/components/ui/driver-dropdown";
 interface ResolveAlertsModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onResolved: () => void;
+  onResolved: (resolvedIds: string[]) => void;
   deviceId: string;
   fleetNumber: string;
   registration: string;
@@ -235,7 +235,7 @@ export function ResolveAlertsModal({
     setResolvingIds(new Set());
     if (resolved > 0) {
       toast.success(`${resolved} alert${resolved !== 1 ? "s" : ""} resolved`);
-      onResolved();
+      onResolved(ids);
     } else {
       toast.error("Failed to resolve alerts");
     }
@@ -253,7 +253,7 @@ export function ResolveAlertsModal({
     setResolvingIds(new Set());
     if (resolved > 0) {
       toast.success(`${resolved} alert${resolved !== 1 ? "s" : ""} resolved`);
-      onResolved();
+      onResolved(ids);
     } else {
       toast.error("Failed to resolve alerts");
     }
