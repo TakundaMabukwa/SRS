@@ -233,5 +233,14 @@ export function useVideoWebSocket(onMessage?: (data: WebSocketMessage) => void) 
     }
   }, [])
 
-  return { connected, lastMessage }
+  const send = (type: string, data?: Record<string, any>) => {
+    const socket = ws.current
+    if (socket && socket.readyState === WebSocket.OPEN) {
+      try {
+        socket.send(JSON.stringify({ type, data: data || {} }))
+      } catch (_) { /* ignore */ }
+    }
+  }
+
+  return { connected, lastMessage, send }
 }

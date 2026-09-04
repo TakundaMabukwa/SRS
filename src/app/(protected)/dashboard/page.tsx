@@ -102,6 +102,7 @@ import { ResolveAlertsModal } from '@/components/dashboard/resolve-alerts-modal'
 import IncidentReportTemplateModal from '@/components/video-alerts/incident-report-template-modal';
 import type { SavedAlertArtifact } from '@/components/video-alerts/report-support';
 import { useVideoWebSocket } from "@/hooks/use-video-websocket";
+import { usePresenceWebSocket } from "@/hooks/use-presence-websocket";
 import {
   formatRawAlertTimestamp,
   getAlertDisplayTimestamp as getSharedAlertDisplayTimestamp,
@@ -2274,6 +2275,38 @@ function TripReportsSection() {
 
 export default function Dashboard() {
   const { costCenters, costCenterMap, getCostCenterName, selectedCostCenterIds, setSelectedCostCenterIds, toggleCostCenterFilter, selectedCostCenterSummary } = useCostCenters();
+  const currentUserEmailRef = useRef<string>("");
+  const [activeAlertUsers, setActiveAlertUsers] = useState<Record<string, string>>({});
+  const handlePresenceWsMessage = useCallback((data: any) => {
+    const type = String(data?.type || "").toLowerCase();
+    if (type !== "alert-user-active" && type !== "alert-user-inactive") return;
+    const payload = data?.data || data?.alert || {};
+    const alertId = String(payload?.alertId || payload?.alert_id || "").trim();
+    const user = String(payload?.user || "").trim();
+    if (!alertId) return;
+    const isSelf = user && user === currentUserEmailRef.current;
+    console.log("[PRESENCE]", type, { alertId, user, isSelf, raw: data });
+    setActiveAlertUsers((prev) => {
+      if (type === "alert-user-inactive" || !user) {
+        const next = { ...prev };
+        delete next[alertId];
+        return next;
+      }
+      const isNew = prev[alertId] !== user;
+      if (isNew && user && !isSelf) {
+        try { toast(`${user} is now viewing this alert`); } catch (_) {}
+      }
+      return { ...prev, [alertId]: user };
+    });
+  }, []);
+  const { send: presenceSend } = usePresenceWebSocket(handlePresenceWsMessage);
+
+  useEffect(() => {
+    const supabase = createClient();
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      currentUserEmailRef.current = session?.user?.email || session?.user?.user_metadata?.email || "";
+    });
+  }, []);
   const [activeTab, setActiveTab] = useState<string>("video-alerts");
   const [costCenterOptions, setCostCenterOptions] = useState<string[]>([]);
   const [auditData, setAuditData] = useState<any[]>([]);
@@ -2951,6 +2984,9 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
         setAlertActionError(message);
         toast.error(message);
       } finally {
+        if (presenceSend && currentUserEmailRef.current && closingAlertId) {
+          presenceSend("alert-user-inactive", { alertId: closingAlertId, user: currentUserEmailRef.current });
+        }
         setAlertDetailModalOpen(false);
         setSelectedAlert(null);
         setAlertNotesDraft("");
@@ -3995,6 +4031,34 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
       setSelectedAlert(baseAlert);
       setAlertDetailModalOpen(true);
       setAlertRealtimeLoading(true);
+      const openedAlertId = baseAlert?.id ? String(baseAlert.id) : "";
+      if (presenceSend && currentUserEmailRef.current && openedAlertId) {
+        console.log("[PRESENCE] sending active", { alertId: openedAlertId, user: currentUserEmailRef.current });
+        presenceSend("alert-user-active", { alertId: openedAlertId, user: currentUserEmailRef.current });
+      }
+      (async () => {
+        if (!openedAlertId) return;
+        try {
+          const me = currentUserEmailRef.current || "";
+          const url = `/api/video-server/presence/alerts/${encodeURIComponent(openedAlertId)}${me ? `?exclude=${encodeURIComponent(me)}` : ""}`;
+          const res = await fetch(url, { cache: "no-store" });
+          if (!res.ok) return;
+          const json = await res.json();
+          const viewers = Array.isArray(json?.viewers) ? json.viewers.filter(Boolean) : [];
+          if (viewers.length > 0) {
+            const names = Array.from(new Set(viewers));
+            try { toast(`${names.join(", ")} ${names.length === 1 ? "is" : "are"} already viewing this alert`); } catch (_) {}
+            setActiveAlertUsers((prev) => {
+              const next = { ...prev };
+              names.forEach((n) => { next[openedAlertId] = n; });
+              return next;
+            });
+          }
+          console.log("[PRESENCE] query viewers", { alertId: openedAlertId, viewers });
+        } catch (e) {
+          console.error("[PRESENCE] query failed", e);
+        }
+      })();
       const openedAlertType = String(
         baseAlert?.alarm_type || baseAlert?.alert_type || baseAlert?.type || ""
       );
@@ -4645,6 +4709,7 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
             onOpenAlertDetail={openAlertDetailRealtime}
             suspendBackgroundWork={alertDetailModalOpen}
             onDriversLoaded={setDriversByFleetNumber}
+            activeAlertUsers={activeAlertUsers}
           />
         )}
 
@@ -6221,6 +6286,9 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
         alertActionLoading={alertActionLoading}
         pendingDocuments={pendingDocuments}
         onClose={() => {
+          if (presenceSend && currentUserEmailRef.current && selectedAlert?.id) {
+            presenceSend("alert-user-inactive", { alertId: String(selectedAlert.id), user: currentUserEmailRef.current });
+          }
           setAlertDetailModalOpen(false);
           setAlertRealtimeLoading(false);
           setAlertReason("");
@@ -6352,6 +6420,7 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
             setSelectedAlert((prev: any) => prev ? { ...prev, driver_name: driverName, fleet_number: fleetNum || prev.fleet_number } : prev);
           }
         }}
+        activeUser={selectedAlert?.id ? activeAlertUsers[String(selectedAlert.id)] : undefined}
       />
       )}
 

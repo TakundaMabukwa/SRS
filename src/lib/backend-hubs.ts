@@ -96,6 +96,12 @@ export function resolveVideoServerProxyBase(pathArray: string[]) {
     return { name: "alertHub", baseUrl: getAlertHubBaseUrl() };
   }
 
+  const isPresencePath = first === "presence";
+
+  if (isPresencePath) {
+    return { name: "epsStreaming", baseUrl: getEpsStreamingServerBaseUrl() };
+  }
+
   const isLiveCommandPath =
     (first === "vehicles" &&
       (third === "start-live" ||

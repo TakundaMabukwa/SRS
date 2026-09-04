@@ -67,6 +67,7 @@ interface AlertDetailModalProps {
   }>;
   drivers?: Array<{ id: string; first_name: string; surname: string; fleet_number?: string | null; cell_number?: string | null; assigned_vehicle?: { registration_number?: string } | null }>;
   onDriverAssign?: (driverId: string, driverName: string, fleetNumber?: string) => void;
+  activeUser?: string;
 }
 
 const toFiniteNumber = (value: any): number | null => {
@@ -190,6 +191,7 @@ export function AlertDetailModal({
   driversByFleetNumber,
   drivers = [],
   onDriverAssign,
+  activeUser,
 }: AlertDetailModalProps) {
   const { costCenterMap } = useCostCenters();
   const { coordinates: selectedAlertCoordinates, placeName: selectedAlertPlaceName, placeLoading: selectedAlertPlaceLoading } = useReverseGeocode(selectedAlert, isOpen);
@@ -884,6 +886,12 @@ export function AlertDetailModal({
                   <Timer className="w-2 h-2" />
                   Follow-up {followUpCountdown || ""}
                 </Badge>
+              )}
+              {activeUser && (
+                <span className="flex items-center gap-1 rounded-full bg-green-500/20 px-2 py-0.5 text-[9px] font-medium text-green-300 ring-1 ring-green-400/30">
+                  <span className="inline-block h-1.5 w-1.5 rounded-full bg-green-400 animate-pulse" />
+                  {activeUser}
+                </span>
               )}
               <span className="text-sm font-semibold text-white md:text-base">{selectedAlertTitle}</span>
             </div>

@@ -61,6 +61,7 @@ type VideoAlertsDashboardTabProps = {
   standaloneMode?: boolean;
   suspendBackgroundWork?: boolean;
   onDriversLoaded?: (drivers: Map<string, DriverInfo>) => void;
+  activeAlertUsers?: Record<string, string>;
 };
 
 type DriverInfo = {
@@ -266,6 +267,7 @@ export default function VideoAlertsDashboardTab({
   standaloneMode = false,
   suspendBackgroundWork = false,
   onDriversLoaded,
+  activeAlertUsers = {},
 }: VideoAlertsDashboardTabProps) {
   const router = useRouter();
   const { costCenterMap, selectedCostCenterIds } = useCostCenters();
@@ -2528,6 +2530,11 @@ export default function VideoAlertsDashboardTab({
                 </Badge>
               ) : null}
               {getFollowUpBadge(alert)}
+              {activeAlertUsers[String(alert.id)] ? (
+                <Badge className="rounded-full border border-green-200 bg-green-50 px-1.5 py-0 text-[10px] font-semibold text-green-700">
+                  ● {activeAlertUsers[String(alert.id)]}
+                </Badge>
+              ) : null}
             </div>
             <div className="mt-1 text-[10px] uppercase tracking-wide text-slate-400">
               {String(alert?.status || "new")}
