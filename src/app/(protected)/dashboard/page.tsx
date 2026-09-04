@@ -2927,6 +2927,7 @@ const [alertActionSuccess, setAlertActionSuccess] = useState("");
             alerts: remainingAlerts,
           };
         });
+        setGroupedAlerts((prev) => prev.filter((a: any) => String(a?.id || a?.alert_id || "") !== closingAlertId));
         if (typeof window !== "undefined") {
           window.dispatchEvent(
             new CustomEvent("video-alert-closed", {
